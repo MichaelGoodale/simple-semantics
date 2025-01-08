@@ -1,0 +1,293 @@
+\documentclass[11pt, a4paper]{article}
+\author{Michael Goodale}
+\title{Simple semantics for compositional language learning}
+
+\usepackage{enumerate}
+\usepackage{times}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{tcolorbox}
+\usepackage{booktabs}
+\usepackage{multicol}
+\usepackage{subcaption}
+\newcommand{\lex}[3]{{#1}::{\texttt{#2}}::{$#3$}}
+
+\usepackage[citestyle=authoryear]{biblatex}
+\addbibresource{simple-semantics.bib}
+\begin{document}
+\maketitle
+
+
+This document outlines a potential approach for integrating semantic information into a learning approach using minimalist grammars. 
+The idea is that by pairing \textbf{semantic scenarios} with sentences of natural language, it can be possible to learn a fragment of a natural language grammar.
+
+Semantic scenarios consist of a simple, finite model that consists of a small number of individuals in a given scenario, along with various predicates that apply to them as well as various events that involve them.
+These have a simple ontology which can be used to describe different scenarios in which a sentence is uttered.
+
+\section{Semantic scenarios}
+
+The basic ontology consists of four kinds of semantic objects:
+\begin{itemize}
+  \item Individuals: An individual is a simple atom that belong to the set of individuals, $\mathcal{D}$.
+  \item Events: An event is a simple atom that belong to the set of events, $\mathcal{E}$. 
+  \item Thematic relations: A thematic relation is a tuple, $\left\langle x, y, \theta\right\rangle\in \Theta$ consisting of one event, $x\in\mathcal{E}$ and an individual, $y\in\mathcal{D}$ and a theta role, $\theta\in\{\textsc{Agent}, \textsc{Patient}\}$.
+  \item Properties: A property is a tuple of an atom paired with a set of individuals or events. The atoms in the tuple are members of the set of properties, $\mathcal{P}$.\footnote{This is a bit odd, but it is a way to allow a word to refer to the same property across scenarios, even as that property has different members}
+\end{itemize}
+
+This ontology (along with some other capacities) will likely be sufficient for a large swathe of natural language phenomena. 
+Crucially, they also consist things which are likely innate (or at least acquired incredibly young), namely agent-patient distinction \autocite{papeo_abstract_2024}, event vs individual objects and properties. 
+
+Formally, we say a given scenario is a 4-tuple consisting of subsets of $\mathcal{D, E, }, \Theta, \mathcal{P}$.
+For example, a scenario could be the following:
+
+\begin{align*}
+  \langle&\left\{j, m, p\right\}, \\
+         &\{e_1, e_2\}, \\
+    &\left\{
+      \left\langle e_1, j, \textsc{Agent} \right\rangle, \left\langle e_1, m, \textsc{Patient} \right\rangle 
+    \left\langle e_2, j, \textsc{Agent} \right\rangle, \left\langle e_1, p, \textsc{Patient} \right\rangle \right\} \\
+    &\left\{ \left\langle S, \left\{ e_1, e_2 \right\}\right\} \right\rangle\rangle
+\end{align*}
+
+Here there are three individuals, and two events occuring (to which the property $S$ applies). The agent of both events is $j$ while $m$ is the patient of the first event and $p$ the patient of the second. 
+Unsurprisingly, the scenario refers to one where ``John saw Mary and John saw Phil'' is true, although the specific scenario might be paired with different sentences in training (e.g. ``John saw Mary'', ``Someone saw someone'', ``Someone saw at least two people'', etc\ldots).
+
+\subsection{Missing elements that may or may not be added in the future}
+
+There are a number of essential things which are missing from this ontology that would likely be necessary.
+Here's a small list of ones which might be in the scope of the thesis (though it seems extremely unlikely all could be done):
+
+\begin{itemize}
+  \item Relations (e.g. prepositions, more thematic roles, etc)
+  \item Plural individuals (as some kind of lattice). 
+  \item Time (could be as simple as a linear order of events).
+  \item Alternatives (e.g. with a Hamblin semantics adapted for simple scenarios)
+  \item Degrees for properties (c.f. \cite{kennedy_scale_2005}).
+  \item Modal scenarios  
+\end{itemize}
+
+Here's a list of ones which, while evidently necessary, probably are not in the scope of the thesis:
+\begin{itemize}
+  \item Event trajectories (c.f. \cite{unger_toward_2024}).
+  \item Causal reasoning (e.g. DAG of (possibly plural) events).
+  \item Sense 
+  \item ``Rich'' free variables. 
+\end{itemize}
+
+\section{Semantic primitives/syntax}
+Given this model theory, we need a simple set of primitives and a syntax which can operate on top of given scenario. 
+(This is obviously underformalised but the interpretations should be easy to deduce). 
+
+Here are some core primitives that are almost certainly necessary.
+\begin{itemize}
+  \item $x$ is a well-formed term.
+  \item If $a$ is an individual in $\mathcal{D}$, then $a$ is a well-formed term.
+  \item If $e$ is an event in $\mathcal{E}$, then $e$ is a well-formed term.
+  \item If $S$ is a property-atom in $\mathcal{P}$ and $t$ is a well-formed terms then $S(t)$ is a well-formed formula.
+  \item If $t_1, t_2$ are well-formed terms, then $\textsc{Agent}(t_1, t_2)$ and $\textsc{Patient}(t_1, t_2)$ are well-formed formula. 
+  \item If $\phi$ and $\psi$ are well-formed formulae then $\neg\phi$, $\phi\lor\psi$, $\phi\land\psi$, $\phi\Rightarrow\psi$, $\exists x\phi$ and $\forall x\psi$ are well-formed formulae.
+\end{itemize}
+
+Here are some possible other primitives that may be useful.
+\begin{itemize}
+  \item If $\phi$ is a wff, then $\iota(\phi)$ is a term.
+  \item If $\phi$ and $\psi$ are wff with a free variable, then $\phi\subset\psi$, $\phi\subseteq\psi$, $\phi=\psi$.
+  \item If $a$ is an atom, then $\textsc{Alt}(a)$ is the set of alternatives to $a$ and if $b$ is an atom, $a\in\textsc{Alt}(a)$ is a wff.\footnote{This might be done by ``magic''; i.e. a pre-defined set of valid alternatives in each scenario, which is fine as we are interested in \emph{language}-learning here not concept learning. }
+  \item Exh (lol) 
+  \item Some kind of dynamic assignment to variables.
+\end{itemize}
+
+\section{Montagovian Minimalist Grammars}
+Given our logic and semantic models, we need a way to connect it to natural language.
+We can do this with Minimalist Grammars by attaching simple lambda expressions to each lexical entry (a similar approach could be done for CCG). 
+As for movement, this can be handled in various ways (c.f. \cite{kobele_importing_2012} for one way)
+
+We define each lexical item of Montagovian MG as tuple consisting of:
+\begin{itemize}
+  \item The word
+  \item The features of the word (including both selectors and selectees)
+  \item A lambda expression 
+\end{itemize}
+
+In principle, these could be maximally unconstrained. 
+However, the interest of this thesis is to describe precisely what constraints are necessary to learn language. 
+As such, I will write \textbf{meta-grammars} which define possible lexical entries under some theory. 
+Eventually it might be nice to formally describe how these are written, but for now I will write them informally. 
+
+For example, the following meta-grammar only allows grammars which have proper names and intransitive verbs. 
+Here, I'll write the changable parts of a meta-grammar in {\color{red} red}.
+\begin{itemize}
+  \item \lex{\color{red} $w$}{d}{\color{red} e}\hspace{2em}A word, $w$  which has a single feature (showing its type \texttt{d}) and whose lambda expression \emph{must} be a atomic individual.
+  \item \lex{\color{red}$w$}{=d v}{\lambda x. \exists y {\color{red}S}(y)\land \textsc{Agent}(y, x)}\hspace{2em} A word, $w$ which has a two features (it takes a \texttt{d} as a complement and is itself of type \texttt{v}) and whose lambda expression requires there to be an event with property $S$ such that its complement is the agent.
+\end{itemize}
+
+
+\section{An example}
+The following section outlines a way of putting this all together and outlines possible learning pressures (e.g. potential functions to optimize grammars with).
+
+Let our grammars be restricted to the following meta-grammar:
+
+\begin{itemize}
+  \item \lex{$w$}{d}{\color{red}e}
+  \item \lex{$w$}{d=~=d~v}{\lambda yx. \exists y {\color{red} S}(y) \land \textsc{Agent}(z,x) \land \textsc{Patient}(z, y)}
+\end{itemize}
+
+This is a simple meta-grammar that allows sentences consisting of a proper name, a transitive verb and a proper name and only in SVO order. 
+In principle, one could allow meta-grammars that allow exclusively \lex{w}{d= =d v}{\lambda yx. P(x, y)} or exclusively \lex{w}{=d =d v}{\lambda yx. P(x, y)}, providing a dumb Principles and Parameters approach with a parameter switching between SOV and SVO.
+
+We then also define an alphabet, $\left\{\text{John, Mary, Phil, Sue, sees, hears}\right\}$, and our concepts for our meta-grammars.
+The concepts are the following individuals, $\{j,m,p,s\}$ and a set of properties, $\left\{S, H\right\}$.
+
+Given this meta-grammar, alphabet and conceptual repertoire, the possible grammars are defined by the power set of all possible lexical entries. 
+We call the set of possible lexical entries, $\Lambda$ and the set of possible grammars is thus $\mathcal{P}(\Lambda)$.
+The elements of $\Lambda$ for this problem are the following\footnote{I'm using $S(x)$ as a shorthand for $\lambda yx. \exists y S(y) \land \textsc{Agent}(z,x) \land \textsc{Patient}(z, y)$}
+
+\begin{footnotesize}
+\begin{multicols}{3}
+\begin{itemize}
+  \item \lex{John}{d}{j}
+  \item \lex{John}{d}{m}
+  \item \lex{John}{d}{p}
+  \item \lex{John}{d}{s}
+
+  \item \lex{Mary}{d}{j}
+  \item \lex{Mary}{d}{m}
+  \item \lex{Mary}{d}{p}
+  \item \lex{Mary}{d}{s}
+
+  \item \lex{Phil}{d}{j}
+  \item \lex{Phil}{d}{m}
+  \item \lex{Phil}{d}{p}
+  \item \lex{Phil}{d}{s}
+
+  \item \lex{Sue}{d}{j}
+  \item \lex{Sue}{d}{m}
+  \item \lex{Sue}{d}{p}
+  \item \lex{Sue}{d}{s}
+
+
+  \item \lex{sees}{d}{j}
+  \item \lex{sees}{d}{m}
+  \item \lex{sees}{d}{p}
+  \item \lex{sees}{d}{s}
+  \item \lex{sees}{d=~=d~v}{\lambda yx. S(x, y)}
+  \item \lex{sees}{d=~=d~v}{\lambda yx. H(x, y)}
+
+  \item \lex{hears}{d}{j}
+  \item \lex{hears}{d}{m}
+  \item \lex{hears}{d}{p}
+  \item \lex{hears}{d}{s}
+  \item \lex{hears}{d=~=d~v}{\lambda yx. S(x, y)}
+  \item \lex{hears}{d=~=d~v}{\lambda yx. H(x, y)}
+
+  \item \lex{Phil}{d=~=d~v}{\lambda yx. S(x, y)}
+  \item \lex{John}{d=~=d~v}{\lambda yx. S(x, y)}
+  \item \lex{Mary}{d=~=d~v}{\lambda yx. S(x, y)}
+  \item \lex{Sue}{d=~=d~v}{\lambda yx. S(x, y)}
+  \item \lex{Phil}{d=~=d~v}{\lambda yx. H(x, y)}
+  \item \lex{John}{d=~=d~v}{\lambda yx. H(x, y)}
+  \item \lex{Mary}{d=~=d~v}{\lambda yx. H(x, y)}
+  \item \lex{Sue}{d=~=d~v}{\lambda yx. H(x, y)}
+\end{itemize}
+\end{multicols}
+\end{footnotesize}
+
+
+
+\subsection{Learning a grammar}
+
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!75!black,title=Finding solutions]
+The toy examples I give here and simple enough to be solved with enumeration over all possibilities. 
+They can be tested directly using the \texttt{toy.py} script accompanying this document.
+
+In practice, actual solutions would be found using genetic algorithms or Monte-Carlo Markov Chains or some other method.
+\end{tcolorbox}
+
+
+Learning a lexicon, then, consists of identifying the right subset in $\mathcal{P}(\Lambda)$.
+The right subset, of course, depends on the data provided and what learning pressures we would like to optimize. 
+For example, table~\ref{tab:data}, shows the data as pairs of scenarios and sentences. 
+One learning pressure then, should likely be to maximise the number of sentences which can be parsed. 
+Another natural pressures, would be to maximise the number of sentences who have a parse that makes them true in that scenario. 
+\begin{table}[htb]
+\begin{tabular}{ccc}
+  \toprule
+  Provided string & Minimal situation & Situation provided to model\\ 
+  \midrule
+  John sees Mary & $\left\langle\left\{j, m\right\}, \left\{\left\langle S, \left\{\left\langle j, m \right\rangle\right\}\right\rangle\right\}\right\rangle$ &
+  $\left\langle\left\{j, m, p, s\right\}, \left\{\left\langle S, \left\{\left\langle j, m \right\rangle, \left\langle p, s \right\rangle\right\}\right\rangle\right\}\right\rangle$
+  \\
+  Phil sees Sue & $\left\langle\left\{p, s\right\}, \left\{\left\langle S, \left\{\left\langle p, s \right\rangle\right\}\right\rangle\right\}\right\rangle$ &
+  $\left\langle\left\{j, m, p, s\right\}, \left\{\left\langle S, \left\{\left\langle j, m \right\rangle, \left\langle p, s \right\rangle\right\}\right\rangle\right\}\right\rangle$
+  \\
+  \bottomrule
+\end{tabular}
+\caption{An example set of two sentences paired with different scenarios.\label{tab:data}
+  I've elided the representation to make it easier to represent: $\left\langle\left\{j, m\right\}, \left\{\left\langle S, \left\{\left\langle j, m \right\rangle\right\}\right\rangle\right\}\right\rangle$ is properly rendered as 
+  $\left\langle\left\{j, m\right\}, \left\{e_1\right\}, \left\{\left\langle e_1, j, \textsc{Agent}\right\rangle,\left\langle e_1, p, \textsc{Patient}\right\rangle\right\}, \left\{\left\langle S, \left\{e_1 \right\}\right\rangle \right\}\right\rangle$
+  }
+\end{table}
+
+\begin{tcolorbox}[colback=red!5!white,colframe=red!75!black,title=Solvable situation sets]
+Some situations are solvable for a certain meta-grammar, while others are not. 
+We say a situation is solveable such that there exists a lexicon such that: 
+\begin{enumerate}[i.]
+  \item Every sentence has a parse. 
+  \item Every sentence can be made true in its paired scenario.
+\end{enumerate}
+For example, there would be no way to learn ditransitive verbs with this meta-grammar. 
+Curiously, there is reason to suspect that the input of a child could very often be unsolvable (c.f. creolisation and home-sign) and that linguistic structure would be imposed by finding the best possible solution.
+\end{tcolorbox}
+
+To solve this dataset, one possible lexicon could be to simply take the language defined by $\Lambda$, that is, all possible lexical entries at once. 
+While this grammar will produce parses for every sentence, and every sentence will have a parse which is true in a scenario (this will always be true provided that the model is \textbf{solvable}).
+The grammar will however have enormous syntactic ambiguity and will not be an ideal solution.
+
+So, to actually find a good target grammar, we could minimise lexical ambiguity as well.
+This would mean that we prefer the grammar with the fewest cases of lexical ambiguity.
+Under these constraints, there would be two possible grammars as shown in Figure~\ref{fig:graammar}:
+
+\begin{figure}[htb]
+  \begin{subfigure}{0.5\textwidth}
+  \begin{itemize}
+    \item \lex{sees}{d=~=d~v}{\lambda yx. S(x, y)}
+    \item \lex{John}{d}{j}
+    \item \lex{Mary}{d}{m}
+    \item \lex{Phil}{d}{p}
+    \item \lex{Sue}{d}{s}
+  \end{itemize}
+  \caption{Grammar 1}
+  \end{subfigure}
+  \begin{subfigure}{0.5\textwidth}
+  \begin{itemize}
+    \item \lex{sees}{d=~=d~v}{\lambda yx. S(x, y)}
+    \item \lex{Phil}{d}{j}
+    \item \lex{Sue}{d}{m}
+    \item \lex{John}{d}{p}
+    \item \lex{Mary}{d}{s}
+  \end{itemize}
+  \caption{Grammar 2}
+  \end{subfigure}
+
+  \caption{Possible grammars for the data in table~\ref{tab:data} \label{fig:graammar}.}
+\end{figure}
+
+While this data would not be sufficient to allow us to narrow down the grammar to a single solution, it does eliminate $2^36-2$ grammars. 
+If we have one more scenario in which Phil is referred to while John is not present or vice versa, or the same thing with Sue and Mary, then we would be able to deduce the actual target grammar.
+
+\subsection{Learning pressures}
+\begin{itemize}
+  \item \textbf{Minimise lexical ambiguity!} Try to minimise the number of lexical items which share the same lemma.
+  \item \textbf{Maximise truth!} Try to make the maximal number of sentences true in their scenarios.
+  \item \textbf{Maximise parseability!} Try to find a valid parse for every sentence (n.b.\ probably need a mechanism for choosing the closest possible parse to do creolisation).
+  \item \textbf{Maximise presupposition!\footnote{This is tongue in cheek, but the actual maximise presupposition condition might be useful down the road.}} If a sentence can't be made true, its presuppositions should at least be true (in our simple model, a parse that mentions an absent atom has an undefined truth-value (i.e.\ its presuppositions are unsatisified)).
+\end{itemize}
+
+
+
+
+
+
+\printbibliography
+
+\end{document}
