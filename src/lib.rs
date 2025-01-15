@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+use ahash::RandomState;
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 pub type Actor = u16;
@@ -22,7 +25,7 @@ pub type PropertyLabel = u32;
 pub struct Scenario {
     actors: Vec<Actor>,
     thematic_relations: Vec<ThetaRoles>,
-    properties: Vec<(PropertyLabel, Vec<Entity>)>,
+    properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
 }
 
 mod ops;

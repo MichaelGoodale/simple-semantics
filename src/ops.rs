@@ -11,6 +11,7 @@ enum BinOp {
 #[derive(Debug, Clone, Copy)]
 enum MonOp {
     Not,
+    Property(PropertyLabel),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -19,6 +20,7 @@ enum Constant {
     EveryEvent,
     Tautology,
     Contradiction,
+    Property(PropertyLabel),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +37,6 @@ enum Expr {
     Quantifier(Quantifier, Variable, ExprRef, ExprRef),
     Variable(Variable),
     Entity(Entity),
-    PropertyLabel(PropertyLabel),
     Binary(BinOp, ExprRef, ExprRef),
     Unary(MonOp, ExprRef),
     Constant(Constant),
@@ -73,7 +74,6 @@ enum LanguageResult {
     Bool(bool),
     Entity(Entity),
     EntitySet(Vec<Entity>),
-    PropertyLabel(PropertyLabel),
 }
 impl TryFrom<LanguageResult> for Event {
     type Error = ();
@@ -81,6 +81,17 @@ impl TryFrom<LanguageResult> for Event {
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Entity(Entity::Event(x)) => Ok(x),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<LanguageResult> for Entity {
+    type Error = ();
+
+    fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
+        match value {
+            LanguageResult::Entity(x) => Ok(x),
             _ => Err(()),
         }
     }
@@ -96,6 +107,7 @@ impl TryFrom<LanguageResult> for Actor {
         }
     }
 }
+
 impl TryFrom<LanguageResult> for bool {
     type Error = ();
 
@@ -162,7 +174,6 @@ impl ExprPool {
             }
             Expr::Variable(i) => LanguageResult::Entity(variables.get(*i).unwrap()),
             Expr::Entity(a) => LanguageResult::Entity(*a),
-            Expr::PropertyLabel(p) => LanguageResult::PropertyLabel(*p),
             Expr::Binary(bin_op, lhs, rhs) => {
                 let lhs = self.interp(*lhs, scenario, variables);
                 let rhs = self.interp(*rhs, scenario, variables);
@@ -206,11 +217,24 @@ impl ExprPool {
                 ),
                 Constant::Tautology => LanguageResult::Bool(true),
                 Constant::Contradiction => LanguageResult::Bool(false),
+                Constant::Property(p) => match scenario.properties.get(p) {
+                    Some(property_members) => LanguageResult::EntitySet(property_members.clone()),
+                    None => LanguageResult::EntitySet(vec![]),
+                },
             },
             Expr::Unary(mon_op, arg) => {
                 let arg = self.interp(*arg, scenario, variables);
                 match mon_op {
                     MonOp::Not => LanguageResult::Bool(!TryInto::<bool>::try_into(arg).unwrap()),
+                    MonOp::Property(e) => {
+                        let arg: Entity = arg.try_into().unwrap();
+                        match scenario.properties.get(e) {
+                            Some(property_members) => {
+                                LanguageResult::Bool(property_members.contains(&arg))
+                            }
+                            None => LanguageResult::Bool(false),
+                        }
+                    }
                 }
             }
         }
@@ -219,6 +243,10 @@ impl ExprPool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use ahash::RandomState;
+
     use super::*;
     use crate::ThetaRoles;
 
@@ -231,7 +259,7 @@ mod tests {
                 agent: Some(0),
                 patient: None,
             }],
-            properties: vec![],
+            properties: HashMap::default(),
         };
 
         let simple_expr = ExprPool(vec![
@@ -271,7 +299,7 @@ mod tests {
                     patient: Some(0),
                 },
             ],
-            properties: vec![],
+            properties: HashMap::default(),
         };
 
         //For all actors there exists an event such that they are its agent.
@@ -320,7 +348,7 @@ mod tests {
                     patient: Some(0),
                 },
             ],
-            properties: vec![],
+            properties: HashMap::default(),
         };
 
         assert_eq!(
@@ -396,6 +424,97 @@ mod tests {
             Expr::Variable(Variable(0)),
             Expr::Variable(Variable(1)),
             Expr::Constant(Constant::Tautology),
+        ]);
+        assert_eq!(
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            LanguageResult::Bool(false)
+        );
+    }
+
+    #[test]
+    fn properties() {
+        let mut variables = VariableBuffer(vec![]);
+        let mut properties: HashMap<_, _, RandomState> = HashMap::default();
+        properties.insert(1, vec![Entity::Actor(0), Entity::Actor(1)]);
+        properties.insert(534, vec![Entity::Actor(1)]);
+        let simple_scenario = Scenario {
+            actors: vec![0, 1],
+            thematic_relations: vec![
+                ThetaRoles {
+                    agent: Some(0),
+                    patient: Some(0),
+                },
+                ThetaRoles {
+                    agent: Some(1),
+                    patient: Some(0),
+                },
+            ],
+            properties,
+        };
+
+        // everyone is of property type one.
+        let simple_expr = ExprPool(vec![
+            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Constant(Constant::Everyone),
+            Expr::Unary(MonOp::Property(1), ExprRef(3)),
+            Expr::Variable(Variable(0)),
+        ]);
+        assert_eq!(
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            LanguageResult::Bool(true)
+        );
+        // someone is of property type 534.
+        let simple_expr = ExprPool(vec![
+            Expr::Quantifier(Quantifier::Existential, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Constant(Constant::Everyone),
+            Expr::Unary(MonOp::Property(534), ExprRef(3)),
+            Expr::Variable(Variable(0)),
+        ]);
+        assert_eq!(
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            LanguageResult::Bool(true)
+        );
+    }
+
+    #[test]
+    fn complicated_restrictors() {
+        let mut variables = VariableBuffer(vec![]);
+        let mut properties: HashMap<_, _, RandomState> = HashMap::default();
+        properties.insert(534, vec![Entity::Actor(1)]);
+        properties.insert(235, vec![Entity::Event(0)]);
+        properties.insert(2, vec![Entity::Actor(0)]);
+        let simple_scenario = Scenario {
+            actors: vec![0, 1],
+            thematic_relations: vec![ThetaRoles {
+                agent: Some(1),
+                patient: Some(0),
+            }],
+            properties,
+        };
+
+        // all property type 534 objects are agents of a 235-event
+        let simple_expr = ExprPool(vec![
+            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Constant(Constant::Property(534)),
+            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(3), ExprRef(4)),
+            Expr::Constant(Constant::Property(235)),
+            Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
+        ]);
+        assert_eq!(
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            LanguageResult::Bool(true)
+        );
+        // all property type 2 objects are agents of a 235-event (which is false)
+        let simple_expr = ExprPool(vec![
+            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Constant(Constant::Property(2)),
+            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(3), ExprRef(4)),
+            Expr::Constant(Constant::Property(235)),
+            Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
