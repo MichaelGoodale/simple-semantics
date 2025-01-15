@@ -75,6 +75,14 @@ enum LanguageResult {
     Entity(Entity),
     EntitySet(Vec<Entity>),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LanguageResultType {
+    Bool,
+    Entity,
+    EntitySet,
+}
+
 impl TryFrom<LanguageResult> for Event {
     type Error = ();
 
@@ -141,6 +149,22 @@ impl ExprPool {
         ExprRef(idx.try_into().expect("Too many exprs in the pool"))
     }
 
+    fn get_type(&self, expr: ExprRef) -> LanguageResultType {
+        match self.get(expr) {
+            Expr::Quantifier(..) => LanguageResultType::Bool,
+            Expr::Variable(_) => LanguageResultType::Entity,
+            Expr::Entity(_) => LanguageResultType::Entity,
+            Expr::Binary(..) => LanguageResultType::Bool,
+            Expr::Unary(..) => LanguageResultType::Bool,
+            Expr::Constant(constant) => match constant {
+                Constant::Everyone | Constant::EveryEvent | Constant::Property(_) => {
+                    LanguageResultType::EntitySet
+                }
+                Constant::Tautology | Constant::Contradiction => LanguageResultType::Bool,
+            },
+        }
+    }
+
     fn interp(
         &self,
         expr: ExprRef,
@@ -149,11 +173,35 @@ impl ExprPool {
     ) -> LanguageResult {
         match self.get(expr) {
             Expr::Quantifier(q, var, restrictor, subformula) => {
-                let domain: Vec<Entity> = self
-                    .interp(*restrictor, scenario, variables)
-                    .try_into()
-                    .unwrap();
                 let mut variables = variables.clone();
+                let domain: Vec<Entity> = match self.get_type(*restrictor) {
+                    LanguageResultType::Bool => {
+                        //TODO: Check if the quantification is over actors or events somehow!
+                        let mut domain = vec![];
+                        for e in scenario.actors.iter() {
+                            variables.set(*var, Entity::Actor(*e));
+                            let truth_value_for_e: bool = self
+                                .interp(*restrictor, scenario, &mut variables)
+                                .try_into()
+                                .unwrap();
+                            if truth_value_for_e {
+                                domain.push(Entity::Actor(*e))
+                            }
+                        }
+                        domain
+                    }
+                    LanguageResultType::Entity => {
+                        let e: Entity = self
+                            .interp(*restrictor, scenario, &mut variables)
+                            .try_into()
+                            .unwrap();
+                        vec![e]
+                    }
+                    LanguageResultType::EntitySet => self
+                        .interp(*restrictor, scenario, &mut variables)
+                        .try_into()
+                        .unwrap(),
+                };
 
                 let mut result = match q {
                     Quantifier::Universal => true,
