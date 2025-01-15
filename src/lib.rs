@@ -21,10 +21,8 @@ pub type PropertyLabel = u32;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Scenario {
     actors: Vec<Actor>,
-    events: Vec<Event>,
     thematic_relations: Vec<ThetaRoles>,
-    actor_properties: Vec<(PropertyLabel, Vec<Actor>)>,
-    event_properties: Vec<(PropertyLabel, Vec<Event>)>,
+    properties: Vec<(PropertyLabel, Vec<Entity>)>,
 }
 
 mod ops;

@@ -200,7 +200,9 @@ impl ExprPool {
                     scenario.actors.iter().map(|x| Entity::Actor(*x)).collect(),
                 ),
                 Constant::EveryEvent => LanguageResult::EntitySet(
-                    scenario.events.iter().map(|x| Entity::Event(*x)).collect(),
+                    (0..scenario.thematic_relations.len())
+                        .map(|x| Entity::Event(x.try_into().unwrap()))
+                        .collect(),
                 ),
                 Constant::Tautology => LanguageResult::Bool(true),
                 Constant::Contradiction => LanguageResult::Bool(false),
@@ -225,13 +227,11 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             actors: vec![0, 1],
-            events: vec![0],
             thematic_relations: vec![ThetaRoles {
                 agent: Some(0),
                 patient: None,
             }],
-            actor_properties: vec![],
-            event_properties: vec![],
+            properties: vec![],
         };
 
         let simple_expr = ExprPool(vec![
@@ -261,7 +261,6 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             actors: vec![0, 1],
-            events: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {
                     agent: Some(0),
@@ -272,8 +271,7 @@ mod tests {
                     patient: Some(0),
                 },
             ],
-            actor_properties: vec![],
-            event_properties: vec![],
+            properties: vec![],
         };
 
         //For all actors there exists an event such that they are its agent.
@@ -312,7 +310,6 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             actors: vec![0, 1],
-            events: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {
                     agent: Some(0),
@@ -323,8 +320,7 @@ mod tests {
                     patient: Some(0),
                 },
             ],
-            actor_properties: vec![],
-            event_properties: vec![],
+            properties: vec![],
         };
 
         assert_eq!(
