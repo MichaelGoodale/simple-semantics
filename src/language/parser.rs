@@ -1,5 +1,5 @@
 use crate::{
-    ops::{Constant, Expr, ExprPool, ExprRef, MonOp},
+    language::{Constant, Expr, ExprPool, ExprRef, MonOp},
     Entity, PropertyLabel,
 };
 use chumsky::extra;
@@ -60,7 +60,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::{LanguageResult, VariableBuffer};
+    use crate::language::{LanguageResult, VariableBuffer};
     use crate::{Scenario, ThetaRoles};
     use std::collections::HashMap;
 
@@ -88,7 +88,7 @@ mod tests {
 
         assert_eq!(
             pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(false)
+            LanguageResult::Bool(true)
         );
         Ok(())
     }

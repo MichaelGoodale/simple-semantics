@@ -28,5 +28,4 @@ pub struct Scenario {
     properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
 }
 
-mod ops;
-mod parser;
+mod language;

@@ -1,7 +1,7 @@
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 #[derive(Debug, Clone, Copy)]
-pub enum BinOp {
+enum BinOp {
     AgentOf,
     PatientOf,
     And,
@@ -9,13 +9,13 @@ pub enum BinOp {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum MonOp {
+enum MonOp {
     Not,
     Property(PropertyLabel),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Constant {
+enum Constant {
     Everyone,
     EveryEvent,
     Tautology,
@@ -24,16 +24,16 @@ pub enum Constant {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Variable(u32);
+struct Variable(u32);
 
 #[derive(Debug, Clone, Copy)]
-pub enum Quantifier {
+enum Quantifier {
     Universal,
     Existential,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Expr {
+enum Expr {
     Quantifier(Quantifier, Variable, ExprRef, ExprRef),
     Variable(Variable),
     Entity(Entity),
@@ -43,13 +43,13 @@ pub enum Expr {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ExprRef(u32);
+struct ExprRef(u32);
 
 #[derive(Debug, Clone, Default)]
-pub struct ExprPool(Vec<Expr>);
+struct ExprPool(Vec<Expr>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct VariableBuffer(pub Vec<Option<Entity>>);
+struct VariableBuffer(Vec<Option<Entity>>);
 
 impl VariableBuffer {
     fn set(&mut self, v: Variable, x: Entity) {
@@ -69,7 +69,7 @@ impl VariableBuffer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LanguageResult {
+enum LanguageResult {
     PresuppositionError,
     Bool(bool),
     Entity(Entity),
@@ -292,6 +292,8 @@ impl ExprPool {
         }
     }
 }
+
+mod parser;
 
 #[cfg(test)]
 mod tests {
