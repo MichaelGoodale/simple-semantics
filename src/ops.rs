@@ -568,5 +568,54 @@ mod tests {
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
             LanguageResult::Bool(false)
         );
+
+        let mut properties: HashMap<_, _, RandomState> = HashMap::default();
+        properties.insert(3, vec![Entity::Actor(1), Entity::Actor(2)]);
+        properties.insert(2, vec![Entity::Actor(1), Entity::Actor(3)]);
+        properties.insert(4, vec![Entity::Event(0)]);
+        let simple_scenario = Scenario {
+            actors: vec![0, 1, 2, 3, 4],
+            thematic_relations: vec![ThetaRoles {
+                agent: Some(1),
+                patient: Some(0),
+            }],
+            properties,
+        };
+        //All property type 2 and property type 3 actors are an agent of an event
+        let simple_expr = ExprPool(vec![
+            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(6)),
+            Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
+            Expr::Unary(MonOp::Property(2), ExprRef(3)),
+            Expr::Variable(Variable(0)),
+            Expr::Unary(MonOp::Property(3), ExprRef(5)),
+            Expr::Variable(Variable(0)), //5
+            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(7), ExprRef(8)),
+            Expr::Constant(Constant::EveryEvent),
+            Expr::Binary(BinOp::AgentOf, ExprRef(9), ExprRef(10)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
+        ]);
+        assert_eq!(
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            LanguageResult::Bool(true)
+        );
+        //All property type 2 and property type 3 actors are patients of an event
+        let simple_expr = ExprPool(vec![
+            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(6)),
+            Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
+            Expr::Unary(MonOp::Property(2), ExprRef(3)),
+            Expr::Variable(Variable(0)),
+            Expr::Unary(MonOp::Property(3), ExprRef(5)),
+            Expr::Variable(Variable(0)), //5
+            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(7), ExprRef(8)),
+            Expr::Constant(Constant::EveryEvent),
+            Expr::Binary(BinOp::PatientOf, ExprRef(9), ExprRef(10)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
+        ]);
+        assert_eq!(
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            LanguageResult::Bool(false)
+        );
     }
 }
