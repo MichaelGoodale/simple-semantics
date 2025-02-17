@@ -1,7 +1,7 @@
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 #[derive(Debug, Clone, Copy)]
-enum BinOp {
+pub enum BinOp {
     AgentOf,
     PatientOf,
     And,
@@ -9,13 +9,13 @@ enum BinOp {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum MonOp {
+pub enum MonOp {
     Not,
     Property(PropertyLabel),
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Constant {
+pub enum Constant {
     Everyone,
     EveryEvent,
     Tautology,
@@ -24,16 +24,16 @@ enum Constant {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Variable(u32);
+pub struct Variable(u32);
 
 #[derive(Debug, Clone, Copy)]
-enum Quantifier {
+pub enum Quantifier {
     Universal,
     Existential,
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Expr {
+pub enum Expr {
     Quantifier(Quantifier, Variable, ExprRef, ExprRef),
     Variable(Variable),
     Entity(Entity),
@@ -43,13 +43,13 @@ enum Expr {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ExprRef(u32);
+pub struct ExprRef(u32);
 
-#[derive(Debug, Clone)]
-struct ExprPool(Vec<Expr>);
+#[derive(Debug, Clone, Default)]
+pub struct ExprPool(Vec<Expr>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct VariableBuffer(Vec<Option<Entity>>);
+pub struct VariableBuffer(pub Vec<Option<Entity>>);
 
 impl VariableBuffer {
     fn set(&mut self, v: Variable, x: Entity) {
@@ -69,7 +69,7 @@ impl VariableBuffer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum LanguageResult {
+pub enum LanguageResult {
     PresuppositionError,
     Bool(bool),
     Entity(Entity),
@@ -139,11 +139,15 @@ impl TryFrom<LanguageResult> for Vec<Entity> {
 }
 
 impl ExprPool {
+    pub fn new() -> ExprPool {
+        ExprPool(vec![])
+    }
+
     fn get(&self, expr: ExprRef) -> &Expr {
         &self.0[expr.0 as usize]
     }
 
-    fn add(&mut self, expr: Expr) -> ExprRef {
+    pub fn add(&mut self, expr: Expr) -> ExprRef {
         let idx = self.0.len();
         self.0.push(expr);
         ExprRef(idx.try_into().expect("Too many exprs in the pool"))
@@ -165,7 +169,7 @@ impl ExprPool {
         }
     }
 
-    fn interp(
+    pub fn interp(
         &self,
         expr: ExprRef,
         scenario: &Scenario,
