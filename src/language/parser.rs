@@ -187,6 +187,15 @@ mod tests {
             pool.0.interp(parse, &simple_scenario, &mut variables),
             LanguageResult::Bool(true)
         );
+        let mut pool = extra::SimpleState(ExprPool::default());
+        let parse = parser()
+            .parse_with_state("p1(a1) & ~(True & p1(a1))", &mut pool)
+            .unwrap();
+
+        assert_eq!(
+            pool.0.interp(parse, &simple_scenario, &mut variables),
+            LanguageResult::Bool(false)
+        );
         Ok(())
     }
 }
