@@ -1,6 +1,6 @@
 use crate::{
     language::{Constant, Expr, ExprPool, ExprRef, MonOp},
-    Entity, PropertyLabel,
+    Entity,
 };
 use chumsky::extra;
 use chumsky::prelude::*;
@@ -94,7 +94,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
         .then_ignore(just('('))
         .then(literal_var)
         .then_ignore(just(','))
-        .then(sets.or(entity))
+        .then(sets.or(entity).or(non_quantified_statement.clone()))
         .then_ignore(just(','))
         .then(non_quantified_statement.clone())
         .then_ignore(just(')'))
@@ -112,10 +112,15 @@ mod tests {
     use crate::{Scenario, ThetaRoles};
     use std::collections::HashMap;
 
+    fn get_parse(s: &str, simple_scenario: &Scenario) -> LanguageResult {
+        let mut pool = extra::SimpleState(ExprPool::default());
+        let parse = parser().parse_with_state(s, &mut pool).unwrap();
+        let mut variables = VariableBuffer(vec![]);
+        pool.0.interp(parse, simple_scenario, &mut variables)
+    }
+
     #[test]
     fn parse_test() -> anyhow::Result<()> {
-        let mut variables = VariableBuffer(vec![]);
-
         let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
 
         properties.insert(1, vec![Entity::Actor(1)]);
@@ -136,110 +141,27 @@ mod tests {
             properties,
         };
 
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser().parse_with_state("True", &mut pool).unwrap();
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser().parse_with_state("~~~False", &mut pool).unwrap();
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state("~AgentOf(a1,  e0)", &mut pool)
-            .unwrap();
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state("True & False", &mut pool)
-            .unwrap();
-
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(false)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state("(True & False) | True", &mut pool)
-            .unwrap();
-
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state("~(True & False) | False", &mut pool)
-            .unwrap();
-
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state("p1(a1) & ~p1(a0)", &mut pool)
-            .unwrap();
-
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state("p1(a1) & ~p1(a0) & p1(a1)", &mut pool)
-            .unwrap();
-
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state("p1(a1) & ~(True & p1(a1))", &mut pool)
-            .unwrap();
-
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(false)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state("every(x0, all_a, p4(x0))", &mut pool)
-            .unwrap();
-
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
-
-        let mut pool = extra::SimpleState(ExprPool::default());
-        let parse = parser()
-            .parse_with_state(
-                "(every(x0, all_a, p4(x0))) & (some(x0, all_e, AgentOf(a0, x0)))",
-                &mut pool,
-            )
-            .unwrap();
-
-        assert_eq!(
-            pool.0.interp(parse, &simple_scenario, &mut variables),
-            LanguageResult::Bool(true)
-        );
+        for statement in [
+            "True",
+            "~~~False",
+            "~AgentOf(a1, e0)",
+            "~(True & False)",
+            "True | False",
+            "(True & False) | True",
+            "~(True & False) | False",
+            "p1(a1) & ~p1(a0)",
+            "p1(a1) & ~p1(a0) & p1(a1)",
+            "~(p1(a1) & ~(True & p1(a1)))",
+            "every(x0, all_a, p4(x0))",
+            "every(x0, p4, p4(x0))",
+            "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), p4(x0))",
+        ] {
+            println!("{statement}");
+            assert_eq!(
+                get_parse(statement, &simple_scenario),
+                LanguageResult::Bool(true)
+            );
+        }
         Ok(())
     }
 }
