@@ -5,7 +5,7 @@ use crate::{
 use chumsky::extra;
 use chumsky::prelude::*;
 
-use super::BinOp;
+use super::{BinOp, Quantifier, Variable};
 
 type ExtraType<'a> = extra::Full<Simple<'a, char>, extra::SimpleState<ExprPool>, ()>;
 
@@ -29,8 +29,8 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
     .padded();
 
     let sets = choice((
-        just("everyone").to(Constant::Everyone),
-        just("everyevent").to(Constant::EveryEvent),
+        just("all_a").to(Constant::Everyone),
+        just("all_e").to(Constant::EveryEvent),
         just("p")
             .ignore_then(text::int::<&str, ExtraType>(10))
             .map(|p| Constant::Property(p.parse().unwrap())),
@@ -38,7 +38,14 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
     .map_with(|c, e| e.state().add(Expr::Constant(c)))
     .padded();
 
-    let entity = actor_or_event.padded();
+    let literal_var = just('x')
+        .ignore_then(text::int::<&str, ExtraType>(10))
+        .padded()
+        .map(|n| Variable(n.parse().unwrap()));
+
+    let var = literal_var.map_with(|n, e| e.state().add(Expr::Variable(n)));
+
+    let entity = actor_or_event.or(var).padded();
 
     let truth_value = recursive(|expr| {
         let has_property = just("p")
@@ -63,7 +70,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
         let atom = true_or_false
             .or(bin_op)
             .or(has_property)
-            .or(expr.delimited_by(just('('), just(')')))
+            .or(expr.clone().delimited_by(just('('), just(')')))
             .padded();
 
         let neg = just("~")
@@ -77,9 +84,22 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
                 .repeated(),
             |lhs, (op, rhs), e| e.state().add(Expr::Binary(op, lhs, rhs)),
         );
-        //.map_with(|(phi, (op, psi)), e| e.state().add(Expr::Binary(op, phi, psi)));
 
-        logical_op.or(neg)
+        let non_quantified_statement = logical_op.or(neg).padded();
+
+        let quantified = choice((
+            just("every").to(Quantifier::Universal),
+            just("some").to(Quantifier::Existential),
+        ))
+        .then_ignore(just('('))
+        .then(literal_var)
+        .then_ignore(just(','))
+        .then(sets.or(entity))
+        .then_ignore(just(','))
+        .then(non_quantified_statement.clone())
+        .then_ignore(just(')'))
+        .map_with(|(((q, v), rest), phi), e| e.state().add(Expr::Quantifier(q, v, rest, phi)));
+        non_quantified_statement.or(quantified)
     });
 
     truth_value.then_ignore(end())
@@ -99,6 +119,7 @@ mod tests {
         let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
 
         properties.insert(1, vec![Entity::Actor(1)]);
+        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
 
         let simple_scenario = Scenario {
             actors: vec![0, 1],
@@ -195,6 +216,29 @@ mod tests {
         assert_eq!(
             pool.0.interp(parse, &simple_scenario, &mut variables),
             LanguageResult::Bool(false)
+        );
+
+        let mut pool = extra::SimpleState(ExprPool::default());
+        let parse = parser()
+            .parse_with_state("every(x0, all_a, p4(x0))", &mut pool)
+            .unwrap();
+
+        assert_eq!(
+            pool.0.interp(parse, &simple_scenario, &mut variables),
+            LanguageResult::Bool(true)
+        );
+
+        let mut pool = extra::SimpleState(ExprPool::default());
+        let parse = parser()
+            .parse_with_state(
+                "(every(x0, all_a, p4(x0))) & (some(x0, all_e, AgentOf(a0, x0)))",
+                &mut pool,
+            )
+            .unwrap();
+
+        assert_eq!(
+            pool.0.interp(parse, &simple_scenario, &mut variables),
+            LanguageResult::Bool(true)
         );
         Ok(())
     }
