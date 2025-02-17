@@ -41,6 +41,14 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
     let entity = actor_or_event.padded();
 
     let truth_value = recursive(|expr| {
+        let has_property = just("p")
+            .ignore_then(text::int::<&str, ExtraType>(10))
+            .map(|p| MonOp::Property(p.parse().unwrap()))
+            .then_ignore(just('('))
+            .then(entity)
+            .then_ignore(just(')'))
+            .map_with(|(p, a), e| e.state().add(Expr::Unary(p, a)));
+
         let bin_op = choice((
             just("AgentOf").to(BinOp::AgentOf),
             just("PatientOf").to(BinOp::PatientOf),
@@ -54,6 +62,7 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
 
         let atom = true_or_false
             .or(bin_op)
+            .or(has_property)
             .or(expr.delimited_by(just('('), just(')')))
             .padded();
 
@@ -61,11 +70,14 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
             .repeated()
             .foldr_with(atom, |_, b, e| e.state().add(Expr::Unary(MonOp::Not, b)));
 
-        let logical_op = neg
-            .clone()
-            .then(choice((just('&').to(BinOp::And), just('|').to(BinOp::Or))).padded())
-            .then(neg.clone())
-            .map_with(|((phi, op), psi), e| e.state().add(Expr::Binary(op, phi, psi)));
+        let logical_op = neg.clone().foldl_with(
+            choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
+                .padded()
+                .then(neg.clone())
+                .repeated(),
+            |lhs, (op, rhs), e| e.state().add(Expr::Binary(op, lhs, rhs)),
+        );
+        //.map_with(|(phi, (op, psi)), e| e.state().add(Expr::Binary(op, phi, psi)));
 
         logical_op.or(neg)
     });
@@ -83,6 +95,11 @@ mod tests {
     #[test]
     fn parse_test() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
+
+        let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
+
+        properties.insert(1, vec![Entity::Actor(1)]);
+
         let simple_scenario = Scenario {
             actors: vec![0, 1],
             thematic_relations: vec![
@@ -95,7 +112,7 @@ mod tests {
                     patient: Some(0),
                 },
             ],
-            properties: HashMap::default(),
+            properties,
         };
 
         let mut pool = extra::SimpleState(ExprPool::default());
@@ -140,9 +157,30 @@ mod tests {
             pool.0.interp(parse, &simple_scenario, &mut variables),
             LanguageResult::Bool(true)
         );
+
         let mut pool = extra::SimpleState(ExprPool::default());
         let parse = parser()
-            .parse_with_state("~(True & False) | True", &mut pool)
+            .parse_with_state("~(True & False) | False", &mut pool)
+            .unwrap();
+
+        assert_eq!(
+            pool.0.interp(parse, &simple_scenario, &mut variables),
+            LanguageResult::Bool(true)
+        );
+
+        let mut pool = extra::SimpleState(ExprPool::default());
+        let parse = parser()
+            .parse_with_state("p1(a1) & ~p1(a0)", &mut pool)
+            .unwrap();
+
+        assert_eq!(
+            pool.0.interp(parse, &simple_scenario, &mut variables),
+            LanguageResult::Bool(true)
+        );
+
+        let mut pool = extra::SimpleState(ExprPool::default());
+        let parse = parser()
+            .parse_with_state("p1(a1) & ~p1(a0) & p1(a1)", &mut pool)
             .unwrap();
 
         assert_eq!(
