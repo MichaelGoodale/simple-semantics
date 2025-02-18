@@ -13,7 +13,7 @@ pub enum Entity {
     Event(Event),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThetaRoles {
     agent: Option<Actor>,
     patient: Option<Actor>,
@@ -21,7 +21,7 @@ pub struct ThetaRoles {
 
 pub type PropertyLabel = u32;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct Scenario {
     actors: Vec<Actor>,
     thematic_relations: Vec<ThetaRoles>,
@@ -29,3 +29,4 @@ pub struct Scenario {
 }
 
 mod language;
+mod scenario;
