@@ -47,15 +47,14 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
             expr_ref
         });
 
-    /*
-        let actor_or_event_keyword = just("a")
-            .ignore_then(text::ident::<&str, ExtraType>())
-            .map_with(|keyword, e| {
-                let expr = Expr::Entity(Entity::Actor(e.state().get_actor_label(keyword)));
-                e.state().add(expr)
-            });
-    */
-    let actor_or_event = (actor_or_event_number).padded();
+    let actor_or_event_keyword = just("a_")
+        .ignore_then(text::ident::<&str, ExtraType>())
+        .map_with(|keyword, e| {
+            let expr = Expr::Entity(Entity::Actor(e.state().get_actor_label(keyword)));
+            e.state().add(expr)
+        });
+
+    let actor_or_event = choice((actor_or_event_keyword, actor_or_event_number)).padded();
 
     let true_or_false = choice((
         text::ascii::keyword::<_, _, ExtraType>("True").to(Constant::Tautology),
