@@ -28,7 +28,7 @@ pub struct Scenario {
     properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
 }
 
-pub struct TrainingDataset {
+pub struct LabelledScenarios {
     scenarios: Vec<Scenario>,
     property_labels: HashMap<String, PropertyLabel, RandomState>,
     actor_labels: HashMap<String, Actor, RandomState>,

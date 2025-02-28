@@ -1,13 +1,31 @@
 use crate::{
     language::{Constant, Expr, ExprPool, ExprRef, MonOp},
-    Entity,
+    Entity, LabelledScenarios,
 };
 use chumsky::extra;
 use chumsky::prelude::*;
 
 use super::{BinOp, Quantifier, Variable};
 
-type ExtraType<'a> = extra::Full<Simple<'a, char>, extra::SimpleState<ExprPool>, ()>;
+struct LabeledExprPool<'a> {
+    pool: ExprPool,
+    labels: &'a mut LabelledScenarios,
+}
+
+impl<'a> LabeledExprPool<'a> {
+    fn new(labels: &'a mut LabelledScenarios) -> Self {
+        LabeledExprPool {
+            pool: ExprPool::default(),
+            labels,
+        }
+    }
+
+    fn add(&mut self, e: Expr) -> ExprRef {
+        self.pool.add(e)
+    }
+}
+
+type ExtraType<'a> = extra::Full<Simple<'a, char>, extra::SimpleState<LabeledExprPool<'a>>, ()>;
 
 fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
     let actor_or_event = one_of("ae")
@@ -109,14 +127,18 @@ fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
 mod tests {
     use super::*;
     use crate::language::{LanguageResult, VariableBuffer};
-    use crate::{Scenario, ThetaRoles};
+    use crate::{LabelledScenarios, Scenario, ThetaRoles};
     use std::collections::HashMap;
 
-    fn get_parse(s: &str, simple_scenario: &Scenario) -> LanguageResult {
-        let mut pool = extra::SimpleState(ExprPool::default());
+    fn get_parse(
+        s: &str,
+        simple_scenario: &Scenario,
+        labels: &mut LabelledScenarios,
+    ) -> LanguageResult {
+        let mut pool = extra::SimpleState(LabeledExprPool::new(labels));
         let parse = parser().parse_with_state(s, &mut pool).unwrap();
         let mut variables = VariableBuffer(vec![]);
-        pool.0.interp(parse, simple_scenario, &mut variables)
+        pool.pool.interp(parse, simple_scenario, &mut variables)
     }
 
     #[test]
@@ -141,6 +163,12 @@ mod tests {
             properties,
         };
 
+        let mut labels = LabelledScenarios {
+            scenarios: vec![],
+            actor_labels: HashMap::default(),
+            property_labels: HashMap::default(),
+        };
+
         for statement in [
             "True",
             "~~~False",
@@ -161,7 +189,7 @@ mod tests {
         ] {
             println!("{statement}");
             assert_eq!(
-                get_parse(statement, &simple_scenario),
+                get_parse(statement, &simple_scenario, &mut labels),
                 LanguageResult::Bool(true)
             );
         }

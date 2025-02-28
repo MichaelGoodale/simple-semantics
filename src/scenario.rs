@@ -2,7 +2,7 @@ use ahash::RandomState;
 use chumsky::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ThetaRoles, TrainingDataset};
+use crate::{Actor, Entity, Event, LabelledScenarios, PropertyLabel, Scenario, ThetaRoles};
 
 struct StringThetaRole<'a> {
     agent: Option<&'a str>,
@@ -14,7 +14,7 @@ struct StringEvents<'a> {
     event_props: ahash::HashMap<&'a str, Vec<Entity>>,
 }
 
-fn scenario_parser<'a>() -> impl Parser<'a, &'a str, TrainingDataset> {
+fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
     let properties = text::ident()
         .padded()
         .separated_by(just(','))
@@ -139,7 +139,7 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, TrainingDataset> {
 
     scenario
         .map(|((actors, actor_props), events)| {
-            let mut dataset = TrainingDataset {
+            let mut dataset = LabelledScenarios {
                 scenarios: vec![],
                 actor_labels: HashMap::default(),
                 property_labels: HashMap::default(),
@@ -158,7 +158,7 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, TrainingDataset> {
 }
 
 fn add_scenario<'a>(
-    training_dataset: &mut TrainingDataset,
+    training_dataset: &mut LabelledScenarios,
     actors: Vec<&'a str>,
     actor_props: HashMap<&'a str, Vec<&'a str>, RandomState>,
     events: Option<StringEvents>,
@@ -219,7 +219,7 @@ fn add_scenario<'a>(
     });
 }
 
-impl TrainingDataset {
+impl LabelledScenarios {
     fn get_property_label(&mut self, label: &str) -> PropertyLabel {
         let n = self.property_labels.len();
         *self
