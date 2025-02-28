@@ -2,7 +2,7 @@ use ahash::RandomState;
 use chumsky::prelude::*;
 use std::collections::HashMap;
 
-use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ThetaRoles};
+use crate::{Actor, Entity, Event, Scenario, ThetaRoles};
 
 struct StringThetaRole<'a> {
     agent: Option<&'a str>,
@@ -10,18 +10,17 @@ struct StringThetaRole<'a> {
 }
 
 fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
-    let properties = text::int::<&str, _>(10)
-        .map(|n| n.parse().unwrap())
+    let properties = text::ident()
         .padded()
         .separated_by(just(','))
-        .collect::<Vec<PropertyLabel>>()
+        .collect::<Vec<&str>>()
         .delimited_by(just('('), just(')'));
 
     let actor = text::ident().padded().then(properties.or_not());
 
     let actors = actor
         .map(|(a, p)| {
-            let mut properties: HashMap<PropertyLabel, Vec<&str>, RandomState> = HashMap::default();
+            let mut properties: HashMap<&str, Vec<&str>, RandomState> = HashMap::default();
             if let Some(property_labels) = p {
                 for property in property_labels {
                     properties.insert(property, vec![a]);
@@ -88,8 +87,7 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
     let events = event
         .or_not()
         .map(|event_data| {
-            let mut properties: HashMap<PropertyLabel, Vec<Entity>, RandomState> =
-                HashMap::default();
+            let mut properties: HashMap<&str, Vec<Entity>, RandomState> = HashMap::default();
 
             let events = match event_data {
                 Some((e, None)) => {
@@ -143,7 +141,7 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
             let (events, event_props) =
                 events.unwrap_or_else(|| (Vec::default(), HashMap::default()));
 
-            let mut properties: HashMap<PropertyLabel, Vec<Entity>, _> = actor_props
+            let mut properties: HashMap<&str, Vec<Entity>, RandomState> = actor_props
                 .into_iter()
                 .map(|(k, v)| {
                     (
@@ -179,10 +177,21 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
                 })
                 .collect();
 
+            let mut property_mappings: Vec<&str> = properties.keys().copied().collect();
+            property_mappings.sort();
+            let property_mappings: HashMap<&str, u32> = property_mappings
+                .into_iter()
+                .enumerate()
+                .map(|(v, k)| (k, v as u32))
+                .collect();
+
             Scenario {
                 actors,
                 thematic_relations,
-                properties,
+                properties: properties
+                    .into_iter()
+                    .map(|(k, v)| (*property_mappings.get(k).unwrap(), v))
+                    .collect(),
             }
         })
 }
@@ -255,16 +264,16 @@ mod test {
                 },
             ],
             properties: HashMap::from_iter([
-                (34, vec![Entity::Actor(0), Entity::Actor(2)]),
-                (32, vec![Entity::Event(0)]),
-                (1234, vec![Entity::Actor(2), Entity::Event(2)]),
+                (2, vec![Entity::Actor(0), Entity::Actor(2)]),
+                (1, vec![Entity::Event(0)]),
+                (0, vec![Entity::Actor(2), Entity::Event(2)]),
             ]),
         };
 
         assert_eq!(
             scenario,
             scenario_parser()
-                .parse("<a (34),b,c (1234, 34);{(32)},{A: a},{P: c (1234)}>")
+                .parse("<a (Red),b,c (Blue, Red);{(Green)},{A: a},{P: c (Blue)}>")
                 .unwrap()
         );
         Ok(())
