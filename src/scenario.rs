@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ThetaRoles};
 
-struct StringThetaRole {
-    agent: Option<String>,
-    patient: Option<String>,
+struct StringThetaRole<'a> {
+    agent: Option<&'a str>,
+    patient: Option<&'a str>,
 }
 
 fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
@@ -17,31 +17,27 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
         .collect::<Vec<PropertyLabel>>()
         .delimited_by(just('('), just(')'));
 
-    let actor = text::ident()
-        .padded()
-        .map(|n: &str| n.parse().unwrap())
-        .then(properties.or_not());
+    let actor = text::ident().padded().then(properties.or_not());
 
     let actors = actor
-        .map(|(a, p): (String, _)| {
-            let mut properties: HashMap<PropertyLabel, Vec<String>, RandomState> =
-                HashMap::default();
+        .map(|(a, p)| {
+            let mut properties: HashMap<PropertyLabel, Vec<&str>, RandomState> = HashMap::default();
             if let Some(property_labels) = p {
                 for property in property_labels {
-                    properties.insert(property, vec![a.clone()]);
+                    properties.insert(property, vec![a]);
                 }
             }
             (vec![a], properties)
         })
         .foldl(
             just(',').ignore_then(actor).repeated(),
-            |(mut actors, mut properties), (actor, actor_props): (String, _)| {
+            |(mut actors, mut properties), (actor, actor_props)| {
                 if let Some(property_labels) = actor_props {
                     for property in property_labels {
                         properties
                             .entry(property)
-                            .and_modify(|x| x.push(actor.clone()))
-                            .or_insert(vec![actor.clone()]);
+                            .and_modify(|x| x.push(actor))
+                            .or_insert(vec![actor]);
                     }
                 }
 
@@ -55,7 +51,6 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
             .padded()
             .ignore_then(just(':'))
             .ignore_then(text::ident().padded())
-            .map(|n: &str| n.parse().unwrap())
             .padded()
     };
 
@@ -135,7 +130,7 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
         .padded()
         .then_ignore(end())
         .map(|((actors, actor_props), events)| {
-            let mut keywords: HashMap<String, usize> = HashMap::default();
+            let mut keywords: HashMap<&str, usize> = HashMap::default();
 
             let actors: Vec<Actor> = actors
                 .into_iter()
