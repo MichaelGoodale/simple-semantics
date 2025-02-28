@@ -2,14 +2,14 @@ use ahash::RandomState;
 use chumsky::prelude::*;
 use std::collections::HashMap;
 
-use crate::{Actor, Entity, Event, Scenario, ThetaRoles};
+use crate::{Actor, Entity, Event, Scenario, ThetaRoles, TrainingDataset};
 
 struct StringThetaRole<'a> {
     agent: Option<&'a str>,
     patient: Option<&'a str>,
 }
 
-fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
+fn scenario_parser<'a>() -> impl Parser<'a, &'a str, TrainingDataset> {
     let properties = text::ident()
         .padded()
         .separated_by(just(','))
@@ -128,13 +128,13 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
         .padded()
         .then_ignore(end())
         .map(|((actors, actor_props), events)| {
-            let mut keywords: HashMap<&str, usize> = HashMap::default();
+            let mut actor_labels: HashMap<&str, u16> = HashMap::default();
 
             let actors: Vec<Actor> = actors
                 .into_iter()
                 .map(|x| {
-                    let n = keywords.len();
-                    *keywords.entry(x).or_insert(n) as u16
+                    let n = actor_labels.len();
+                    *actor_labels.entry(x).or_insert(n as u16)
                 })
                 .collect();
 
@@ -148,8 +148,8 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
                         k,
                         v.into_iter()
                             .map(|x| {
-                                let n = keywords.len();
-                                Entity::Actor(*keywords.entry(x).or_insert(n) as u16)
+                                let n = actor_labels.len();
+                                Entity::Actor(*actor_labels.entry(x).or_insert(n as u16))
                             })
                             .collect(),
                     )
@@ -167,30 +167,37 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
                 .into_iter()
                 .map(|x| ThetaRoles {
                     agent: x.agent.map(|x| {
-                        let n = keywords.len();
-                        *keywords.entry(x).or_insert(n) as u16
+                        let n = actor_labels.len();
+                        *actor_labels.entry(x).or_insert(n as u16)
                     }),
                     patient: x.patient.map(|x| {
-                        let n = keywords.len();
-                        *keywords.entry(x).or_insert(n) as u16
+                        let n = actor_labels.len();
+                        *actor_labels.entry(x).or_insert(n as u16)
                     }),
                 })
                 .collect();
 
-            let mut property_mappings: Vec<&str> = properties.keys().copied().collect();
-            property_mappings.sort();
-            let property_mappings: HashMap<&str, u32> = property_mappings
+            let mut property_labels: Vec<&str> = properties.keys().copied().collect();
+            property_labels.sort();
+            let property_labels: HashMap<String, u32, RandomState> = property_labels
                 .into_iter()
                 .enumerate()
-                .map(|(v, k)| (k, v as u32))
+                .map(|(v, k)| (k.to_string(), v as u32))
                 .collect();
 
-            Scenario {
-                actors,
-                thematic_relations,
-                properties: properties
+            TrainingDataset {
+                scenarios: vec![Scenario {
+                    actors,
+                    thematic_relations,
+                    properties: properties
+                        .into_iter()
+                        .map(|(k, v)| (*property_labels.get(k).unwrap(), v))
+                        .collect(),
+                }],
+                property_labels,
+                actor_labels: actor_labels
                     .into_iter()
-                    .map(|(k, v)| (*property_mappings.get(k).unwrap(), v))
+                    .map(|(k, v)| (k.to_string(), v))
                     .collect(),
             }
         })
@@ -208,8 +215,24 @@ mod test {
             properties: HashMap::default(),
         };
 
-        assert_eq!(scenario, scenario_parser().parse("<John>").unwrap());
-        assert_eq!(scenario, scenario_parser().parse("<John;>").unwrap());
+        assert_eq!(
+            scenario,
+            *scenario_parser()
+                .parse("<John>")
+                .unwrap()
+                .scenarios
+                .first()
+                .unwrap()
+        );
+        assert_eq!(
+            scenario,
+            *scenario_parser()
+                .parse("<John;>")
+                .unwrap()
+                .scenarios
+                .first()
+                .unwrap()
+        );
 
         let scenario = Scenario {
             actors: vec![0],
@@ -219,7 +242,15 @@ mod test {
             }],
             properties: HashMap::default(),
         };
-        assert_eq!(scenario, scenario_parser().parse("<john;{}>").unwrap());
+        assert_eq!(
+            scenario,
+            *scenario_parser()
+                .parse("<john;{}>")
+                .unwrap()
+                .scenarios
+                .first()
+                .unwrap()
+        );
 
         let scenario = Scenario {
             actors: vec![0, 1, 2],
@@ -242,8 +273,11 @@ mod test {
 
         assert_eq!(
             scenario,
-            scenario_parser()
+            *scenario_parser()
                 .parse("<john,mary,phil;{A: john,P: mary},{A: mary},{P: phil}>")
+                .unwrap()
+                .scenarios
+                .first()
                 .unwrap()
         );
 
@@ -272,8 +306,11 @@ mod test {
 
         assert_eq!(
             scenario,
-            scenario_parser()
+            *scenario_parser()
                 .parse("<a (Red),b,c (Blue, Red);{(Green)},{A: a},{P: c (Blue)}>")
+                .unwrap()
+                .scenarios
+                .first()
                 .unwrap()
         );
         Ok(())
