@@ -154,6 +154,9 @@ mod tests {
             "~(p1(a1) & ~(True & p1(a1)))",
             "every(x0, all_a, p4(x0))",
             "every(x0, p4, p4(x0))",
+            "every(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
+            "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
+            "every(x0, all_e, PatientOf(a0, x0))",
             "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), p4(x0))",
         ] {
             println!("{statement}");
@@ -162,6 +165,7 @@ mod tests {
                 LanguageResult::Bool(true)
             );
         }
+
         Ok(())
     }
 }

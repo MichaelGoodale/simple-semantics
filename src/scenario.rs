@@ -4,6 +4,11 @@ use std::collections::HashMap;
 
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ThetaRoles};
 
+struct StringThetaRole {
+    agent: Option<String>,
+    patient: Option<String>,
+}
+
 fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
     let properties = text::int::<&str, _>(10)
         .map(|n| n.parse().unwrap())
@@ -12,45 +17,45 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
         .collect::<Vec<PropertyLabel>>()
         .delimited_by(just('('), just(')'));
 
-    let actor = text::int(10)
+    let actor = text::ident()
         .padded()
         .map(|n: &str| n.parse().unwrap())
         .then(properties.or_not());
 
     let actors = actor
-        .map(|(a, p)| {
-            let actors: Vec<Actor> = vec![a];
-            let mut properties: HashMap<PropertyLabel, Vec<Entity>, RandomState> =
+        .map(|(a, p): (String, _)| {
+            let mut properties: HashMap<PropertyLabel, Vec<String>, RandomState> =
                 HashMap::default();
             if let Some(property_labels) = p {
                 for property in property_labels {
-                    properties.insert(property, vec![Entity::Actor(a)]);
+                    properties.insert(property, vec![a.clone()]);
                 }
             }
-            (actors, properties)
+            (vec![a], properties)
         })
         .foldl(
             just(',').ignore_then(actor).repeated(),
-            |(mut actors, mut properties), (actor, actor_props)| {
-                actors.push(actor);
-
+            |(mut actors, mut properties), (actor, actor_props): (String, _)| {
                 if let Some(property_labels) = actor_props {
                     for property in property_labels {
                         properties
                             .entry(property)
-                            .and_modify(|x| x.push(Entity::Actor(actor)))
-                            .or_insert(vec![Entity::Actor(actor)]);
+                            .and_modify(|x| x.push(actor.clone()))
+                            .or_insert(vec![actor.clone()]);
                     }
                 }
 
+                actors.push(actor);
                 (actors, properties)
             },
         );
 
     let theta_role = |c: char| {
         just(c)
-            .ignore_then(text::int::<&str, _>(10))
-            .map(|n| n.parse::<Actor>().unwrap())
+            .padded()
+            .ignore_then(just(':'))
+            .ignore_then(text::ident().padded())
+            .map(|n: &str| n.parse().unwrap())
             .padded()
     };
 
@@ -58,26 +63,26 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
         theta_role('A')
             .then_ignore(just(','))
             .then(theta_role('P'))
-            .map(|(a, p)| ThetaRoles {
+            .map(|(a, p)| StringThetaRole {
                 agent: Some(a),
                 patient: Some(p),
             }),
         theta_role('P')
             .then_ignore(just(','))
             .then(theta_role('A'))
-            .map(|(p, a)| ThetaRoles {
+            .map(|(p, a)| StringThetaRole {
                 agent: Some(a),
                 patient: Some(p),
             }),
-        theta_role('P').map(|n| ThetaRoles {
+        theta_role('P').map(|n| StringThetaRole {
             agent: None,
             patient: Some(n),
         }),
-        theta_role('A').map(|n| ThetaRoles {
+        theta_role('A').map(|n| StringThetaRole {
             agent: Some(n),
             patient: None,
         }),
-        empty().map(|_| ThetaRoles {
+        empty().map(|_| StringThetaRole {
             agent: None,
             patient: None,
         }),
@@ -129,21 +134,60 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario> {
         .then_ignore(just('>'))
         .padded()
         .then_ignore(end())
-        .map(|((actors, mut actor_props), events)| {
+        .map(|((actors, actor_props), events)| {
+            let mut keywords: HashMap<String, usize> = HashMap::default();
+
+            let actors: Vec<Actor> = actors
+                .into_iter()
+                .map(|x| {
+                    let n = keywords.len();
+                    *keywords.entry(x).or_insert(n) as u16
+                })
+                .collect();
+
             let (events, event_props) =
                 events.unwrap_or_else(|| (Vec::default(), HashMap::default()));
 
+            let mut properties: HashMap<PropertyLabel, Vec<Entity>, _> = actor_props
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        v.into_iter()
+                            .map(|x| {
+                                let n = keywords.len();
+                                Entity::Actor(*keywords.entry(x).or_insert(n) as u16)
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+
             for (k, mut v) in event_props.into_iter() {
-                actor_props
+                properties
                     .entry(k)
                     .and_modify(|value| value.append(&mut v))
                     .or_insert(v);
             }
 
+            let thematic_relations = events
+                .into_iter()
+                .map(|x| ThetaRoles {
+                    agent: x.agent.map(|x| {
+                        let n = keywords.len();
+                        *keywords.entry(x).or_insert(n) as u16
+                    }),
+                    patient: x.patient.map(|x| {
+                        let n = keywords.len();
+                        *keywords.entry(x).or_insert(n) as u16
+                    }),
+                })
+                .collect();
+
             Scenario {
                 actors,
-                thematic_relations: events,
-                properties: actor_props,
+                thematic_relations,
+                properties,
             }
         })
 }
@@ -155,38 +199,38 @@ mod test {
     #[test]
     fn parse_scenario() -> anyhow::Result<()> {
         let scenario = Scenario {
-            actors: vec![3],
+            actors: vec![0],
             thematic_relations: vec![],
             properties: HashMap::default(),
         };
 
-        assert_eq!(scenario, scenario_parser().parse("<3>").unwrap());
-        assert_eq!(scenario, scenario_parser().parse("<3;>").unwrap());
+        assert_eq!(scenario, scenario_parser().parse("<John>").unwrap());
+        assert_eq!(scenario, scenario_parser().parse("<John;>").unwrap());
 
         let scenario = Scenario {
-            actors: vec![3],
+            actors: vec![0],
             thematic_relations: vec![ThetaRoles {
                 agent: None,
                 patient: None,
             }],
             properties: HashMap::default(),
         };
-        assert_eq!(scenario, scenario_parser().parse("<3;{}>").unwrap());
+        assert_eq!(scenario, scenario_parser().parse("<john;{}>").unwrap());
 
         let scenario = Scenario {
-            actors: vec![3, 4, 5],
+            actors: vec![0, 1, 2],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(3),
-                    patient: Some(4),
+                    agent: Some(0),
+                    patient: Some(1),
                 },
                 ThetaRoles {
-                    agent: Some(2),
+                    agent: Some(1),
                     patient: None,
                 },
                 ThetaRoles {
                     agent: None,
-                    patient: Some(4),
+                    patient: Some(2),
                 },
             ],
             properties: HashMap::default(),
@@ -195,37 +239,37 @@ mod test {
         assert_eq!(
             scenario,
             scenario_parser()
-                .parse("<3,4,5;{A3,P4},{A2},{P4}>")
+                .parse("<john,mary,phil;{A: john,P: mary},{A: mary},{P: phil}>")
                 .unwrap()
         );
 
         let scenario = Scenario {
-            actors: vec![8, 2, 1],
+            actors: vec![0, 1, 2],
             thematic_relations: vec![
                 ThetaRoles {
                     agent: None,
                     patient: None,
                 },
                 ThetaRoles {
-                    agent: Some(8),
+                    agent: Some(0),
                     patient: None,
                 },
                 ThetaRoles {
                     agent: None,
-                    patient: Some(1),
+                    patient: Some(2),
                 },
             ],
             properties: HashMap::from_iter([
-                (34, vec![Entity::Actor(8), Entity::Actor(1)]),
+                (34, vec![Entity::Actor(0), Entity::Actor(2)]),
                 (32, vec![Entity::Event(0)]),
-                (1234, vec![Entity::Actor(1), Entity::Event(2)]),
+                (1234, vec![Entity::Actor(2), Entity::Event(2)]),
             ]),
         };
 
         assert_eq!(
             scenario,
             scenario_parser()
-                .parse("<8 (34),2,1 (1234, 34);{(32)},{A8},{P1 (1234)}>")
+                .parse("<a (34),b,c (1234, 34);{(32)},{A: a},{P: c (1234)}>")
                 .unwrap()
         );
         Ok(())
