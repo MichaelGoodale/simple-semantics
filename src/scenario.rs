@@ -220,7 +220,7 @@ fn add_scenario<'a>(
 }
 
 impl LabelledScenarios {
-    fn get_property_label(&mut self, label: &str) -> PropertyLabel {
+    pub fn get_property_label(&mut self, label: &str) -> PropertyLabel {
         let n = self.property_labels.len();
         *self
             .property_labels
@@ -228,7 +228,7 @@ impl LabelledScenarios {
             .or_insert(n as u32)
     }
 
-    fn get_actor_label(&mut self, label: &str) -> Actor {
+    pub fn get_actor_label(&mut self, label: &str) -> Actor {
         let n = self.actor_labels.len();
         *self
             .actor_labels

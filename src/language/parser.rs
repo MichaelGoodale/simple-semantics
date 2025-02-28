@@ -1,23 +1,31 @@
 use crate::{
     language::{Constant, Expr, ExprPool, ExprRef, MonOp},
-    Entity, LabelledScenarios,
+    Actor, Entity, LabelledScenarios, PropertyLabel,
 };
 use chumsky::extra;
 use chumsky::prelude::*;
 
 use super::{BinOp, Quantifier, Variable};
 
-struct LabeledExprPool<'a> {
+struct LabeledExprPool {
     pool: ExprPool,
-    labels: &'a mut LabelledScenarios,
+    labels: LabelledScenarios,
 }
 
-impl<'a> LabeledExprPool<'a> {
-    fn new(labels: &'a mut LabelledScenarios) -> Self {
+impl LabeledExprPool {
+    fn new(labels: LabelledScenarios) -> Self {
         LabeledExprPool {
             pool: ExprPool::default(),
             labels,
         }
+    }
+
+    fn get_actor_label(&mut self, label: &str) -> Actor {
+        self.labels.get_actor_label(label)
+    }
+
+    fn get_property_label(&mut self, label: &str) -> PropertyLabel {
+        self.labels.get_property_label(label)
     }
 
     fn add(&mut self, e: Expr) -> ExprRef {
@@ -25,19 +33,29 @@ impl<'a> LabeledExprPool<'a> {
     }
 }
 
-type ExtraType<'a> = extra::Full<Simple<'a, char>, extra::SimpleState<LabeledExprPool<'a>>, ()>;
+type ExtraType<'a> = extra::Full<Simple<'a, char>, extra::SimpleState<ExprPool>, ()>;
 
 fn parser<'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a>> {
-    let actor_or_event = one_of("ae")
+    let actor_or_event_number = one_of("ae")
         .then(text::int::<&str, ExtraType>(10))
         .map_with(|(c, num), e| {
-            e.state().add(Expr::Entity(match c {
+            let expr_ref: ExprRef = e.state().add(Expr::Entity(match c {
                 'a' => Entity::Actor(num.parse().unwrap()),
                 'e' => Entity::Event(num.parse().unwrap()),
                 _ => panic!("Unreachable because of one_of"),
-            }))
-        })
-        .padded();
+            }));
+            expr_ref
+        });
+
+    /*
+        let actor_or_event_keyword = just("a")
+            .ignore_then(text::ident::<&str, ExtraType>())
+            .map_with(|keyword, e| {
+                let expr = Expr::Entity(Entity::Actor(e.state().get_actor_label(keyword)));
+                e.state().add(expr)
+            });
+    */
+    let actor_or_event = (actor_or_event_number).padded();
 
     let true_or_false = choice((
         text::ascii::keyword::<_, _, ExtraType>("True").to(Constant::Tautology),
@@ -135,7 +153,7 @@ mod tests {
         simple_scenario: &Scenario,
         labels: &mut LabelledScenarios,
     ) -> LanguageResult {
-        let mut pool = extra::SimpleState(LabeledExprPool::new(labels));
+        let mut pool = extra::SimpleState(ExprPool::default());
         let parse = parser().parse_with_state(s, &mut pool).unwrap();
         let mut variables = VariableBuffer(vec![]);
         pool.pool.interp(parse, simple_scenario, &mut variables)
