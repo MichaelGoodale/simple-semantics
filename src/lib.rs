@@ -28,6 +28,7 @@ pub struct Scenario {
     properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct LabelledScenarios {
     scenarios: Vec<Scenario>,
     property_labels: HashMap<String, PropertyLabel, RandomState>,

@@ -14,6 +14,7 @@ use chumsky::{
 
 use super::{BinOp, Quantifier, Variable};
 
+#[derive(Debug, Eq, PartialEq)]
 struct LabeledExprPool<'a> {
     pool: ExprPool,
     labels: &'a mut LabelledScenarios,
@@ -53,7 +54,8 @@ impl LabeledEntity<'_> {
         match self {
             LabeledEntity::Unlabeled(c) => state.add(Expr::Entity(c)),
             LabeledEntity::LabeledActor(label) => {
-                todo!();
+                let actor = state.get_actor_label(label);
+                state.add(Expr::Entity(Entity::Actor(actor)))
             }
         }
     }
@@ -104,7 +106,25 @@ impl LabeledConstant<'_> {
         match self {
             LabeledConstant::Constant(c) => state.add(Expr::Constant(c)),
             LabeledConstant::LabeledProperty(label) => {
-                todo!();
+                let property = state.get_property_label(label);
+                state.add(Expr::Constant(Constant::Property(property)))
+            }
+        }
+    }
+
+    fn to_monop(self, state: &mut LabeledExprPool) -> MonOp {
+        dbg!(&state);
+        dbg!(&self);
+        match self {
+            LabeledConstant::Constant(c) => match c {
+                Constant::Tautology => MonOp::Tautology,
+                Constant::Contradiction => MonOp::Contradiction,
+                Constant::Property(p) => MonOp::Property(p),
+                _ => panic!("This should never trigger as it should be unparseable"),
+            },
+            LabeledConstant::LabeledProperty(label) => {
+                let property = state.get_property_label(label);
+                MonOp::Property(property)
             }
         }
     }
@@ -167,14 +187,13 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
         .padded()
         .map_with(|b, e| e.state().add(Expr::Constant(b)));
 
-    let sets = sets::<ExtraType<'a, 'b>>()
+    let possible_sets = sets::<ExtraType<'a, 'b>>()
         .padded()
         .map_with(|x, e| x.to_expr_ref(e.state()));
 
     let truth_value = recursive(|expr| {
-        let has_property = just("p")
-            .ignore_then(text::int::<&str, ExtraType>(10))
-            .map(|p| MonOp::Property(p.parse().unwrap()))
+        let has_property = sets::<ExtraType>()
+            .map_with(|p, e| p.to_monop(e.state()))
             .then_ignore(just('('))
             .then(entity_or_variable)
             .then_ignore(just(')'))
@@ -208,7 +227,8 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
         .then(variable::<ExtraType>().padded())
         .then_ignore(just(','))
         .then(
-            sets.or(entity_or_variable)
+            possible_sets
+                .or(entity_or_variable)
                 .or(non_quantified_statement.clone()),
         )
         .then_ignore(just(','))
@@ -223,6 +243,7 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::language::{LanguageResult, VariableBuffer};
     use crate::{LabelledScenarios, Scenario, ThetaRoles};
@@ -346,6 +367,66 @@ mod tests {
         let parse = parser().parse_with_state(s, &mut pool).unwrap();
         let mut variables = VariableBuffer(vec![]);
         pool.pool.interp(parse, simple_scenario, &mut variables)
+    }
+
+    #[test]
+    fn parse_with_keywords() -> anyhow::Result<()> {
+        let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
+
+        properties.insert(1, vec![Entity::Actor(1)]);
+        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
+
+        let simple_scenario = Scenario {
+            actors: vec![0, 1],
+            thematic_relations: vec![
+                ThetaRoles {
+                    agent: Some(0),
+                    patient: Some(0),
+                },
+                ThetaRoles {
+                    agent: Some(1),
+                    patient: Some(0),
+                },
+            ],
+            properties,
+        };
+
+        let actor_labels =
+            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
+        let property_labels =
+            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
+        let mut labels = LabelledScenarios {
+            scenarios: vec![simple_scenario],
+            actor_labels,
+            property_labels,
+        };
+
+        for statement in [
+            "~AgentOf(a_John, e0)",
+            "p_Red(a_John) & ~p_Red(a_Mary)",
+            "p_Red(a_John) & ~p_Red(a_Mary) & p_Red(a_John)",
+            "~(p_Red(a_John) & ~(True & p_Red(a_John)))",
+            "every(x0, all_a, p_Blue(x0))",
+            "every(x0, p_Blue, p_Blue(x0))",
+            "every(x0, p1, p4(x0))",
+            "every(x0, p_Red, p_Blue(x0))",
+            "every(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
+            "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
+            "every(x0, all_e, PatientOf(a_Mary, x0))",
+            "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), p_Blue(x0))",
+        ] {
+            println!("{statement}");
+            let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
+            let parse = parser().parse_with_state(statement, &mut pool).unwrap();
+            let mut variables = VariableBuffer(vec![]);
+            let pool = pool.0.pool;
+            assert_eq!(
+                pool.interp(parse, labels.scenarios.first().unwrap(), &mut variables),
+                LanguageResult::Bool(true)
+            );
+        }
+
+        Ok(())
     }
 
     #[test]

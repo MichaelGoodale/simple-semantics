@@ -12,6 +12,8 @@ enum BinOp {
 enum MonOp {
     Not,
     Property(PropertyLabel),
+    Tautology,
+    Contradiction,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,6 +280,8 @@ impl ExprPool {
                 let arg = self.interp(*arg, scenario, variables);
                 match mon_op {
                     MonOp::Not => LanguageResult::Bool(!TryInto::<bool>::try_into(arg).unwrap()),
+                    MonOp::Contradiction => LanguageResult::Bool(false),
+                    MonOp::Tautology => LanguageResult::Bool(true),
                     MonOp::Property(e) => {
                         let arg: Entity = arg.try_into().unwrap();
                         match scenario.properties.get(e) {
