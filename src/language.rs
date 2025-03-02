@@ -1,6 +1,6 @@
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum BinOp {
     AgentOf,
     PatientOf,
@@ -8,7 +8,7 @@ enum BinOp {
     Or,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum MonOp {
     Not,
     Property(PropertyLabel),
@@ -26,13 +26,13 @@ enum Constant {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct Variable(u32);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Quantifier {
     Universal,
     Existential,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Expr {
     Quantifier(Quantifier, Variable, ExprRef, ExprRef),
     Variable(Variable),
@@ -42,10 +42,10 @@ enum Expr {
     Constant(Constant),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct ExprRef(u32);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct ExprPool(Vec<Expr>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

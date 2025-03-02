@@ -1,17 +1,16 @@
-use std::{borrow::Borrow, fmt::Debug};
+use std::fmt::Debug;
 
 use crate::{
     language::{Constant, Expr, ExprPool, ExprRef, MonOp},
     Actor, Entity, LabelledScenarios, PropertyLabel,
 };
+use chumsky::prelude::*;
 use chumsky::{
     extra::{self, ParserExtra},
-    input::StrInput,
     label::LabelError,
-    text::{Char, TextExpected},
+    text::TextExpected,
     util::MaybeRef,
 };
-use chumsky::{input::SliceInput, prelude::*};
 
 use super::{BinOp, Quantifier, Variable};
 
@@ -49,7 +48,18 @@ enum LabeledEntity<'a> {
     LabeledActor(&'a str),
 }
 
-fn entity<'src, E>() -> impl Parser<'src, &'src str, LabeledEntity<'src>, E>
+impl LabeledEntity<'_> {
+    fn to_expr_ref(self, state: &mut LabeledExprPool) -> ExprRef {
+        match self {
+            LabeledEntity::Unlabeled(c) => state.add(Expr::Entity(c)),
+            LabeledEntity::LabeledActor(label) => {
+                todo!();
+            }
+        }
+    }
+}
+
+fn entity<'src, E>() -> impl Parser<'src, &'src str, LabeledEntity<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -72,15 +82,14 @@ where
     choice((actor_or_event_keyword, actor_or_event_number))
 }
 
-pub fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, Constant, E>
+pub fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, Constant, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
 {
     choice((
-        text::ascii::keyword("True").to(Constant::Tautology),
-        text::ascii::keyword("False").to(Constant::Contradiction),
+        just("True").to(Constant::Tautology),
+        just("False").to(Constant::Contradiction),
     ))
 }
 
@@ -101,7 +110,7 @@ impl LabeledConstant<'_> {
     }
 }
 
-fn sets<'src, E>() -> impl Parser<'src, &'src str, LabeledConstant<'src>, E>
+fn sets<'src, E>() -> impl Parser<'src, &'src str, LabeledConstant<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -120,7 +129,7 @@ where
         .map(LabeledConstant::LabeledProperty))
 }
 
-fn variable<'src, E>() -> impl Parser<'src, &'src str, Variable, E>
+fn variable<'src, E>() -> impl Parser<'src, &'src str, Variable, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -132,25 +141,27 @@ where
         .map(|n: &str| Variable(n.parse().unwrap()))
 }
 
-/*
-fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
-    let var = variable().map_with(|n, e| e.state().add(Expr::Variable(n)));
-    let base_entity = choice((entity(), var)).padded();
-    let base_entity_2 = choice((entity(), var)).padded();
+fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> + Copy {
+    let var_expr =
+        variable::<ExtraType<'a, 'b>>().map_with(|n, e| e.state().add(Expr::Variable(n)));
+    let entity_expr = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
+    let entity_or_var = choice((entity_expr, var_expr)).padded();
     choice((
         just("AgentOf").to(BinOp::AgentOf),
         just("PatientOf").to(BinOp::PatientOf),
     ))
     .then_ignore(just('('))
-    .then(base_entity)
+    .then(entity_or_var)
     .then_ignore(just(','))
-    .then(base_entity_2)
+    .then(entity_or_var)
     .then_ignore(just(')'))
     .map_with(|((binop, actor), event), e| e.state().add(Expr::Binary(binop, actor, event)))
-}*/
+}
 
 fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
-    let entity = entity::<ExtraType<'a, 'b>>().padded();
+    let ent = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
+    let var = variable::<ExtraType<'a, 'b>>().map_with(|x, e| e.state().add(Expr::Variable(x)));
+    let entity_or_variable = choice((ent, var)).padded();
 
     let true_or_false = bool_literal::<ExtraType<'a, 'b>>()
         .padded()
@@ -159,13 +170,13 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
     let sets = sets::<ExtraType<'a, 'b>>()
         .padded()
         .map_with(|x, e| x.to_expr_ref(e.state()));
-    /*
+
     let truth_value = recursive(|expr| {
         let has_property = just("p")
             .ignore_then(text::int::<&str, ExtraType>(10))
             .map(|p| MonOp::Property(p.parse().unwrap()))
             .then_ignore(just('('))
-            .then(entity)
+            .then(entity_or_variable)
             .then_ignore(just(')'))
             .map_with(|(p, a), e| e.state().add(Expr::Unary(p, a)));
 
@@ -194,9 +205,12 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
             just("some").to(Quantifier::Existential),
         ))
         .then_ignore(just('('))
-        .then(literal_var)
+        .then(variable::<ExtraType>().padded())
         .then_ignore(just(','))
-        .then(sets.or(entity).or(non_quantified_statement.clone()))
+        .then(
+            sets.or(entity_or_variable)
+                .or(non_quantified_statement.clone()),
+        )
         .then_ignore(just(','))
         .then(non_quantified_statement.clone())
         .then_ignore(just(')'))
@@ -205,10 +219,6 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
     });
 
     truth_value.then_ignore(end())
-
-    */
-
-    sets.then_ignore(end())
 }
 
 #[cfg(test)]
@@ -238,6 +248,38 @@ mod tests {
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
                 LabeledEntity::LabeledActor(keyword)
             );
+        }
+    }
+
+    #[test]
+    fn parse_bin_op() {
+        let mut labels = LabelledScenarios {
+            scenarios: vec![],
+            actor_labels: HashMap::default(),
+            property_labels: HashMap::default(),
+        };
+
+        for (s, result) in [
+            (
+                "AgentOf(x0, x1)",
+                vec![
+                    Expr::Variable(Variable(0)),
+                    Expr::Variable(Variable(1)),
+                    Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
+                ],
+            ),
+            (
+                "PatientOf(a0, e1)",
+                vec![
+                    Expr::Entity(Entity::Actor(0)),
+                    Expr::Entity(Entity::Event(1)),
+                    Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
+                ],
+            ),
+        ] {
+            let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
+            binary_operation().parse_with_state(s, &mut pool).unwrap();
+            assert_eq!(pool.pool.0, result);
         }
     }
 
