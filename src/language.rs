@@ -14,7 +14,7 @@ enum MonOp {
     Property(PropertyLabel),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Constant {
     Everyone,
     EveryEvent,
@@ -23,7 +23,7 @@ enum Constant {
     Property(PropertyLabel),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct Variable(u32);
 
 #[derive(Debug, Clone, Copy)]

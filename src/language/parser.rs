@@ -1,9 +1,17 @@
+use std::{borrow::Borrow, fmt::Debug};
+
 use crate::{
     language::{Constant, Expr, ExprPool, ExprRef, MonOp},
     Actor, Entity, LabelledScenarios, PropertyLabel,
 };
-use chumsky::extra;
-use chumsky::prelude::*;
+use chumsky::{
+    extra::{self, ParserExtra},
+    input::StrInput,
+    label::LabelError,
+    text::{Char, TextExpected},
+    util::MaybeRef,
+};
+use chumsky::{input::SliceInput, prelude::*};
 
 use super::{BinOp, Quantifier, Variable};
 
@@ -35,53 +43,123 @@ impl<'a> LabeledExprPool<'a> {
 
 type ExtraType<'a, 'b> = extra::Full<Simple<'a, char>, extra::SimpleState<LabeledExprPool<'b>>, ()>;
 
-fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum LabeledEntity<'a> {
+    Unlabeled(Entity),
+    LabeledActor(&'a str),
+}
+
+fn entity<'src, E>() -> impl Parser<'src, &'src str, LabeledEntity<'src>, E>
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+{
     let actor_or_event_number = one_of("ae")
-        .then(text::int::<&str, ExtraType>(10))
-        .map_with(|(c, num), e| {
-            let expr_ref: ExprRef = e.state().add(Expr::Entity(match c {
+        .then(text::int(10))
+        .map(|(c, num): (char, &str)| {
+            LabeledEntity::Unlabeled(match c {
                 'a' => Entity::Actor(num.parse().unwrap()),
                 'e' => Entity::Event(num.parse().unwrap()),
                 _ => panic!("Unreachable because of one_of"),
-            }));
-            expr_ref
+            })
         });
 
     let actor_or_event_keyword = just("a_")
-        .ignore_then(text::ident::<&str, ExtraType>())
-        .map_with(|keyword, e| {
-            let expr = Expr::Entity(Entity::Actor(e.state().get_actor_label(keyword)));
-            e.state().add(expr)
-        });
+        .ignore_then(text::ident())
+        .map(LabeledEntity::LabeledActor);
 
-    let actor_or_event = choice((actor_or_event_keyword, actor_or_event_number)).padded();
+    choice((actor_or_event_keyword, actor_or_event_number))
+}
 
-    let true_or_false = choice((
-        text::ascii::keyword::<_, _, ExtraType>("True").to(Constant::Tautology),
-        text::ascii::keyword::<_, _, ExtraType>("False").to(Constant::Contradiction),
+pub fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, Constant, E>
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, &'src str>,
+{
+    choice((
+        text::ascii::keyword("True").to(Constant::Tautology),
+        text::ascii::keyword("False").to(Constant::Contradiction),
     ))
-    .map_with(|c, e| e.state().add(Expr::Constant(c)))
-    .padded();
+}
 
-    let sets = choice((
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LabeledConstant<'a> {
+    Constant(Constant),
+    LabeledProperty(&'a str),
+}
+
+impl LabeledConstant<'_> {
+    fn to_expr_ref(self, state: &mut LabeledExprPool) -> ExprRef {
+        match self {
+            LabeledConstant::Constant(c) => state.add(Expr::Constant(c)),
+            LabeledConstant::LabeledProperty(label) => {
+                todo!();
+            }
+        }
+    }
+}
+
+fn sets<'src, E>() -> impl Parser<'src, &'src str, LabeledConstant<'src>, E>
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+{
+    choice((
         just("all_a").to(Constant::Everyone),
         just("all_e").to(Constant::EveryEvent),
         just("p")
-            .ignore_then(text::int::<&str, ExtraType>(10))
-            .map(|p| Constant::Property(p.parse().unwrap())),
+            .ignore_then(text::int(10))
+            .map(|p: &str| Constant::Property(p.parse().unwrap())),
     ))
-    .map_with(|c, e| e.state().add(Expr::Constant(c)))
-    .padded();
+    .map(LabeledConstant::Constant)
+    .or(just("p_")
+        .ignore_then(text::ident())
+        .map(LabeledConstant::LabeledProperty))
+}
 
-    let literal_var = just('x')
-        .ignore_then(text::int::<&str, ExtraType>(10))
+fn variable<'src, E>() -> impl Parser<'src, &'src str, Variable, E>
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+{
+    just('x')
+        .ignore_then(text::int(10))
         .padded()
-        .map(|n| Variable(n.parse().unwrap()));
+        .map(|n: &str| Variable(n.parse().unwrap()))
+}
 
-    let var = literal_var.map_with(|n, e| e.state().add(Expr::Variable(n)));
+/*
+fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
+    let var = variable().map_with(|n, e| e.state().add(Expr::Variable(n)));
+    let base_entity = choice((entity(), var)).padded();
+    let base_entity_2 = choice((entity(), var)).padded();
+    choice((
+        just("AgentOf").to(BinOp::AgentOf),
+        just("PatientOf").to(BinOp::PatientOf),
+    ))
+    .then_ignore(just('('))
+    .then(base_entity)
+    .then_ignore(just(','))
+    .then(base_entity_2)
+    .then_ignore(just(')'))
+    .map_with(|((binop, actor), event), e| e.state().add(Expr::Binary(binop, actor, event)))
+}*/
 
-    let entity = actor_or_event.or(var).padded();
+fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
+    let entity = entity::<ExtraType<'a, 'b>>().padded();
 
+    let true_or_false = bool_literal::<ExtraType<'a, 'b>>()
+        .padded()
+        .map_with(|b, e| e.state().add(Expr::Constant(b)));
+
+    let sets = sets::<ExtraType<'a, 'b>>()
+        .padded()
+        .map_with(|x, e| x.to_expr_ref(e.state()));
+    /*
     let truth_value = recursive(|expr| {
         let has_property = just("p")
             .ignore_then(text::int::<&str, ExtraType>(10))
@@ -91,19 +169,8 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
             .then_ignore(just(')'))
             .map_with(|(p, a), e| e.state().add(Expr::Unary(p, a)));
 
-        let bin_op = choice((
-            just("AgentOf").to(BinOp::AgentOf),
-            just("PatientOf").to(BinOp::PatientOf),
-        ))
-        .then_ignore(just('('))
-        .then(entity)
-        .then_ignore(just(','))
-        .then(entity)
-        .then_ignore(just(')'))
-        .map_with(|((binop, actor), event), e| e.state().add(Expr::Binary(binop, actor, event)));
-
         let atom = true_or_false
-            .or(bin_op)
+            .or(binary_operation())
             .or(has_property)
             .or(expr.clone().delimited_by(just('('), just(')')))
             .padded();
@@ -138,6 +205,10 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
     });
 
     truth_value.then_ignore(end())
+
+    */
+
+    sets.then_ignore(end())
 }
 
 #[cfg(test)]
@@ -146,6 +217,82 @@ mod tests {
     use crate::language::{LanguageResult, VariableBuffer};
     use crate::{LabelledScenarios, Scenario, ThetaRoles};
     use std::collections::HashMap;
+
+    #[test]
+    fn parse_entity() {
+        for n in [1, 6, 3, 4, 5, 100, 40] {
+            let str = format!("a{n}");
+            assert_eq!(
+                entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                LabeledEntity::Unlabeled(Entity::Actor(n.into()))
+            );
+            let str = format!("e{n}");
+            assert_eq!(
+                entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                LabeledEntity::Unlabeled(Entity::Event(n))
+            );
+        }
+        for keyword in ["john", "mary", "phil", "Anna"] {
+            let str = format!("a_{keyword}");
+            assert_eq!(
+                entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                LabeledEntity::LabeledActor(keyword)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_bool() {
+        assert_eq!(
+            bool_literal::<extra::Err<Simple<_>>>()
+                .parse("True")
+                .unwrap(),
+            Constant::Tautology
+        );
+        assert_eq!(
+            bool_literal::<extra::Err<Simple<_>>>()
+                .parse("False")
+                .unwrap(),
+            Constant::Contradiction
+        );
+    }
+
+    #[test]
+    fn parse_sets() {
+        for n in [1, 6, 3, 4, 5, 100, 1032, 40343] {
+            let str = format!("p{n}");
+            assert_eq!(
+                sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                LabeledConstant::Constant(Constant::Property(n))
+            );
+        }
+        assert_eq!(
+            sets::<extra::Err<Simple<_>>>().parse("all_e").unwrap(),
+            LabeledConstant::Constant(Constant::EveryEvent)
+        );
+        assert_eq!(
+            sets::<extra::Err<Simple<_>>>().parse("all_a").unwrap(),
+            LabeledConstant::Constant(Constant::Everyone)
+        );
+        for keyword in ["john", "mary", "phil", "Anna"] {
+            let str = format!("p_{keyword}");
+            assert_eq!(
+                sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                LabeledConstant::LabeledProperty(keyword)
+            );
+        }
+    }
+
+    #[test]
+    fn parse_variable() {
+        for n in [1, 6, 3, 4, 5, 100, 1032, 40343] {
+            let str = format!("x{n}");
+            assert_eq!(
+                variable::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                Variable(n)
+            );
+        }
+    }
 
     fn get_parse(s: &str, simple_scenario: &Scenario) -> LanguageResult {
         let mut labels = LabelledScenarios {
