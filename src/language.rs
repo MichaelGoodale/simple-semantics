@@ -50,6 +50,19 @@ struct ExprRef(u32);
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct ExprPool(Vec<Expr>);
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct LanguageExpression {
+    pool: ExprPool,
+    start: ExprRef,
+}
+
+impl LanguageExpression {
+    pub fn run(&self, scenario: &Scenario) -> LanguageResult {
+        let mut variables = VariableBuffer::default();
+        self.pool.interp(self.start, scenario, &mut variables)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct VariableBuffer(Vec<Option<Entity>>);
 
@@ -71,7 +84,7 @@ impl VariableBuffer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum LanguageResult {
+pub enum LanguageResult {
     PresuppositionError,
     Bool(bool),
     Entity(Entity),
@@ -298,6 +311,7 @@ impl ExprPool {
 }
 
 mod parser;
+pub use parser::parse_executable;
 
 #[cfg(test)]
 mod tests {

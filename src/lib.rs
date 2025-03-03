@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use ahash::RandomState;
-use std::collections::HashMap;
+use chumsky::prelude::*;
+use std::{collections::HashMap, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,8 +16,8 @@ pub enum Entity {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThetaRoles {
-    agent: Option<Actor>,
-    patient: Option<Actor>,
+    pub agent: Option<Actor>,
+    pub patient: Option<Actor>,
 }
 
 pub type PropertyLabel = u32;
@@ -28,6 +29,20 @@ pub struct Scenario {
     properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
 }
 
+impl Scenario {
+    pub fn new(
+        actors: Vec<Actor>,
+        thematic_relations: Vec<ThetaRoles>,
+        properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
+    ) -> Scenario {
+        Scenario {
+            actors,
+            thematic_relations,
+            properties,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct LabelledScenarios {
     scenarios: Vec<Scenario>,
@@ -35,5 +50,51 @@ pub struct LabelledScenarios {
     actor_labels: HashMap<String, Actor, RandomState>,
 }
 
+impl LabelledScenarios {
+    pub fn new(
+        scenarios: Vec<Scenario>,
+        property_labels: HashMap<String, PropertyLabel, RandomState>,
+        actor_labels: HashMap<String, Actor, RandomState>,
+    ) -> Self {
+        LabelledScenarios {
+            scenarios,
+            property_labels,
+            actor_labels,
+        }
+    }
+
+    pub fn iter_scenarios(&self) -> impl Iterator<Item = &Scenario> {
+        self.scenarios.iter()
+    }
+
+    pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        let file_data = std::fs::read_to_string(path).unwrap();
+        let parser = scenario::scenario_parser();
+        let parse = parser.parse(&file_data).into_result();
+        parse.map_err(|x| {
+            anyhow::Error::msg(
+                x.into_iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        })
+    }
+
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        let parser = scenario::scenario_parser();
+        let parse = parser.parse(s).into_result();
+        parse.map_err(|x| {
+            anyhow::Error::msg(
+                x.into_iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        })
+    }
+}
+
 mod language;
+pub use language::{parse_executable, LanguageExpression, LanguageResult};
 mod scenario;

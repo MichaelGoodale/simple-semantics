@@ -12,10 +12,10 @@ use chumsky::{
     util::MaybeRef,
 };
 
-use super::{BinOp, Quantifier, Variable};
+use super::{BinOp, LanguageExpression, Quantifier, Variable};
 
 #[derive(Debug, Eq, PartialEq)]
-struct LabeledExprPool<'a> {
+pub struct LabeledExprPool<'a> {
     pool: ExprPool,
     labels: &'a mut LabelledScenarios,
 }
@@ -178,7 +178,7 @@ fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType
     .map_with(|((binop, actor), event), e| e.state().add(Expr::Binary(binop, actor, event)))
 }
 
-fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
+pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
     let ent = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
     let var = variable::<ExtraType<'a, 'b>>().map_with(|x, e| e.state().add(Expr::Variable(x)));
     let entity_or_variable = choice((ent, var)).padded();
@@ -239,6 +239,28 @@ fn parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> 
     });
 
     truth_value.then_ignore(end())
+}
+
+pub fn parse_executable(
+    s: &str,
+    labels: &mut LabelledScenarios,
+) -> anyhow::Result<LanguageExpression> {
+    let mut pool = extra::SimpleState(LabeledExprPool::new(labels));
+    let start = language_parser()
+        .parse_with_state(s, &mut pool)
+        .into_result()
+        .map_err(|x| {
+            anyhow::Error::msg(
+                x.into_iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        })?;
+
+    let pool = pool.0.pool;
+
+    Ok(LanguageExpression { pool, start })
 }
 
 #[cfg(test)]
@@ -364,7 +386,7 @@ mod tests {
             property_labels: HashMap::default(),
         };
         let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
-        let parse = parser().parse_with_state(s, &mut pool).unwrap();
+        let parse = language_parser().parse_with_state(s, &mut pool).unwrap();
         let mut variables = VariableBuffer(vec![]);
         pool.pool.interp(parse, simple_scenario, &mut variables)
     }
@@ -417,7 +439,9 @@ mod tests {
         ] {
             println!("{statement}");
             let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
-            let parse = parser().parse_with_state(statement, &mut pool).unwrap();
+            let parse = language_parser()
+                .parse_with_state(statement, &mut pool)
+                .unwrap();
             let mut variables = VariableBuffer(vec![]);
             let pool = pool.0.pool;
             assert_eq!(

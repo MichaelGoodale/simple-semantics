@@ -14,7 +14,7 @@ struct StringEvents<'a> {
     event_props: ahash::HashMap<&'a str, Vec<Entity>>,
 }
 
-fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
+pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
     let properties = text::ident()
         .padded()
         .separated_by(just(','))
@@ -154,6 +154,7 @@ fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
                 dataset
             },
         )
+        .padded()
         .then_ignore(end())
 }
 
