@@ -12,7 +12,7 @@ use chumsky::{
     util::MaybeRef,
 };
 
-use super::{BinOp, LanguageExpression, Quantifier, Variable};
+use super::{lambda::Lambda, BinOp, LanguageExpression, Quantifier, Variable};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct LabeledExprPool<'a> {
@@ -113,14 +113,12 @@ impl LabeledConstant<'_> {
     }
 
     fn to_monop(self, state: &mut LabeledExprPool) -> MonOp {
-        dbg!(&state);
-        dbg!(&self);
         match self {
             LabeledConstant::Constant(c) => match c {
-                Constant::Tautology => MonOp::Tautology,
+                //TODO: Make it so that everyevent is true iff event and likewise for everyone
+                Constant::Tautology | Constant::Everyone | Constant::EveryEvent => MonOp::Tautology,
                 Constant::Contradiction => MonOp::Contradiction,
                 Constant::Property(p) => MonOp::Property(p),
-                _ => panic!("This should never trigger as it should be unparseable"),
             },
             LabeledConstant::LabeledProperty(label) => {
                 let property = state.get_property_label(label);
@@ -149,21 +147,40 @@ where
         .map(LabeledConstant::LabeledProperty))
 }
 
-fn variable<'src, E>() -> impl Parser<'src, &'src str, Variable, E> + Copy
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct VariableToBe {
+    is_debruijn: bool,
+    index: u32,
+}
+
+impl VariableToBe {
+    fn to_expr_ref(self, pool: &mut LabeledExprPool) -> ExprRef {
+        if self.is_debruijn {
+            pool.add(Expr::DebruijnIndex(Variable(self.index)))
+        } else {
+            pool.add(Expr::BoundVariable(Variable(self.index)))
+        }
+    }
+}
+
+fn variable<'src, E>() -> impl Parser<'src, &'src str, VariableToBe, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>,
 {
     just('x')
-        .ignore_then(text::int(10))
+        .or(just('d'))
+        .then(text::int(10))
         .padded()
-        .map(|n: &str| Variable(n.parse().unwrap()))
+        .map(|(c, n): (char, &str)| VariableToBe {
+            is_debruijn: c == 'd',
+            index: n.parse().unwrap(),
+        })
 }
 
 fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> + Copy {
-    let var_expr =
-        variable::<ExtraType<'a, 'b>>().map_with(|n, e| e.state().add(Expr::BoundVariable(n)));
+    let var_expr = variable::<ExtraType<'a, 'b>>().map_with(|n, e| n.to_expr_ref(e.state()));
     let entity_expr = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
     let entity_or_var = choice((entity_expr, var_expr)).padded();
     choice((
@@ -180,8 +197,7 @@ fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType
 
 pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
     let ent = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
-    let var =
-        variable::<ExtraType<'a, 'b>>().map_with(|x, e| e.state().add(Expr::BoundVariable(x)));
+    let var = variable::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
     let entity_or_variable = choice((ent, var)).padded();
 
     let true_or_false = bool_literal::<ExtraType<'a, 'b>>()
@@ -225,7 +241,11 @@ pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraT
             just("some").to(Quantifier::Existential),
         ))
         .then_ignore(just('('))
-        .then(variable::<ExtraType>().padded())
+        .then(
+            just('x')
+                .ignore_then(text::int::<&str, ExtraType>(10).map(|x| Variable(x.parse().unwrap())))
+                .padded(),
+        )
         .then_ignore(just(','))
         .then(
             possible_sets
@@ -243,10 +263,36 @@ pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraT
                 subformula,
             })
         });
-        non_quantified_statement.or(quantified)
+        choice((
+            non_quantified_statement,
+            quantified,
+            entity_or_variable,
+            possible_sets,
+        ))
     });
 
-    truth_value.then_ignore(end())
+    let lambda = recursive(|expr| {
+        let atom = truth_value.or(expr.delimited_by(just('('), just(')')));
+
+        let lambda = just("lambda")
+            .ignore_then(atom.clone().padded().delimited_by(just('('), just(')')))
+            .then(
+                atom.clone()
+                    .padded()
+                    .delimited_by(just('('), just(')'))
+                    .or_not(),
+            )
+            .map_with(|(subformula, argument), e| {
+                e.state().add(Expr::Lambda {
+                    lambda: Lambda {},
+                    argument,
+                    subformula,
+                })
+            });
+
+        atom.or(lambda)
+    });
+    lambda.then_ignore(end())
 }
 
 pub fn parse_executable(
@@ -382,12 +428,23 @@ mod tests {
             let str = format!("x{n}");
             assert_eq!(
                 variable::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                Variable(n)
+                VariableToBe {
+                    index: n,
+                    is_debruijn: false
+                }
+            );
+            let str = format!("d{n}");
+            assert_eq!(
+                variable::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                VariableToBe {
+                    index: n,
+                    is_debruijn: true
+                }
             );
         }
     }
 
-    fn get_parse(s: &str, simple_scenario: &Scenario) -> LanguageResult {
+    fn get_pool(s: &str) -> (ExprPool, ExprRef) {
         let mut labels = LabelledScenarios {
             scenarios: vec![],
             actor_labels: HashMap::default(),
@@ -395,8 +452,13 @@ mod tests {
         };
         let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
         let parse = language_parser().parse_with_state(s, &mut pool).unwrap();
+        (pool.0.pool, parse)
+    }
+
+    fn get_parse(s: &str, simple_scenario: &Scenario) -> LanguageResult {
         let mut variables = VariableBuffer(vec![]);
-        pool.pool.interp(parse, simple_scenario, &mut variables)
+        let (pool, root) = get_pool(s);
+        pool.interp(root, simple_scenario, &mut variables)
     }
 
     #[test]
@@ -507,6 +569,68 @@ mod tests {
                 LanguageResult::Bool(true)
             );
         }
+        for (statement, result) in [
+            ("a0", LanguageResult::Entity(Entity::Actor(0))),
+            ("e0", LanguageResult::Entity(Entity::Event(0))),
+            (
+                "all_e",
+                LanguageResult::EntitySet(vec![Entity::Event(0), Entity::Event(1)]),
+            ),
+            (
+                "all_a",
+                LanguageResult::EntitySet(vec![Entity::Actor(0), Entity::Actor(1)]),
+            ),
+            ("p1", LanguageResult::EntitySet(vec![Entity::Actor(1)])),
+            (
+                "p4",
+                LanguageResult::EntitySet(vec![Entity::Actor(0), Entity::Actor(1)]),
+            ),
+        ] {
+            println!("{statement}");
+            assert_eq!(get_parse(statement, &simple_scenario), result);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_lambdas() -> anyhow::Result<()> {
+        let statement = "lambda(AgentOf(d0, e0))(a0)";
+        assert_eq!(
+            get_pool(statement),
+            (
+                ExprPool(vec![
+                    Expr::DebruijnIndex(Variable(0)),
+                    Expr::Entity(Entity::Event(0)),
+                    Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
+                    Expr::Entity(Entity::Actor(0)),
+                    Expr::Lambda {
+                        lambda: Lambda {},
+                        argument: Some(ExprRef(3)),
+                        subformula: ExprRef(2)
+                    }
+                ]),
+                ExprRef(4)
+            )
+        );
+
+        let statement = "lambda(AgentOf(d0, e0))";
+        assert_eq!(
+            get_pool(statement),
+            (
+                ExprPool(vec![
+                    Expr::DebruijnIndex(Variable(0)),
+                    Expr::Entity(Entity::Event(0)),
+                    Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
+                    Expr::Lambda {
+                        lambda: Lambda {},
+                        argument: None,
+                        subformula: ExprRef(2)
+                    }
+                ]),
+                ExprRef(3)
+            )
+        );
 
         Ok(())
     }
