@@ -163,7 +163,7 @@ where
 
 fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> + Copy {
     let var_expr =
-        variable::<ExtraType<'a, 'b>>().map_with(|n, e| e.state().add(Expr::Variable(n)));
+        variable::<ExtraType<'a, 'b>>().map_with(|n, e| e.state().add(Expr::BoundVariable(n)));
     let entity_expr = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
     let entity_or_var = choice((entity_expr, var_expr)).padded();
     choice((
@@ -180,7 +180,8 @@ fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType
 
 pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
     let ent = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
-    let var = variable::<ExtraType<'a, 'b>>().map_with(|x, e| e.state().add(Expr::Variable(x)));
+    let var =
+        variable::<ExtraType<'a, 'b>>().map_with(|x, e| e.state().add(Expr::BoundVariable(x)));
     let entity_or_variable = choice((ent, var)).padded();
 
     let true_or_false = bool_literal::<ExtraType<'a, 'b>>()
@@ -234,7 +235,14 @@ pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraT
         .then_ignore(just(','))
         .then(non_quantified_statement.clone())
         .then_ignore(just(')'))
-        .map_with(|(((q, v), rest), phi), e| e.state().add(Expr::Quantifier(q, v, rest, phi)));
+        .map_with(|(((quantifier, var), restrictor), subformula), e| {
+            e.state().add(Expr::Quantifier {
+                quantifier,
+                var,
+                restrictor,
+                subformula,
+            })
+        });
         non_quantified_statement.or(quantified)
     });
 
@@ -306,8 +314,8 @@ mod tests {
             (
                 "AgentOf(x0, x1)",
                 vec![
-                    Expr::Variable(Variable(0)),
-                    Expr::Variable(Variable(1)),
+                    Expr::BoundVariable(Variable(0)),
+                    Expr::BoundVariable(Variable(1)),
                     Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
                 ],
             ),

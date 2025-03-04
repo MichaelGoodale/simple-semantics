@@ -1,5 +1,8 @@
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
+mod lambda;
+use lambda::Lambda;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum BinOp {
     AgentOf,
@@ -36,8 +39,19 @@ enum Quantifier {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Expr {
-    Quantifier(Quantifier, Variable, ExprRef, ExprRef),
-    Variable(Variable),
+    Quantifier {
+        quantifier: Quantifier,
+        var: Variable,
+        restrictor: ExprRef,
+        subformula: ExprRef,
+    },
+    Lambda {
+        lambda: Lambda,
+        argument: Option<ExprRef>,
+        subformula: ExprRef,
+    },
+    DebruijnIndex(Variable),
+    BoundVariable(Variable),
     Entity(Entity),
     Binary(BinOp, ExprRef, ExprRef),
     Unary(MonOp, ExprRef),
@@ -170,8 +184,10 @@ impl ExprPool {
 
     fn get_type(&self, expr: ExprRef) -> LanguageResultType {
         match self.get(expr) {
-            Expr::Quantifier(..) => LanguageResultType::Bool,
-            Expr::Variable(_) => LanguageResultType::Entity,
+            Expr::Lambda { .. } => todo!(),
+            Expr::DebruijnIndex(_) => todo!(),
+            Expr::Quantifier { .. } => LanguageResultType::Bool,
+            Expr::BoundVariable(_) => LanguageResultType::Entity,
             Expr::Entity(_) => LanguageResultType::Entity,
             Expr::Binary(..) => LanguageResultType::Bool,
             Expr::Unary(..) => LanguageResultType::Bool,
@@ -191,7 +207,12 @@ impl ExprPool {
         variables: &mut VariableBuffer,
     ) -> LanguageResult {
         match self.get(expr) {
-            Expr::Quantifier(q, var, restrictor, subformula) => {
+            Expr::Quantifier {
+                quantifier,
+                var,
+                restrictor,
+                subformula,
+            } => {
                 let mut variables = variables.clone();
                 let domain: Vec<Entity> = match self.get_type(*restrictor) {
                     LanguageResultType::Bool => {
@@ -222,7 +243,7 @@ impl ExprPool {
                         .unwrap(),
                 };
 
-                let mut result = match q {
+                let mut result = match quantifier {
                     Quantifier::Universal => true,
                     Quantifier::Existential => false,
                 };
@@ -232,14 +253,14 @@ impl ExprPool {
                         .interp(*subformula, scenario, &mut variables)
                         .try_into()
                         .unwrap();
-                    result = match q {
+                    result = match quantifier {
                         Quantifier::Universal => subformula_value && result,
                         Quantifier::Existential => subformula_value || result,
                     };
                 }
                 LanguageResult::Bool(result)
             }
-            Expr::Variable(i) => LanguageResult::Entity(variables.get(*i).unwrap()),
+            Expr::BoundVariable(i) => LanguageResult::Entity(variables.get(*i).unwrap()),
             Expr::Entity(a) => LanguageResult::Entity(*a),
             Expr::Binary(bin_op, lhs, rhs) => {
                 let lhs = self.interp(*lhs, scenario, variables);
@@ -306,6 +327,12 @@ impl ExprPool {
                     }
                 }
             }
+            Expr::Lambda {
+                lambda,
+                argument,
+                subformula,
+            } => todo!(),
+            Expr::DebruijnIndex(var) => todo!(),
         }
     }
 }
@@ -376,13 +403,23 @@ mod tests {
 
         //For all actors there exists an event such that they are its agent.
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(2),
+            },
             Expr::Constant(Constant::Everyone),
-            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(3), ExprRef(4)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var: Variable(1),
+                restrictor: ExprRef(3),
+                subformula: ExprRef(4),
+            },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::Variable(Variable(0)),
-            Expr::Variable(Variable(1)),
+            Expr::BoundVariable(Variable(0)),
+            Expr::BoundVariable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -391,13 +428,23 @@ mod tests {
 
         //For all actors there exists an event such that they are its patient.
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(2),
+            },
             Expr::Constant(Constant::Everyone),
-            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(3), ExprRef(4)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var: Variable(1),
+                restrictor: ExprRef(3),
+                subformula: ExprRef(4),
+            },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::PatientOf, ExprRef(5), ExprRef(6)),
-            Expr::Variable(Variable(0)),
-            Expr::Variable(Variable(1)),
+            Expr::BoundVariable(Variable(0)),
+            Expr::BoundVariable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -487,14 +534,24 @@ mod tests {
 
         //For all actors there exists an event such that they are its patient and TOP.
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(2),
+            },
             Expr::Constant(Constant::Everyone),
-            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(3), ExprRef(4)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var: Variable(1),
+                restrictor: ExprRef(3),
+                subformula: ExprRef(4),
+            },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::And, ExprRef(5), ExprRef(8)),
             Expr::Binary(BinOp::PatientOf, ExprRef(6), ExprRef(7)),
-            Expr::Variable(Variable(0)),
-            Expr::Variable(Variable(1)),
+            Expr::BoundVariable(Variable(0)),
+            Expr::BoundVariable(Variable(1)),
             Expr::Constant(Constant::Tautology),
         ]);
         assert_eq!(
@@ -526,10 +583,15 @@ mod tests {
 
         // everyone is of property type one.
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(2),
+            },
             Expr::Constant(Constant::Everyone),
             Expr::Unary(MonOp::Property(1), ExprRef(3)),
-            Expr::Variable(Variable(0)),
+            Expr::BoundVariable(Variable(0)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -537,10 +599,15 @@ mod tests {
         );
         // someone is of property type 534.
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Existential, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(2),
+            },
             Expr::Constant(Constant::Everyone),
             Expr::Unary(MonOp::Property(534), ExprRef(3)),
-            Expr::Variable(Variable(0)),
+            Expr::BoundVariable(Variable(0)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -566,13 +633,23 @@ mod tests {
 
         // all property type 534 objects are agents of a 235-event
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(2),
+            },
             Expr::Constant(Constant::Property(534)),
-            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(3), ExprRef(4)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var: Variable(1),
+                restrictor: ExprRef(3),
+                subformula: ExprRef(4),
+            },
             Expr::Constant(Constant::Property(235)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::Variable(Variable(0)),
-            Expr::Variable(Variable(1)),
+            Expr::BoundVariable(Variable(0)),
+            Expr::BoundVariable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -580,13 +657,23 @@ mod tests {
         );
         // all property type 2 objects are agents of a 235-event (which is false)
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(2)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(2),
+            },
             Expr::Constant(Constant::Property(2)),
-            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(3), ExprRef(4)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var: Variable(1),
+                restrictor: ExprRef(3),
+                subformula: ExprRef(4),
+            },
             Expr::Constant(Constant::Property(235)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::Variable(Variable(0)),
-            Expr::Variable(Variable(1)),
+            Expr::BoundVariable(Variable(0)),
+            Expr::BoundVariable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -607,17 +694,27 @@ mod tests {
         };
         //All property type 2 and property type 3 actors are an agent of an event
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(6)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(6),
+            },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
             Expr::Unary(MonOp::Property(2), ExprRef(3)),
-            Expr::Variable(Variable(0)),
+            Expr::BoundVariable(Variable(0)),
             Expr::Unary(MonOp::Property(3), ExprRef(5)),
-            Expr::Variable(Variable(0)), //5
-            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(7), ExprRef(8)),
+            Expr::BoundVariable(Variable(0)), //5
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var: Variable(1),
+                restrictor: ExprRef(7),
+                subformula: ExprRef(8),
+            },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::AgentOf, ExprRef(9), ExprRef(10)),
-            Expr::Variable(Variable(0)),
-            Expr::Variable(Variable(1)),
+            Expr::BoundVariable(Variable(0)),
+            Expr::BoundVariable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -625,17 +722,27 @@ mod tests {
         );
         //All property type 2 and property type 3 actors are patients of an event
         let simple_expr = ExprPool(vec![
-            Expr::Quantifier(Quantifier::Universal, Variable(0), ExprRef(1), ExprRef(6)),
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var: Variable(0),
+                restrictor: ExprRef(1),
+                subformula: ExprRef(6),
+            },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
             Expr::Unary(MonOp::Property(2), ExprRef(3)),
-            Expr::Variable(Variable(0)),
+            Expr::BoundVariable(Variable(0)),
             Expr::Unary(MonOp::Property(3), ExprRef(5)),
-            Expr::Variable(Variable(0)), //5
-            Expr::Quantifier(Quantifier::Existential, Variable(1), ExprRef(7), ExprRef(8)),
+            Expr::BoundVariable(Variable(0)), //5
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var: Variable(1),
+                restrictor: ExprRef(7),
+                subformula: ExprRef(8),
+            },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::PatientOf, ExprRef(9), ExprRef(10)),
-            Expr::Variable(Variable(0)),
-            Expr::Variable(Variable(1)),
+            Expr::BoundVariable(Variable(0)),
+            Expr::BoundVariable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
