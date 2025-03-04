@@ -58,7 +58,7 @@ enum Expr {
     Constant(Constant),
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 struct ExprRef(u32);
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -172,8 +172,16 @@ impl ExprPool {
         ExprPool(vec![])
     }
 
+    fn checked_get(&self, expr: ExprRef) -> Option<&Expr> {
+        self.0.get(expr.0 as usize)
+    }
+
     fn get(&self, expr: ExprRef) -> &Expr {
         &self.0[expr.0 as usize]
+    }
+
+    fn get_mut(&mut self, expr: ExprRef) -> &mut Expr {
+        &mut self.0[expr.0 as usize]
     }
 
     pub fn add(&mut self, expr: Expr) -> ExprRef {
@@ -327,12 +335,8 @@ impl ExprPool {
                     }
                 }
             }
-            Expr::Lambda {
-                lambda,
-                argument,
-                subformula,
-            } => todo!(),
-            Expr::DebruijnIndex(var) => todo!(),
+            Expr::Lambda { .. } => todo!(),
+            Expr::DebruijnIndex(_) => todo!(),
         }
     }
 }
