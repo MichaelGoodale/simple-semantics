@@ -12,7 +12,7 @@ use chumsky::{
     util::MaybeRef,
 };
 
-use super::{lambda::Lambda, BinOp, LanguageExpression, Quantifier, Variable};
+use super::{BinOp, LanguageExpression, Quantifier, Variable};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct LabeledExprPool<'a> {
@@ -147,36 +147,22 @@ where
         .map(LabeledConstant::LabeledProperty))
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-struct VariableToBe {
-    is_debruijn: bool,
-    index: u32,
-}
-
-impl VariableToBe {
+impl Variable {
     fn to_expr_ref(self, pool: &mut LabeledExprPool) -> ExprRef {
-        if self.is_debruijn {
-            pool.add(Expr::DebruijnIndex(Variable(self.index), Lambda::Constant))
-        } else {
-            pool.add(Expr::BoundVariable(Variable(self.index)))
-        }
+        pool.add(Expr::BoundVariable(self))
     }
 }
 
-fn variable<'src, E>() -> impl Parser<'src, &'src str, VariableToBe, E> + Copy
+fn variable<'src, E>() -> impl Parser<'src, &'src str, Variable, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>,
 {
     just('x')
-        .or(just('d'))
-        .then(text::int(10))
+        .ignore_then(text::int(10))
         .padded()
-        .map(|(c, n): (char, &str)| VariableToBe {
-            is_debruijn: c == 'd',
-            index: n.parse().unwrap(),
-        })
+        .map(|n: &str| Variable(n.parse().unwrap()))
 }
 
 fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> + Copy {
@@ -271,27 +257,7 @@ pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraT
         ))
     });
 
-    let lambda = recursive(|expr| {
-        let atom = truth_value.or(expr.delimited_by(just('('), just(')')));
-
-        let lambda = just("lambda")
-            .ignore_then(atom.clone().padded().delimited_by(just('('), just(')')))
-            .then(
-                atom.clone()
-                    .padded()
-                    .delimited_by(just('('), just(')'))
-                    .or_not(),
-            )
-            .map_with(|(subformula, argument), e| {
-                e.state().add(Expr::Lambda {
-                    argument,
-                    subformula,
-                })
-            });
-
-        atom.or(lambda)
-    });
-    lambda.then_ignore(end())
+    truth_value.then_ignore(end())
 }
 
 pub fn parse_executable(
@@ -427,18 +393,7 @@ mod tests {
             let str = format!("x{n}");
             assert_eq!(
                 variable::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                VariableToBe {
-                    index: n,
-                    is_debruijn: false
-                }
-            );
-            let str = format!("d{n}");
-            assert_eq!(
-                variable::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                VariableToBe {
-                    index: n,
-                    is_debruijn: true
-                }
+                Variable(n)
             );
         }
     }
@@ -588,46 +543,6 @@ mod tests {
             println!("{statement}");
             assert_eq!(get_parse(statement, &simple_scenario), result);
         }
-
-        Ok(())
-    }
-
-    #[test]
-    fn parse_lambdas() -> anyhow::Result<()> {
-        let statement = "lambda(AgentOf(d0, e0))(a0)";
-        assert_eq!(
-            get_pool(statement),
-            (
-                ExprPool(vec![
-                    Expr::DebruijnIndex(Variable(0), Lambda::Constant),
-                    Expr::Entity(Entity::Event(0)),
-                    Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
-                    Expr::Entity(Entity::Actor(0)),
-                    Expr::Lambda {
-                        argument: Some(ExprRef(3)),
-                        subformula: ExprRef(2)
-                    }
-                ]),
-                ExprRef(4)
-            )
-        );
-
-        let statement = "lambda(AgentOf(d0, e0))";
-        assert_eq!(
-            get_pool(statement),
-            (
-                ExprPool(vec![
-                    Expr::DebruijnIndex(Variable(0), Lambda::Constant),
-                    Expr::Entity(Entity::Event(0)),
-                    Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
-                    Expr::Lambda {
-                        argument: None,
-                        subformula: ExprRef(2)
-                    }
-                ]),
-                ExprRef(3)
-            )
-        );
 
         Ok(())
     }

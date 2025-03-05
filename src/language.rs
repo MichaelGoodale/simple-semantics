@@ -1,8 +1,5 @@
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
-mod lambda;
-use lambda::Lambda;
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum BinOp {
     AgentOf,
@@ -45,11 +42,6 @@ enum Expr {
         restrictor: ExprRef,
         subformula: ExprRef,
     },
-    Lambda {
-        argument: Option<ExprRef>,
-        subformula: ExprRef,
-    },
-    DebruijnIndex(Variable, Lambda),
     BoundVariable(Variable),
     Entity(Entity),
     Binary(BinOp, ExprRef, ExprRef),
@@ -191,8 +183,6 @@ impl ExprPool {
 
     fn get_type(&self, expr: ExprRef) -> LanguageResultType {
         match self.get(expr) {
-            Expr::Lambda { .. } => todo!(),
-            Expr::DebruijnIndex(..) => todo!(),
             Expr::Quantifier { .. } => LanguageResultType::Bool,
             Expr::BoundVariable(_) => LanguageResultType::Entity,
             Expr::Entity(_) => LanguageResultType::Entity,
@@ -334,8 +324,6 @@ impl ExprPool {
                     }
                 }
             }
-            Expr::Lambda { .. } => todo!(),
-            Expr::DebruijnIndex(..) => todo!(),
         }
     }
 }

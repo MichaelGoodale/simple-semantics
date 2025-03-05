@@ -95,6 +95,7 @@ impl LabelledScenarios {
     }
 }
 
+mod lambda;
 mod language;
 pub use language::{parse_executable, LanguageExpression, LanguageResult};
 mod scenario;
