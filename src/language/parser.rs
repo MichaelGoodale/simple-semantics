@@ -156,7 +156,7 @@ struct VariableToBe {
 impl VariableToBe {
     fn to_expr_ref(self, pool: &mut LabeledExprPool) -> ExprRef {
         if self.is_debruijn {
-            pool.add(Expr::DebruijnIndex(Variable(self.index)))
+            pool.add(Expr::DebruijnIndex(Variable(self.index), Lambda::Constant))
         } else {
             pool.add(Expr::BoundVariable(Variable(self.index)))
         }
@@ -284,7 +284,6 @@ pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraT
             )
             .map_with(|(subformula, argument), e| {
                 e.state().add(Expr::Lambda {
-                    lambda: Lambda {},
                     argument,
                     subformula,
                 })
@@ -600,12 +599,11 @@ mod tests {
             get_pool(statement),
             (
                 ExprPool(vec![
-                    Expr::DebruijnIndex(Variable(0)),
+                    Expr::DebruijnIndex(Variable(0), Lambda::Constant),
                     Expr::Entity(Entity::Event(0)),
                     Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
                     Expr::Entity(Entity::Actor(0)),
                     Expr::Lambda {
-                        lambda: Lambda {},
                         argument: Some(ExprRef(3)),
                         subformula: ExprRef(2)
                     }
@@ -619,11 +617,10 @@ mod tests {
             get_pool(statement),
             (
                 ExprPool(vec![
-                    Expr::DebruijnIndex(Variable(0)),
+                    Expr::DebruijnIndex(Variable(0), Lambda::Constant),
                     Expr::Entity(Entity::Event(0)),
                     Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
                     Expr::Lambda {
-                        lambda: Lambda {},
                         argument: None,
                         subformula: ExprRef(2)
                     }
