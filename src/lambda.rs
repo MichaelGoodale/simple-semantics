@@ -1,14 +1,26 @@
+use anyhow::{bail, Context};
 use std::collections::{HashSet, VecDeque};
 
 mod types;
-use anyhow::{bail, Context};
 use types::LambdaType;
 
 type Bvar = usize;
 type Fvar = usize;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-struct LambdaExprRef(u32);
+pub struct LambdaExprRef(pub u32);
+
+pub trait LambdaLanguageOfThought {
+    fn get_children(&self) -> impl Iterator<Item = LambdaExprRef>;
+    fn remap_refs(&mut self, remap: &[usize]);
+}
+
+impl LambdaLanguageOfThought for () {
+    fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
+        std::iter::empty()
+    }
+    fn remap_refs(&mut self, _: &[usize]) {}
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum LambdaExpr<T> {
@@ -23,9 +35,9 @@ enum LambdaExpr<T> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct LambdaPool<T>(Vec<LambdaExpr<T>>);
+struct LambdaPool<T: LambdaLanguageOfThought>(Vec<LambdaExpr<T>>);
 
-impl<T> LambdaPool<T> {
+impl<T: LambdaLanguageOfThought> LambdaPool<T> {
     pub fn new() -> LambdaPool<T> {
         LambdaPool(vec![])
     }
@@ -49,12 +61,12 @@ impl<T> LambdaPool<T> {
     }
 }
 
-struct LambdaPoolBFSIterator<'a, T> {
+struct LambdaPoolBFSIterator<'a, T: LambdaLanguageOfThought> {
     pool: &'a LambdaPool<T>,
     queue: VecDeque<(LambdaExprRef, Bvar)>,
 }
 
-impl<T> Iterator for LambdaPoolBFSIterator<'_, T> {
+impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, T> {
     type Item = (LambdaExprRef, Bvar);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -69,7 +81,9 @@ impl<T> Iterator for LambdaPoolBFSIterator<'_, T> {
                     self.queue.push_back((*argument, lambda_depth));
                 }
                 LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-                LambdaExpr::LanguageOfThoughtExpr(_) => todo!(),
+                LambdaExpr::LanguageOfThoughtExpr(x) => x
+                    .get_children()
+                    .for_each(|x| self.queue.push_back((x, lambda_depth))),
             }
             Some((x, lambda_depth))
         } else {
@@ -78,7 +92,10 @@ impl<T> Iterator for LambdaPoolBFSIterator<'_, T> {
     }
 }
 
-impl<T: Copy> LambdaPool<T> {
+impl<T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<T>
+where
+    T: Clone,
+{
     fn bfs_from(&self, x: LambdaExprRef) -> LambdaPoolBFSIterator<T> {
         LambdaPoolBFSIterator {
             pool: self,
@@ -100,6 +117,7 @@ impl<T: Copy> LambdaPool<T> {
     }
 
     fn types_clash(&self, lambda_type: &LambdaType, rhs: LambdaExprRef) -> bool {
+        //return false;
         let rhs_type = self.get_type(rhs);
         !lambda_type.can_apply(&rhs_type)
     }
@@ -191,14 +209,15 @@ impl<T: Copy> LambdaPool<T> {
     fn reduce(&mut self, root: LambdaExprRef) -> anyhow::Result<()> {
         if let Some(x) = self.get_next_app(root) {
             self.beta_reduce(x)?;
-            let new_i = self.cleanup(x);
-            self.reduce(new_i)?;
+            let new_root = self.cleanup(root);
+            dbg!(&self);
+            self.reduce(new_root)?;
         }
         Ok(())
     }
 }
 
-impl<T> LambdaExpr<T> {
+impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
     fn remap_refs(&mut self, remap: &[usize]) {
         match self {
             LambdaExpr::Lambda(x, _) => {
@@ -212,7 +231,7 @@ impl<T> LambdaExpr<T> {
                 *argument = LambdaExprRef(remap[argument.0 as usize] as u32);
             }
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-            LambdaExpr::LanguageOfThoughtExpr(_) => todo!(),
+            LambdaExpr::LanguageOfThoughtExpr(x) => x.remap_refs(remap),
         }
     }
 }
@@ -220,6 +239,10 @@ impl<T> LambdaExpr<T> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{
+        language::{BinOp, Expr, ExprRef, MonOp},
+        Entity,
+    };
 
     fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
         Ok([
@@ -230,6 +253,98 @@ mod test {
             LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::from_string("<e,e>")?),
             LambdaExpr::BoundVariable(1, LambdaType::E),
         ])
+    }
+
+    #[test]
+    fn complicated_lambda_language_of_thought() -> anyhow::Result<()> {
+        let mut pool = LambdaPool::<Expr>(vec![
+            LambdaExpr::Application {
+                //John dances
+                subformula: LambdaExprRef(1),
+                argument: LambdaExprRef(4),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(3))),
+            LambdaExpr::BoundVariable(0, LambdaType::E),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3))),
+        ]);
+        pool.reduce(LambdaExprRef(0))?;
+
+        assert_eq!(
+            pool.clone(),
+            LambdaPool(vec![
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(1))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3)))
+            ]),
+        );
+
+        let mut pool = LambdaPool(vec![
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(1),
+                argument: LambdaExprRef(6),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<t, <t,t>>")?),
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::from_string("<t,t>")?),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(4), ExprRef(5))), //10
+            LambdaExpr::BoundVariable(1, LambdaType::T),
+            LambdaExpr::BoundVariable(0, LambdaType::T),
+            LambdaExpr::Application {
+                //6
+                subformula: LambdaExprRef(7),
+                argument: LambdaExprRef(10),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::et()),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(9))),
+            LambdaExpr::BoundVariable(0, LambdaType::E),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
+        ]);
+        pool.reduce(LambdaExprRef(0))?;
+        dbg!(pool);
+        panic!();
+
+        // [[[Mary sings] and]  [John dances]]
+        let mut pool = LambdaPool::<Expr>(vec![
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(6),
+                argument: LambdaExprRef(1),
+            },
+            LambdaExpr::Application {
+                //John dances
+                subformula: LambdaExprRef(2),
+                argument: LambdaExprRef(5),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et()),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(4))),
+            LambdaExpr::BoundVariable(0, LambdaType::E),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3))),
+            // 6
+            //\lambda x. Mary sings and
+            LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::from_string("<t,t>")?),
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(8),
+                argument: LambdaExprRef(13),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(9), LambdaType::from_string("<t, <t,t>>")?),
+            LambdaExpr::Lambda(LambdaExprRef(10), LambdaType::from_string("<t,t>")?),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(11), ExprRef(12))), //10
+            LambdaExpr::BoundVariable(1, LambdaType::T),
+            LambdaExpr::BoundVariable(0, LambdaType::T),
+            LambdaExpr::Application {
+                //13
+                subformula: LambdaExprRef(14),
+                argument: LambdaExprRef(17),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(15), LambdaType::et()),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(16))),
+            LambdaExpr::BoundVariable(0, LambdaType::E),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
+        ]);
+        pool.reduce(LambdaExprRef(0))?;
+        assert_eq!(
+            pool,
+            LambdaPool(vec![LambdaExpr::FreeVariable(1337, LambdaType::T)])
+        );
+        Ok(())
     }
 
     #[test]

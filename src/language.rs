@@ -1,7 +1,7 @@
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum BinOp {
+pub enum BinOp {
     AgentOf,
     PatientOf,
     And,
@@ -9,7 +9,7 @@ enum BinOp {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum MonOp {
+pub enum MonOp {
     Not,
     Property(PropertyLabel),
     Tautology,
@@ -17,7 +17,7 @@ enum MonOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Constant {
+pub enum Constant {
     Everyone,
     EveryEvent,
     Tautology,
@@ -26,16 +26,16 @@ enum Constant {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-struct Variable(u32);
+pub struct Variable(u32);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum Quantifier {
+pub enum Quantifier {
     Universal,
     Existential,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum Expr {
+pub enum Expr {
     Quantifier {
         quantifier: Quantifier,
         var: Variable,
@@ -50,7 +50,7 @@ enum Expr {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-struct ExprRef(u32);
+pub struct ExprRef(pub u32);
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct ExprPool(Vec<Expr>);
@@ -330,6 +330,8 @@ impl ExprPool {
 
 mod parser;
 pub use parser::parse_executable;
+
+mod lambda_implementation;
 
 #[cfg(test)]
 mod tests {
