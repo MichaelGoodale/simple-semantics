@@ -4,19 +4,17 @@ mod types;
 use anyhow::{bail, Context};
 use types::LambdaType;
 
-use crate::lambda;
-
 type Bvar = usize;
 type Fvar = usize;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct LambdaExprRef(u32);
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum LambdaExpr<T> {
-    Lambda(LambdaExprRef, LambdaType<T>),
-    BoundVariable(Bvar, LambdaType<T>),
-    FreeVariable(Fvar, LambdaType<T>),
+    Lambda(LambdaExprRef, LambdaType),
+    BoundVariable(Bvar, LambdaType),
+    FreeVariable(Fvar, LambdaType),
     Application {
         subformula: LambdaExprRef,
         argument: LambdaExprRef,
@@ -88,6 +86,24 @@ impl<T: Copy> LambdaPool<T> {
         }
     }
 
+    fn get_type(&self, x: LambdaExprRef) -> LambdaType {
+        match self.get(x) {
+            LambdaExpr::Lambda(_, x)
+            | LambdaExpr::BoundVariable(_, x)
+            | LambdaExpr::FreeVariable(_, x) => x.clone(),
+            LambdaExpr::Application {
+                subformula,
+                argument: _,
+            } => self.get_type(*subformula).apply(),
+            LambdaExpr::LanguageOfThoughtExpr(_) => todo!(),
+        }
+    }
+
+    fn types_clash(&self, lambda_type: &LambdaType, rhs: LambdaExprRef) -> bool {
+        let rhs_type = self.get_type(rhs);
+        !lambda_type.can_apply(&rhs_type)
+    }
+
     fn beta_reduce(&mut self, app: LambdaExprRef) -> anyhow::Result<()> {
         //BFS over all children and then replace debruijn k w/ argument ref where k is the number
         //of lambda abstractions we've gone under, e.g. (lambda 0 lambda 0 1)(u) -> lambda u lambda
@@ -103,13 +119,19 @@ impl<T: Copy> LambdaPool<T> {
         } = expr
         {
             let inner_term = match self.get(*subformula) {
-                LambdaExpr::Lambda(x, _lambda_type) => *x,
+                LambdaExpr::Lambda(x, lambda_type) => {
+
+                    if self.types_clash(lambda_type, *argument) {
+                        bail!("Type clash!");
+                    }
+
+                *x},
                 _ => bail!("You can only beta reduce if the left hand side of the application is a lambda!")
             };
 
             (
                 inner_term,
-                *self.get(*argument),
+                self.get(*argument).clone(),
                 self.bfs_from(inner_term)
                     .filter(|(x, _)| matches!(self.get(*x), LambdaExpr::BoundVariable(..)))
                     .collect::<Vec<_>>(),
@@ -119,9 +141,10 @@ impl<T: Copy> LambdaPool<T> {
         };
         for (x, lambda_depth) in subformula_vars.iter() {
             let val = self.get_mut(*x);
-            println!("{:?} {:?}", x, lambda_depth);
             match val {
-                LambdaExpr::BoundVariable(n, _lambda) if *n == *lambda_depth => *val = argument,
+                LambdaExpr::BoundVariable(n, _lambda) if *n == *lambda_depth => {
+                    *val = argument.clone()
+                }
                 LambdaExpr::BoundVariable(..) => (),
                 _ => {
                     panic!("This should never happen because of the previous filter")
@@ -158,6 +181,21 @@ impl<T: Copy> LambdaPool<T> {
         }
         LambdaExprRef(remap[root.0 as usize] as u32)
     }
+
+    fn get_next_app(&self, root: LambdaExprRef) -> Option<LambdaExprRef> {
+        self.bfs_from(root)
+            .map(|(x, _)| x)
+            .find(|x| matches!(self.get(*x), LambdaExpr::Application { .. }))
+    }
+
+    fn reduce(&mut self, root: LambdaExprRef) -> anyhow::Result<()> {
+        if let Some(x) = self.get_next_app(root) {
+            self.beta_reduce(x)?;
+            let new_i = self.cleanup(x);
+            self.reduce(new_i)?;
+        }
+        Ok(())
+    }
 }
 
 impl<T> LambdaExpr<T> {
@@ -183,20 +221,67 @@ impl<T> LambdaExpr<T> {
 mod test {
     use super::*;
 
-    fn k<T: Default>(pos: u32) -> [LambdaExpr<T>; 3] {
-        [
-            LambdaExpr::Lambda(LambdaExprRef(pos + 1), LambdaType::default()),
-            LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::default()),
-            LambdaExpr::BoundVariable(1, LambdaType::default()),
-        ]
+    fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
+        Ok([
+            LambdaExpr::Lambda(
+                LambdaExprRef(pos + 1),
+                LambdaType::from_string("<e, <e,e>>")?,
+            ),
+            LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::from_string("<e,e>")?),
+            LambdaExpr::BoundVariable(1, LambdaType::E),
+        ])
+    }
+
+    #[test]
+    fn complicated_lambda() -> anyhow::Result<()> {
+        // [[[Mary sings] and]  [John dances]]
+        let mut pool = LambdaPool::<()>(vec![
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(5),
+                argument: LambdaExprRef(1),
+            },
+            LambdaExpr::Application {
+                //John dances
+                subformula: LambdaExprRef(2),
+                argument: LambdaExprRef(4),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et()),
+            LambdaExpr::FreeVariable(0, LambdaType::T),
+            LambdaExpr::FreeVariable(2, LambdaType::E),
+            // 5
+            //\lambda x. Mary sings and
+            LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::from_string("<t,t>")?),
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(7),
+                argument: LambdaExprRef(10),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::from_string("<t, <t,t>>")?),
+            LambdaExpr::Lambda(LambdaExprRef(9), LambdaType::from_string("<t,t>")?),
+            LambdaExpr::BoundVariable(1, LambdaType::T),
+            LambdaExpr::Application {
+                //10
+                subformula: LambdaExprRef(11),
+                argument: LambdaExprRef(13),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(12), LambdaType::et()),
+            LambdaExpr::FreeVariable(1337, LambdaType::T),
+            LambdaExpr::FreeVariable(5, LambdaType::E),
+        ]);
+        pool.reduce(LambdaExprRef(0))?;
+        assert_eq!(
+            pool,
+            LambdaPool(vec![LambdaExpr::FreeVariable(1337, LambdaType::T)])
+        );
+        Ok(())
     }
 
     #[test]
     fn test_lambda_calculus() -> anyhow::Result<()> {
         let mut pool = LambdaPool::<()>(
-            k(0).into_iter()
+            k(0)?
+                .into_iter()
                 .chain([
-                    LambdaExpr::FreeVariable(32, LambdaType::default()),
+                    LambdaExpr::FreeVariable(32, LambdaType::E),
                     LambdaExpr::Application {
                         subformula: LambdaExprRef(0),
                         argument: LambdaExprRef(3),
@@ -212,8 +297,8 @@ mod test {
         assert_eq!(
             pool,
             LambdaPool(vec![
-                LambdaExpr::FreeVariable(32, LambdaType::default()),
-                LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::default())
+                LambdaExpr::FreeVariable(32, LambdaType::E),
+                LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::from_string("<e,e>")?)
             ])
         );
         Ok(())
