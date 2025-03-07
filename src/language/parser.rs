@@ -1,22 +1,12 @@
-use std::{
-    collections::{vec_deque, HashMap, VecDeque},
-    fmt::Debug,
-    hash::Hash,
-};
+use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
     lambda::{LambdaExpr, LambdaExprRef, LambdaPool},
     language::{Constant, Expr, ExprPool, ExprRef, MonOp},
     Actor, Entity, LabelledScenarios, PropertyLabel,
 };
-use anyhow::Context;
 use chumsky::prelude::*;
-use chumsky::{
-    extra::{self, ParserExtra},
-    label::LabelError,
-    text::TextExpected,
-    util::MaybeRef,
-};
+use chumsky::{extra::ParserExtra, label::LabelError, text::TextExpected, util::MaybeRef};
 
 use super::{BinOp, LanguageExpression, Quantifier, Variable};
 
@@ -72,7 +62,13 @@ impl<'src> TypedParseTree<'src> {
             })),
             ParseTree::Unary(m, x) => {
                 let x = ExprRef(x.add_to_pool(pool, labels, variable_names).0);
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(*m, x))
+                let m = match m {
+                    LabeledProperty::Property(mon_op) => *mon_op,
+                    LabeledProperty::LabeledProperty(label) => {
+                        MonOp::Property(labels.get_property_label(label))
+                    }
+                };
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(m, x))
             }
             ParseTree::Binary(b, x, y) => {
                 let x = ExprRef(x.add_to_pool(pool, labels, variable_names).0);
@@ -131,7 +127,7 @@ enum ParseTree<'src> {
         argument: Box<TypedParseTree<'src>>,
     },
     Constant(LabeledConstant<'src>),
-    Unary(MonOp, Box<TypedParseTree<'src>>),
+    Unary(LabeledProperty<'src>, Box<TypedParseTree<'src>>),
     Binary(BinOp, Box<TypedParseTree<'src>>, Box<TypedParseTree<'src>>),
     Quantifier {
         quantifier: Quantifier,
@@ -163,8 +159,6 @@ impl<'a> LabeledExprPool<'a> {
         self.pool.add(e)
     }
 }
-
-type ExtraType<'a, 'b> = extra::Full<Simple<'a, char>, extra::SimpleState<LabeledExprPool<'b>>, ()>;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum LabeledEntity<'a> {
@@ -231,6 +225,12 @@ enum LabeledConstant<'a> {
     LabeledProperty(&'a str),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LabeledProperty<'a> {
+    Property(MonOp),
+    LabeledProperty(&'a str),
+}
+
 impl LabeledConstant<'_> {
     fn to_expr_ref(self, state: &mut LabeledExprPool) -> ExprRef {
         match self {
@@ -256,6 +256,37 @@ impl LabeledConstant<'_> {
             }
         }
     }
+}
+
+fn properties<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+{
+    let lambda_expr = lambda_variable().map(|x| (true, TypedParseTree(x.0, ParsingType::E)));
+    let var_expr = variable().map(|x| (false, x));
+    let entity_expr = entity().map(|x| (false, x));
+    let entity_or_var = choice((entity_expr, var_expr, lambda_expr)).padded();
+
+    choice((just("p")
+        .ignore_then(text::int(10))
+        .map(|p: &str| MonOp::Property(p.parse().unwrap())),))
+    .map(LabeledProperty::Property)
+    .or(just("p_")
+        .ignore_then(text::ident())
+        .map(LabeledProperty::LabeledProperty))
+    .then(entity_or_var.padded().delimited_by(just('('), just(')')))
+    .map(|(x, (arg_is_lambdavar, arg))| {
+        TypedParseTree(
+            ParseTree::Unary(x, Box::new(arg)),
+            if arg_is_lambdavar {
+                ParsingType::et()
+            } else {
+                ParsingType::T
+            },
+        )
+    })
 }
 
 fn sets<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -293,6 +324,14 @@ where
             .map(|x| TypedParseTree(ParseTree::BoundVariable(x), ParsingType::Unknown)),
     ))
 }
+fn just_variable<'src, E>() -> impl Parser<'src, &'src str, &'src str, E> + Copy
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+{
+    just('x').ignore_then(text::int(10))
+}
 
 fn variable<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
 where
@@ -300,9 +339,7 @@ where
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>,
 {
-    just('x')
-        .ignore_then(text::int(10))
-        .map(|x| TypedParseTree(ParseTree::Variable(x), ParsingType::E))
+    just_variable().map(|x| TypedParseTree(ParseTree::Variable(x), ParsingType::E))
 }
 
 fn binary_operation<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -339,79 +376,73 @@ where
 }
 
 fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
-    //let ent = entity();
-    //let var = variable();
-    //let entity_or_variable = choice((ent, var)).padded();
+    let ent = entity();
+    let var = variable();
+    let entity_or_variable = choice((ent, var)).padded();
 
     let true_or_false = bool_literal().padded();
-    //let possible_sets = sets().padded();
+    let possible_sets = sets().padded();
     let truth_value = recursive(|expr| {
-        //let has_property = sets()
-        //    .map_with(|p, e| p.to_monop(e.state()))
-        //    .then_ignore(just('('))
-        //    .then(entity_or_variable)
-        //    .then_ignore(just(')'))
-        //    .map_with(|(p, a), e| e.state().add(Expr::Unary(p, a)));
-
         let atom = true_or_false
             .or(binary_operation())
-            //.or(has_property)
+            .or(properties())
             .or(expr.clone().delimited_by(just('('), just(')')))
             .padded();
 
         let neg = just("~").repeated().foldr(atom, |_, b| {
             let new_type = b.1.clone();
-            TypedParseTree(ParseTree::Unary(MonOp::Not, Box::new(b)), new_type)
+            TypedParseTree(
+                ParseTree::Unary(LabeledProperty::Property(MonOp::Not), Box::new(b)),
+                new_type,
+            )
         });
 
-        /*
-                let logical_op = neg.clone().foldl_with(
-                    choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
-                        .padded()
-                        .then(neg.clone())
-                        .repeated(),
-                    |lhs, (op, rhs), e| e.state().add(Expr::Binary(op, lhs, rhs)),
-                );
-
-                let non_quantified_statement = logical_op.or(neg).padded();
-        -        just("p")
-        -            .ignore_then(text::int(10))
-        -            .map(|p: &str| Constant::Property(p.parse().unwrap())),
-
-                let quantified = choice((
-                    just("every").to(Quantifier::Universal),
-                    just("some").to(Quantifier::Existential),
-                ))
-                .then_ignore(just('('))
-                .then(
-                    just('x')
-                        .ignore_then(text::int::<&str, ExtraType>(10).map(|x| Var(x.parse().unwrap())))
-                        .padded(),
+        let non_quantified = neg.clone().foldl(
+            choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
+                .padded()
+                .then(neg.clone())
+                .repeated(),
+            |lhs, (op, rhs)| {
+                TypedParseTree(
+                    ParseTree::Binary(op, Box::new(lhs), Box::new(rhs)),
+                    ParsingType::Unknown,
                 )
-                .then_ignore(just(','))
-                .then(
-                    possible_sets
-                        .or(entity_or_variable)
-                        .or(non_quantified_statement.clone()),
-                )
-                .then_ignore(just(','))
-                .then(non_quantified_statement.clone())
-                .then_ignore(just(')'))
-                .map_with(|(((quantifier, var), restrictor), subformula), e| {
-                    e.state().add(Expr::Quantifier {
-                        quantifier,
-                        var,
-                        restrictor,
-                        subformula,
-                    })
-                });
-                choice((
-                    non_quantified_statement,
-                    quantified,
-                    entity_or_variable,
-                    possible_sets,
-                ))*/
-        neg
+            },
+        );
+
+        let quantified = choice((
+            just("every").to(Quantifier::Universal),
+            just("some").to(Quantifier::Existential),
+        ))
+        .then_ignore(just('('))
+        .then(just_variable())
+        .then_ignore(just(','))
+        .then(
+            possible_sets
+                .or(entity_or_variable)
+                .or(non_quantified.clone()),
+        )
+        .then_ignore(just(','))
+        .then(non_quantified.clone())
+        .then_ignore(just(')'))
+        .map(|(((quantifier, variable), restrictor), subformula)| {
+            TypedParseTree(
+                ParseTree::Quantifier {
+                    quantifier,
+                    variable,
+                    restrictor: Box::new(restrictor),
+                    subformula: Box::new(subformula),
+                },
+                ParsingType::T,
+            )
+        });
+
+        choice((
+            non_quantified,
+            quantified,
+            entity_or_variable,
+            possible_sets,
+        ))
     });
     truth_value.then_ignore(end())
 }
@@ -420,25 +451,19 @@ pub fn parse_executable(
     s: &str,
     labels: &mut LabelledScenarios,
 ) -> anyhow::Result<LanguageExpression> {
-    let mut pool = extra::SimpleState(LabeledExprPool::new(labels));
-    todo!();
-    /*
-        let start = language_parser()
-            .parse_with_state(s, &mut pool)
-            .into_result()
-            .map_err(|x| {
-                anyhow::Error::msg(
-                    x.into_iter()
-                        .map(|x| x.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            })?;
-
-        let pool = pool.0.pool;
-
-        Ok(LanguageExpression { pool, start })
-    */
+    let (pool, root) = language_parser()
+        .parse(s)
+        .into_result()
+        .map_err(|x| {
+            anyhow::Error::msg(
+                x.into_iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        })?
+        .to_pool(labels);
+    pool.into_pool(root)
 }
 
 #[cfg(test)]
@@ -594,9 +619,9 @@ mod tests {
             actor_labels: HashMap::default(),
             property_labels: HashMap::default(),
         };
-        let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
-        let parse = todo!(); //language_parser().parse_with_state(s, &mut pool).unwrap();
-        (pool.0.pool, parse)
+        let (parse, root) = language_parser().parse(s).unwrap().to_pool(&mut labels);
+        let LanguageExpression { pool, start } = parse.into_pool(root).unwrap();
+        (pool, start)
     }
 
     fn get_parse(s: &str, simple_scenario: &Scenario) -> LanguageResult {
@@ -652,15 +677,9 @@ mod tests {
             "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), p_Blue(x0))",
         ] {
             println!("{statement}");
-            let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
-            let parse = todo!();
-            //let parse = language_parser()
-            //    .parse_with_state(statement, &mut pool)
-            //    .unwrap();
-            let mut variables = VariableBuffer(vec![]);
-            let pool = pool.0.pool;
+            let expression = parse_executable(statement, &mut labels)?;
             assert_eq!(
-                pool.interp(parse, labels.scenarios.first().unwrap(), &mut variables),
+                expression.run(&labels.scenarios[0]),
                 LanguageResult::Bool(true)
             );
         }
