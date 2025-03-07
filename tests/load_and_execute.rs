@@ -46,6 +46,7 @@ fn load_dataset() -> anyhow::Result<()> {
         scenarios,
         HashMap::from_iter([("run", 0), ("see", 1)].map(|(x, y)| (x.to_string(), y))),
         HashMap::from_iter([("John", 0), ("Mary", 1)].map(|(x, y)| (x.to_string(), y))),
+        HashMap::default(),
     );
 
     assert_eq!(data, parsed_data);

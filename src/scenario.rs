@@ -2,7 +2,9 @@ use ahash::RandomState;
 use chumsky::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{Actor, Entity, Event, LabelledScenarios, PropertyLabel, Scenario, ThetaRoles};
+use crate::{
+    lambda::Fvar, Actor, Entity, Event, LabelledScenarios, PropertyLabel, Scenario, ThetaRoles,
+};
 
 struct StringThetaRole<'a> {
     agent: Option<&'a str>,
@@ -143,6 +145,7 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
                 scenarios: vec![],
                 actor_labels: HashMap::default(),
                 property_labels: HashMap::default(),
+                free_variables: HashMap::default(),
             };
             add_scenario(&mut dataset, actors, actor_props, events);
             dataset
@@ -221,6 +224,14 @@ fn add_scenario<'a>(
 }
 
 impl LabelledScenarios {
+    pub fn get_free_variable(&mut self, label: &str) -> Fvar {
+        let n = self.free_variables.len();
+        *self
+            .free_variables
+            .entry(label.to_string())
+            .or_insert(n as Fvar)
+    }
+
     pub fn get_property_label(&mut self, label: &str) -> PropertyLabel {
         let n = self.property_labels.len();
         *self

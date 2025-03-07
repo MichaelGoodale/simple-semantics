@@ -1,10 +1,11 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
-    lambda::{LambdaExpr, LambdaExprRef, LambdaPool},
+    lambda::{types::LambdaType, LambdaExpr, LambdaExprRef, LambdaPool},
     language::{Constant, Expr, ExprRef, MonOp},
     Entity, LabelledScenarios,
 };
+use anyhow::bail;
 use chumsky::prelude::*;
 use chumsky::{extra::ParserExtra, label::LabelError, text::TextExpected, util::MaybeRef};
 
@@ -31,6 +32,18 @@ impl ParsingType {
             Some(Box::new(ParsingType::et())),
         )
     }
+
+    fn to_lambda_type(&self) -> anyhow::Result<LambdaType> {
+        Ok(match self {
+            ParsingType::E => LambdaType::E,
+            ParsingType::T => LambdaType::T,
+            ParsingType::Composition(Some(a), Some(b)) => LambdaType::Composition(
+                Box::new(a.to_lambda_type()?),
+                Box::new(b.to_lambda_type()?),
+            ),
+            _ => bail!("Cannot convert unknown type"),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -42,6 +55,7 @@ impl<'src> TypedParseTree<'src> {
         pool: &mut LambdaPool<Expr>,
         labels: &mut LabelledScenarios,
         variable_names: &mut HashMap<&'src str, u32>,
+        lambda_depth: usize,
     ) -> LambdaExprRef {
         let expr = match &self.0 {
             ParseTree::Constant(c) => LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(match c {
@@ -55,7 +69,7 @@ impl<'src> TypedParseTree<'src> {
                 LabeledEntity::LabeledActor(label) => Entity::Actor(labels.get_actor_label(label)),
             })),
             ParseTree::Unary(m, x) => {
-                let x = ExprRef(x.add_to_pool(pool, labels, variable_names).0);
+                let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth).0);
                 let m = match m {
                     LabeledProperty::Property(mon_op) => *mon_op,
                     LabeledProperty::LabeledProperty(label) => {
@@ -65,8 +79,8 @@ impl<'src> TypedParseTree<'src> {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(m, x))
             }
             ParseTree::Binary(b, x, y) => {
-                let x = ExprRef(x.add_to_pool(pool, labels, variable_names).0);
-                let y = ExprRef(y.add_to_pool(pool, labels, variable_names).0);
+                let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth).0);
+                let y = ExprRef(y.add_to_pool(pool, labels, variable_names, lambda_depth).0);
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x, y))
             }
             ParseTree::Quantifier {
@@ -78,8 +92,16 @@ impl<'src> TypedParseTree<'src> {
                 let n = variable_names.len();
                 let v = *variable_names.entry(*variable).or_insert(n as u32);
 
-                let restrictor = ExprRef(restrictor.add_to_pool(pool, labels, variable_names).0);
-                let subformula = ExprRef(subformula.add_to_pool(pool, labels, variable_names).0);
+                let restrictor = ExprRef(
+                    restrictor
+                        .add_to_pool(pool, labels, variable_names, lambda_depth)
+                        .0,
+                );
+                let subformula = ExprRef(
+                    subformula
+                        .add_to_pool(pool, labels, variable_names, lambda_depth)
+                        .0,
+                );
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: *quantifier,
                     var: Variable(v),
@@ -92,6 +114,10 @@ impl<'src> TypedParseTree<'src> {
                 let v = variable_names.entry(*str).or_insert(n as u32);
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(Variable(*v)))
             }
+            ParseTree::FreeVariable(str) => LambdaExpr::FreeVariable(
+                labels.get_free_variable(str),
+                self.1.to_lambda_type().unwrap(),
+            ),
             _ => todo!(),
         };
         pool.add(expr)
@@ -103,7 +129,7 @@ impl<'src> TypedParseTree<'src> {
         //TODO: Make the var labels into a HashMap<&str, Vec<u32>> with a stack to keep track of
         //scope.
         let mut var_labels = HashMap::default();
-        let root = self.add_to_pool(&mut pool, labels, &mut var_labels);
+        let root = self.add_to_pool(&mut pool, labels, &mut var_labels, 0);
         (pool, root)
     }
 }
@@ -201,26 +227,28 @@ where
     let lambda_expr = lambda_variable().map(|x| (true, TypedParseTree(x.0, ParsingType::E)));
     let var_expr = variable().map(|x| (false, x));
     let entity_expr = entity().map(|x| (false, x));
-    let entity_or_var = choice((entity_expr, var_expr, lambda_expr)).padded();
+    let entity_or_var = choice((entity_expr, var_expr, lambda_expr))
+        .padded()
+        .delimited_by(just('('), just(')'));
 
-    choice((just("p")
+    just("p")
         .ignore_then(text::int(10))
-        .map(|p: &str| MonOp::Property(p.parse().unwrap())),))
-    .map(LabeledProperty::Property)
-    .or(just("p_")
-        .ignore_then(text::ident())
-        .map(LabeledProperty::LabeledProperty))
-    .then(entity_or_var.padded().delimited_by(just('('), just(')')))
-    .map(|(x, (arg_is_lambdavar, arg))| {
-        TypedParseTree(
-            ParseTree::Unary(x, Box::new(arg)),
-            if arg_is_lambdavar {
-                ParsingType::et()
-            } else {
-                ParsingType::T
-            },
-        )
-    })
+        .map(|p: &str| MonOp::Property(p.parse().unwrap()))
+        .map(LabeledProperty::Property)
+        .or(just("p_")
+            .ignore_then(text::ident())
+            .map(LabeledProperty::LabeledProperty))
+        .then(entity_or_var)
+        .map(|(x, (arg_is_lambdavar, arg))| {
+            TypedParseTree(
+                ParseTree::Unary(x, Box::new(arg)),
+                if arg_is_lambdavar {
+                    ParsingType::et()
+                } else {
+                    ParsingType::T
+                },
+            )
+        })
 }
 
 fn sets<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -337,9 +365,18 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
                 .then(neg.clone())
                 .repeated(),
             |lhs, (op, rhs)| {
+                let type1 = matches!(lhs.1, ParsingType::Composition(..));
+                let type2 = matches!(rhs.1, ParsingType::Composition(..));
+                let statement_type = match (type1, type2) {
+                    (true, true) => ParsingType::Composition(None, Some(Box::new(ParsingType::T))),
+                    (true, false) => lhs.1.clone(),
+                    (false, true) => rhs.1.clone(),
+                    (false, false) => ParsingType::T,
+                };
+
                 TypedParseTree(
                     ParseTree::Binary(op, Box::new(lhs), Box::new(rhs)),
-                    ParsingType::Unknown,
+                    statement_type,
                 )
             },
         );
@@ -447,6 +484,7 @@ mod tests {
             scenarios: vec![],
             actor_labels: HashMap::default(),
             property_labels: HashMap::default(),
+            free_variables: HashMap::default(),
         };
 
         for (s, result) in [
@@ -553,6 +591,7 @@ mod tests {
             scenarios: vec![],
             actor_labels: HashMap::default(),
             property_labels: HashMap::default(),
+            free_variables: HashMap::default(),
         };
         let (parse, root) = language_parser().parse(s).unwrap().to_pool(&mut labels);
         let LanguageExpression { pool, start } = parse.into_pool(root).unwrap();
@@ -595,6 +634,7 @@ mod tests {
             scenarios: vec![simple_scenario],
             actor_labels,
             property_labels,
+            free_variables: HashMap::default(),
         };
 
         for statement in [
@@ -610,6 +650,7 @@ mod tests {
             "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
             "every(x0, all_e, PatientOf(a_Mary, x0))",
             "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), p_Blue(x0))",
+            "~AgentOf(a_John, f_lol)",
         ] {
             println!("{statement}");
             let expression = parse_executable(statement, &mut labels)?;

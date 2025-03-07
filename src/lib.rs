@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use ahash::RandomState;
 use chumsky::prelude::*;
+use lambda::Fvar;
 use std::{collections::HashMap, path::Path};
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,7 @@ pub struct LabelledScenarios {
     scenarios: Vec<Scenario>,
     property_labels: HashMap<String, PropertyLabel, RandomState>,
     actor_labels: HashMap<String, Actor, RandomState>,
+    free_variables: HashMap<String, Fvar, RandomState>,
 }
 
 impl LabelledScenarios {
@@ -55,11 +57,13 @@ impl LabelledScenarios {
         scenarios: Vec<Scenario>,
         property_labels: HashMap<String, PropertyLabel, RandomState>,
         actor_labels: HashMap<String, Actor, RandomState>,
+        free_variables: HashMap<String, Fvar, RandomState>,
     ) -> Self {
         LabelledScenarios {
             scenarios,
             property_labels,
             actor_labels,
+            free_variables,
         }
     }
 

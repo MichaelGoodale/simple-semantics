@@ -5,7 +5,7 @@ pub mod types;
 use types::LambdaType;
 
 type Bvar = usize;
-type Fvar = usize;
+pub type Fvar = usize;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct LambdaExprRef(pub u32);
