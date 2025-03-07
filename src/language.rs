@@ -53,7 +53,7 @@ pub enum Expr {
 pub struct ExprRef(pub u32);
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-struct ExprPool(Vec<Expr>);
+pub struct ExprPool(Vec<Expr>);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct LanguageExpression {
@@ -66,10 +66,14 @@ impl LanguageExpression {
         let mut variables = VariableBuffer::default();
         self.pool.interp(self.start, scenario, &mut variables)
     }
+
+    pub fn new(pool: ExprPool, start: ExprRef) -> Self {
+        LanguageExpression { pool, start }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct VariableBuffer(Vec<Option<Entity>>);
+pub struct VariableBuffer(Vec<Option<Entity>>);
 
 impl VariableBuffer {
     fn set(&mut self, v: Variable, x: Entity) {
@@ -161,6 +165,10 @@ impl TryFrom<LanguageResult> for Vec<Entity> {
 impl ExprPool {
     pub fn new() -> ExprPool {
         ExprPool(vec![])
+    }
+
+    pub fn from(x: Vec<Expr>) -> ExprPool {
+        ExprPool(x)
     }
 
     fn checked_get(&self, expr: ExprRef) -> Option<&Expr> {

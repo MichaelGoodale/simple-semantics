@@ -33,6 +33,15 @@ impl LambdaType {
     pub fn et() -> Self {
         LambdaType::Composition(Box::new(LambdaType::E), Box::new(LambdaType::T))
     }
+    pub fn eet() -> Self {
+        LambdaType::Composition(
+            Box::new(LambdaType::E),
+            Box::new(LambdaType::Composition(
+                Box::new(LambdaType::E),
+                Box::new(LambdaType::T),
+            )),
+        )
+    }
 
     pub fn can_apply(&self, other: &Self) -> bool {
         match self {
