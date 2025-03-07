@@ -248,7 +248,7 @@ where
             })
     }
 
-    fn reduce(&mut self, root: LambdaExprRef) -> anyhow::Result<LambdaExprRef> {
+    pub fn reduce(&mut self, root: LambdaExprRef) -> anyhow::Result<LambdaExprRef> {
         if let Some(x) = self.get_next_app(root) {
             self.beta_reduce(x)?;
             let new_root = self.cleanup(root);

@@ -2,8 +2,8 @@ use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
     lambda::{LambdaExpr, LambdaExprRef, LambdaPool},
-    language::{Constant, Expr, ExprPool, ExprRef, MonOp},
-    Actor, Entity, LabelledScenarios, PropertyLabel,
+    language::{Constant, Expr, ExprRef, MonOp},
+    Entity, LabelledScenarios,
 };
 use chumsky::prelude::*;
 use chumsky::{extra::ParserExtra, label::LabelError, text::TextExpected, util::MaybeRef};
@@ -31,12 +31,6 @@ impl ParsingType {
             Some(Box::new(ParsingType::et())),
         )
     }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct LabeledExprPool<'a> {
-    pool: ExprPool,
-    labels: &'a mut LabelledScenarios,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -139,43 +133,10 @@ enum ParseTree<'src> {
     Entity(LabeledEntity<'src>),
 }
 
-impl<'a> LabeledExprPool<'a> {
-    fn new(labels: &'a mut LabelledScenarios) -> Self {
-        LabeledExprPool {
-            pool: ExprPool::default(),
-            labels,
-        }
-    }
-
-    fn get_actor_label(&mut self, label: &str) -> Actor {
-        self.labels.get_actor_label(label)
-    }
-
-    fn get_property_label(&mut self, label: &str) -> PropertyLabel {
-        self.labels.get_property_label(label)
-    }
-
-    fn add(&mut self, e: Expr) -> ExprRef {
-        self.pool.add(e)
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum LabeledEntity<'a> {
     Unlabeled(Entity),
     LabeledActor(&'a str),
-}
-
-impl LabeledEntity<'_> {
-    fn to_expr_ref(self, state: &mut LabeledExprPool) -> ExprRef {
-        match self {
-            LabeledEntity::Unlabeled(c) => state.add(Expr::Entity(c)),
-            LabeledEntity::LabeledActor(label) => {
-                let actor = state.get_actor_label(label);
-                state.add(Expr::Entity(Entity::Actor(actor)))
-            }
-        }
-    }
 }
 
 fn entity<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -229,33 +190,6 @@ enum LabeledConstant<'a> {
 enum LabeledProperty<'a> {
     Property(MonOp),
     LabeledProperty(&'a str),
-}
-
-impl LabeledConstant<'_> {
-    fn to_expr_ref(self, state: &mut LabeledExprPool) -> ExprRef {
-        match self {
-            LabeledConstant::Constant(c) => state.add(Expr::Constant(c)),
-            LabeledConstant::LabeledProperty(label) => {
-                let property = state.get_property_label(label);
-                state.add(Expr::Constant(Constant::Property(property)))
-            }
-        }
-    }
-
-    fn to_monop(self, state: &mut LabeledExprPool) -> MonOp {
-        match self {
-            LabeledConstant::Constant(c) => match c {
-                //TODO: Make it so that everyevent is true iff event and likewise for everyone
-                Constant::Tautology | Constant::Everyone | Constant::EveryEvent => MonOp::Tautology,
-                Constant::Contradiction => MonOp::Contradiction,
-                Constant::Property(p) => MonOp::Property(p),
-            },
-            LabeledConstant::LabeledProperty(label) => {
-                let property = state.get_property_label(label);
-                MonOp::Property(property)
-            }
-        }
-    }
 }
 
 fn properties<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -451,7 +385,7 @@ pub fn parse_executable(
     s: &str,
     labels: &mut LabelledScenarios,
 ) -> anyhow::Result<LanguageExpression> {
-    let (pool, root) = language_parser()
+    let (mut pool, root) = language_parser()
         .parse(s)
         .into_result()
         .map_err(|x| {
@@ -463,6 +397,7 @@ pub fn parse_executable(
             )
         })?
         .to_pool(labels);
+    let root = pool.reduce(root)?;
     pool.into_pool(root)
 }
 
@@ -470,7 +405,7 @@ pub fn parse_executable(
 mod tests {
 
     use super::*;
-    use crate::language::{LanguageResult, Variable, VariableBuffer};
+    use crate::language::{ExprPool, LanguageResult, Variable, VariableBuffer};
     use crate::{LabelledScenarios, Scenario, ThetaRoles};
     use std::collections::HashMap;
 
