@@ -12,12 +12,63 @@ use chumsky::{
     util::MaybeRef,
 };
 
-use super::{BinOp, LanguageExpression, Quantifier, Variable};
+use super::{BinOp, LanguageExpression, Quantifier};
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum ParsingType {
+    E,
+    T,
+    Composition(Option<Box<Self>>, Option<Box<Self>>),
+    Unknown,
+}
+
+impl ParsingType {
+    fn et() -> Self {
+        ParsingType::Composition(
+            Some(Box::new(ParsingType::E)),
+            Some(Box::new(ParsingType::T)),
+        )
+    }
+    fn eet() -> Self {
+        ParsingType::Composition(
+            Some(Box::new(ParsingType::E)),
+            Some(Box::new(ParsingType::et())),
+        )
+    }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct LabeledExprPool<'a> {
     pool: ExprPool,
     labels: &'a mut LabelledScenarios,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct TypedParseTree<'src>(ParseTree<'src>, ParsingType);
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum ParseTree<'src> {
+    Lambda {
+        body: Box<TypedParseTree<'src>>,
+        var: String,
+    },
+    BoundVariable(&'src str),
+    FreeVariable(&'src str),
+    Application {
+        subformula: Box<TypedParseTree<'src>>,
+        argument: Box<TypedParseTree<'src>>,
+    },
+    Constant(LabeledConstant<'src>),
+    Unary(MonOp, Box<TypedParseTree<'src>>),
+    Binary(BinOp, Box<TypedParseTree<'src>>, Box<TypedParseTree<'src>>),
+    Quantifier {
+        quantifier: Quantifier,
+        variable: String,
+        restrictor: Box<TypedParseTree<'src>>,
+        subformula: Box<TypedParseTree<'src>>,
+    },
+    Variable(&'src str),
+    Entity(LabeledEntity<'src>),
 }
 
 impl<'a> LabeledExprPool<'a> {
@@ -61,7 +112,7 @@ impl LabeledEntity<'_> {
     }
 }
 
-fn entity<'src, E>() -> impl Parser<'src, &'src str, LabeledEntity<'src>, E> + Copy
+fn entity<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -82,9 +133,10 @@ where
         .map(LabeledEntity::LabeledActor);
 
     choice((actor_or_event_keyword, actor_or_event_number))
+        .map(|x| TypedParseTree(ParseTree::Entity(x), ParsingType::E))
 }
 
-pub fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, Constant, E> + Copy
+fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
@@ -93,6 +145,12 @@ where
         just("True").to(Constant::Tautology),
         just("False").to(Constant::Contradiction),
     ))
+    .map(|x| {
+        TypedParseTree(
+            ParseTree::Constant(LabeledConstant::Constant(x)),
+            ParsingType::T,
+        )
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +186,7 @@ impl LabeledConstant<'_> {
     }
 }
 
-fn sets<'src, E>() -> impl Parser<'src, &'src str, LabeledConstant<'src>, E> + Copy
+fn sets<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -145,15 +203,26 @@ where
     .or(just("p_")
         .ignore_then(text::ident())
         .map(LabeledConstant::LabeledProperty))
+    .map(|x| TypedParseTree(ParseTree::Constant(x), ParsingType::et()))
 }
 
-impl Variable {
-    fn to_expr_ref(self, pool: &mut LabeledExprPool) -> ExprRef {
-        pool.add(Expr::BoundVariable(self))
-    }
+fn lambda_variable<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+{
+    choice((
+        just("f_")
+            .ignore_then(text::ident())
+            .map(|x| TypedParseTree(ParseTree::FreeVariable(x), ParsingType::Unknown)),
+        just("b_")
+            .ignore_then(text::ident())
+            .map(|x| TypedParseTree(ParseTree::BoundVariable(x), ParsingType::Unknown)),
+    ))
 }
 
-fn variable<'src, E>() -> impl Parser<'src, &'src str, Variable, E> + Copy
+fn variable<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -161,14 +230,19 @@ where
 {
     just('x')
         .ignore_then(text::int(10))
-        .padded()
-        .map(|n: &str| Variable(n.parse().unwrap()))
+        .map(|x| TypedParseTree(ParseTree::Variable(x), ParsingType::E))
 }
 
-fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> + Copy {
-    let var_expr = variable::<ExtraType<'a, 'b>>().map_with(|n, e| n.to_expr_ref(e.state()));
-    let entity_expr = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
-    let entity_or_var = choice((entity_expr, var_expr)).padded();
+fn binary_operation<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+{
+    let lambda_expr = lambda_variable().map(|x| (true, TypedParseTree(x.0, ParsingType::E)));
+    let var_expr = variable().map(|x| (false, x));
+    let entity_expr = entity().map(|x| (false, x));
+    let entity_or_var = choice((entity_expr, var_expr, lambda_expr)).padded();
     choice((
         just("AgentOf").to(BinOp::AgentOf),
         just("PatientOf").to(BinOp::PatientOf),
@@ -178,85 +252,95 @@ fn binary_operation<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType
     .then_ignore(just(','))
     .then(entity_or_var)
     .then_ignore(just(')'))
-    .map_with(|((binop, actor), event), e| e.state().add(Expr::Binary(binop, actor, event)))
+    .map(
+        |((binop, (actor_is_lambda, actor)), (event_is_lambda, event))| {
+            TypedParseTree(
+                ParseTree::Binary(binop, Box::new(actor), Box::new(event)),
+                match (actor_is_lambda, event_is_lambda) {
+                    (true, true) => ParsingType::eet(),
+                    (false, true) | (true, false) => ParsingType::et(),
+                    (false, false) => ParsingType::T,
+                },
+            )
+        },
+    )
 }
 
-pub fn language_parser<'a, 'b: 'a>() -> impl Parser<'a, &'a str, ExprRef, ExtraType<'a, 'b>> {
-    let ent = entity::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
-    let var = variable::<ExtraType<'a, 'b>>().map_with(|x, e| x.to_expr_ref(e.state()));
-    let entity_or_variable = choice((ent, var)).padded();
+fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
+    //let ent = entity();
+    //let var = variable();
+    //let entity_or_variable = choice((ent, var)).padded();
 
-    let true_or_false = bool_literal::<ExtraType<'a, 'b>>()
-        .padded()
-        .map_with(|b, e| e.state().add(Expr::Constant(b)));
-
-    let possible_sets = sets::<ExtraType<'a, 'b>>()
-        .padded()
-        .map_with(|x, e| x.to_expr_ref(e.state()));
-
+    let true_or_false = bool_literal().padded();
+    //let possible_sets = sets().padded();
     let truth_value = recursive(|expr| {
-        let has_property = sets::<ExtraType>()
-            .map_with(|p, e| p.to_monop(e.state()))
-            .then_ignore(just('('))
-            .then(entity_or_variable)
-            .then_ignore(just(')'))
-            .map_with(|(p, a), e| e.state().add(Expr::Unary(p, a)));
+        //let has_property = sets()
+        //    .map_with(|p, e| p.to_monop(e.state()))
+        //    .then_ignore(just('('))
+        //    .then(entity_or_variable)
+        //    .then_ignore(just(')'))
+        //    .map_with(|(p, a), e| e.state().add(Expr::Unary(p, a)));
 
         let atom = true_or_false
             .or(binary_operation())
-            .or(has_property)
+            //.or(has_property)
             .or(expr.clone().delimited_by(just('('), just(')')))
             .padded();
 
-        let neg = just("~")
-            .repeated()
-            .foldr_with(atom, |_, b, e| e.state().add(Expr::Unary(MonOp::Not, b)));
-
-        let logical_op = neg.clone().foldl_with(
-            choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
-                .padded()
-                .then(neg.clone())
-                .repeated(),
-            |lhs, (op, rhs), e| e.state().add(Expr::Binary(op, lhs, rhs)),
-        );
-
-        let non_quantified_statement = logical_op.or(neg).padded();
-
-        let quantified = choice((
-            just("every").to(Quantifier::Universal),
-            just("some").to(Quantifier::Existential),
-        ))
-        .then_ignore(just('('))
-        .then(
-            just('x')
-                .ignore_then(text::int::<&str, ExtraType>(10).map(|x| Variable(x.parse().unwrap())))
-                .padded(),
-        )
-        .then_ignore(just(','))
-        .then(
-            possible_sets
-                .or(entity_or_variable)
-                .or(non_quantified_statement.clone()),
-        )
-        .then_ignore(just(','))
-        .then(non_quantified_statement.clone())
-        .then_ignore(just(')'))
-        .map_with(|(((quantifier, var), restrictor), subformula), e| {
-            e.state().add(Expr::Quantifier {
-                quantifier,
-                var,
-                restrictor,
-                subformula,
-            })
+        let neg = just("~").repeated().foldr(atom, |_, b| {
+            let new_type = b.1.clone();
+            TypedParseTree(ParseTree::Unary(MonOp::Not, Box::new(b)), new_type)
         });
-        choice((
-            non_quantified_statement,
-            quantified,
-            entity_or_variable,
-            possible_sets,
-        ))
-    });
 
+        /*
+                let logical_op = neg.clone().foldl_with(
+                    choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
+                        .padded()
+                        .then(neg.clone())
+                        .repeated(),
+                    |lhs, (op, rhs), e| e.state().add(Expr::Binary(op, lhs, rhs)),
+                );
+
+                let non_quantified_statement = logical_op.or(neg).padded();
+        -        just("p")
+        -            .ignore_then(text::int(10))
+        -            .map(|p: &str| Constant::Property(p.parse().unwrap())),
+
+                let quantified = choice((
+                    just("every").to(Quantifier::Universal),
+                    just("some").to(Quantifier::Existential),
+                ))
+                .then_ignore(just('('))
+                .then(
+                    just('x')
+                        .ignore_then(text::int::<&str, ExtraType>(10).map(|x| Var(x.parse().unwrap())))
+                        .padded(),
+                )
+                .then_ignore(just(','))
+                .then(
+                    possible_sets
+                        .or(entity_or_variable)
+                        .or(non_quantified_statement.clone()),
+                )
+                .then_ignore(just(','))
+                .then(non_quantified_statement.clone())
+                .then_ignore(just(')'))
+                .map_with(|(((quantifier, var), restrictor), subformula), e| {
+                    e.state().add(Expr::Quantifier {
+                        quantifier,
+                        var,
+                        restrictor,
+                        subformula,
+                    })
+                });
+                choice((
+                    non_quantified_statement,
+                    quantified,
+                    entity_or_variable,
+                    possible_sets,
+                ))*/
+        neg
+    });
     truth_value.then_ignore(end())
 }
 
@@ -265,28 +349,31 @@ pub fn parse_executable(
     labels: &mut LabelledScenarios,
 ) -> anyhow::Result<LanguageExpression> {
     let mut pool = extra::SimpleState(LabeledExprPool::new(labels));
-    let start = language_parser()
-        .parse_with_state(s, &mut pool)
-        .into_result()
-        .map_err(|x| {
-            anyhow::Error::msg(
-                x.into_iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )
-        })?;
+    todo!();
+    /*
+        let start = language_parser()
+            .parse_with_state(s, &mut pool)
+            .into_result()
+            .map_err(|x| {
+                anyhow::Error::msg(
+                    x.into_iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            })?;
 
-    let pool = pool.0.pool;
+        let pool = pool.0.pool;
 
-    Ok(LanguageExpression { pool, start })
+        Ok(LanguageExpression { pool, start })
+    */
 }
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use crate::language::{LanguageResult, VariableBuffer};
+    use crate::language::{LanguageResult, Variable, VariableBuffer};
     use crate::{LabelledScenarios, Scenario, ThetaRoles};
     use std::collections::HashMap;
 
@@ -296,19 +383,28 @@ mod tests {
             let str = format!("a{n}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                LabeledEntity::Unlabeled(Entity::Actor(n.into()))
+                TypedParseTree(
+                    ParseTree::Entity(LabeledEntity::Unlabeled(Entity::Actor(n.into()))),
+                    ParsingType::E
+                )
             );
             let str = format!("e{n}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                LabeledEntity::Unlabeled(Entity::Event(n))
+                TypedParseTree(
+                    ParseTree::Entity(LabeledEntity::Unlabeled(Entity::Event(n))),
+                    ParsingType::E
+                )
             );
         }
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("a_{keyword}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                LabeledEntity::LabeledActor(keyword)
+                TypedParseTree(
+                    ParseTree::Entity(LabeledEntity::LabeledActor(keyword)),
+                    ParsingType::E
+                )
             );
         }
     }
@@ -325,8 +421,8 @@ mod tests {
             (
                 "AgentOf(x0, x1)",
                 vec![
-                    Expr::BoundVariable(Variable(0)),
-                    Expr::BoundVariable(Variable(1)),
+                    Expr::Variable(Variable(0)),
+                    Expr::Variable(Variable(1)),
                     Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
                 ],
             ),
@@ -339,9 +435,11 @@ mod tests {
                 ],
             ),
         ] {
-            let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
-            binary_operation().parse_with_state(s, &mut pool).unwrap();
-            assert_eq!(pool.pool.0, result);
+            //let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
+            binary_operation::<extra::Err<Simple<_>>>()
+                .parse(s)
+                .unwrap();
+            //assert_eq!(pool.pool.0, result);
         }
     }
 
@@ -351,13 +449,19 @@ mod tests {
             bool_literal::<extra::Err<Simple<_>>>()
                 .parse("True")
                 .unwrap(),
-            Constant::Tautology
+            TypedParseTree(
+                ParseTree::Constant(LabeledConstant::Constant(Constant::Tautology)),
+                ParsingType::T
+            )
         );
         assert_eq!(
             bool_literal::<extra::Err<Simple<_>>>()
                 .parse("False")
                 .unwrap(),
-            Constant::Contradiction
+            TypedParseTree(
+                ParseTree::Constant(LabeledConstant::Constant(Constant::Contradiction)),
+                ParsingType::T
+            )
         );
     }
 
@@ -367,22 +471,34 @@ mod tests {
             let str = format!("p{n}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                LabeledConstant::Constant(Constant::Property(n))
+                TypedParseTree(
+                    ParseTree::Constant(LabeledConstant::Constant(Constant::Property(n))),
+                    ParsingType::et()
+                )
             );
         }
         assert_eq!(
             sets::<extra::Err<Simple<_>>>().parse("all_e").unwrap(),
-            LabeledConstant::Constant(Constant::EveryEvent)
+            TypedParseTree(
+                ParseTree::Constant(LabeledConstant::Constant(Constant::EveryEvent)),
+                ParsingType::et()
+            )
         );
         assert_eq!(
             sets::<extra::Err<Simple<_>>>().parse("all_a").unwrap(),
-            LabeledConstant::Constant(Constant::Everyone)
+            TypedParseTree(
+                ParseTree::Constant(LabeledConstant::Constant(Constant::Everyone)),
+                ParsingType::et()
+            )
         );
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("p_{keyword}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                LabeledConstant::LabeledProperty(keyword)
+                TypedParseTree(
+                    ParseTree::Constant(LabeledConstant::LabeledProperty(&keyword)),
+                    ParsingType::et()
+                )
             );
         }
     }
@@ -393,7 +509,7 @@ mod tests {
             let str = format!("x{n}");
             assert_eq!(
                 variable::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                Variable(n)
+                TypedParseTree(ParseTree::Variable(&n.to_string()), ParsingType::E)
             );
         }
     }
@@ -405,7 +521,7 @@ mod tests {
             property_labels: HashMap::default(),
         };
         let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
-        let parse = language_parser().parse_with_state(s, &mut pool).unwrap();
+        let parse = todo!(); //language_parser().parse_with_state(s, &mut pool).unwrap();
         (pool.0.pool, parse)
     }
 
@@ -463,9 +579,10 @@ mod tests {
         ] {
             println!("{statement}");
             let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
-            let parse = language_parser()
-                .parse_with_state(statement, &mut pool)
-                .unwrap();
+            let parse = todo!();
+            //let parse = language_parser()
+            //    .parse_with_state(statement, &mut pool)
+            //    .unwrap();
             let mut variables = VariableBuffer(vec![]);
             let pool = pool.0.pool;
             assert_eq!(

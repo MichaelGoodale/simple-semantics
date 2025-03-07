@@ -11,7 +11,7 @@ impl LambdaLanguageOfThought for Expr {
             } => vec![restrictor, subformula],
             Expr::Binary(_, x, y) => vec![x, y],
             Expr::Unary(_, x) => vec![x],
-            Expr::Constant(_) | Expr::Entity(_) | Expr::BoundVariable(_) => vec![],
+            Expr::Constant(_) | Expr::Entity(_) | Expr::Variable(_) => vec![],
         }
         .into_iter()
         .map(|x| LambdaExprRef(x.0))
@@ -34,14 +34,14 @@ impl LambdaLanguageOfThought for Expr {
             Expr::Unary(_, x) => {
                 *x = ExprRef(remap[x.0 as usize] as u32);
             }
-            Expr::BoundVariable(_) | Expr::Entity(_) | Expr::Constant(_) => (),
+            Expr::Variable(_) | Expr::Entity(_) | Expr::Constant(_) => (),
         }
     }
 
     fn get_type(&self) -> LambdaType {
         match self {
             Expr::Quantifier { .. } => LambdaType::T,
-            Expr::BoundVariable(_) => LambdaType::E,
+            Expr::Variable(_) => LambdaType::E,
             Expr::Entity(_) => LambdaType::E,
             Expr::Binary(bin, ..) => match bin {
                 BinOp::AgentOf | BinOp::PatientOf => LambdaType::eet(),

@@ -42,7 +42,7 @@ pub enum Expr {
         restrictor: ExprRef,
         subformula: ExprRef,
     },
-    BoundVariable(Variable),
+    Variable(Variable),
     Entity(Entity),
     Binary(BinOp, ExprRef, ExprRef),
     Unary(MonOp, ExprRef),
@@ -192,7 +192,7 @@ impl ExprPool {
     fn get_type(&self, expr: ExprRef) -> LanguageResultType {
         match self.get(expr) {
             Expr::Quantifier { .. } => LanguageResultType::Bool,
-            Expr::BoundVariable(_) => LanguageResultType::Entity,
+            Expr::Variable(_) => LanguageResultType::Entity,
             Expr::Entity(_) => LanguageResultType::Entity,
             Expr::Binary(..) => LanguageResultType::Bool,
             Expr::Unary(..) => LanguageResultType::Bool,
@@ -265,7 +265,7 @@ impl ExprPool {
                 }
                 LanguageResult::Bool(result)
             }
-            Expr::BoundVariable(i) => LanguageResult::Entity(variables.get(*i).unwrap()),
+            Expr::Variable(i) => LanguageResult::Entity(variables.get(*i).unwrap()),
             Expr::Entity(a) => LanguageResult::Entity(*a),
             Expr::Binary(bin_op, lhs, rhs) => {
                 let lhs = self.interp(*lhs, scenario, variables);
@@ -419,8 +419,8 @@ mod tests {
             },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::BoundVariable(Variable(0)),
-            Expr::BoundVariable(Variable(1)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -444,8 +444,8 @@ mod tests {
             },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::PatientOf, ExprRef(5), ExprRef(6)),
-            Expr::BoundVariable(Variable(0)),
-            Expr::BoundVariable(Variable(1)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -551,8 +551,8 @@ mod tests {
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::And, ExprRef(5), ExprRef(8)),
             Expr::Binary(BinOp::PatientOf, ExprRef(6), ExprRef(7)),
-            Expr::BoundVariable(Variable(0)),
-            Expr::BoundVariable(Variable(1)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
             Expr::Constant(Constant::Tautology),
         ]);
         assert_eq!(
@@ -592,7 +592,7 @@ mod tests {
             },
             Expr::Constant(Constant::Everyone),
             Expr::Unary(MonOp::Property(1), ExprRef(3)),
-            Expr::BoundVariable(Variable(0)),
+            Expr::Variable(Variable(0)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -608,7 +608,7 @@ mod tests {
             },
             Expr::Constant(Constant::Everyone),
             Expr::Unary(MonOp::Property(534), ExprRef(3)),
-            Expr::BoundVariable(Variable(0)),
+            Expr::Variable(Variable(0)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -649,8 +649,8 @@ mod tests {
             },
             Expr::Constant(Constant::Property(235)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::BoundVariable(Variable(0)),
-            Expr::BoundVariable(Variable(1)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -673,8 +673,8 @@ mod tests {
             },
             Expr::Constant(Constant::Property(235)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::BoundVariable(Variable(0)),
-            Expr::BoundVariable(Variable(1)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -703,9 +703,9 @@ mod tests {
             },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
             Expr::Unary(MonOp::Property(2), ExprRef(3)),
-            Expr::BoundVariable(Variable(0)),
+            Expr::Variable(Variable(0)),
             Expr::Unary(MonOp::Property(3), ExprRef(5)),
-            Expr::BoundVariable(Variable(0)), //5
+            Expr::Variable(Variable(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var: Variable(1),
@@ -714,8 +714,8 @@ mod tests {
             },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::AgentOf, ExprRef(9), ExprRef(10)),
-            Expr::BoundVariable(Variable(0)),
-            Expr::BoundVariable(Variable(1)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
@@ -731,9 +731,9 @@ mod tests {
             },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
             Expr::Unary(MonOp::Property(2), ExprRef(3)),
-            Expr::BoundVariable(Variable(0)),
+            Expr::Variable(Variable(0)),
             Expr::Unary(MonOp::Property(3), ExprRef(5)),
-            Expr::BoundVariable(Variable(0)), //5
+            Expr::Variable(Variable(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var: Variable(1),
@@ -742,8 +742,8 @@ mod tests {
             },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::PatientOf, ExprRef(9), ExprRef(10)),
-            Expr::BoundVariable(Variable(0)),
-            Expr::BoundVariable(Variable(1)),
+            Expr::Variable(Variable(0)),
+            Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
