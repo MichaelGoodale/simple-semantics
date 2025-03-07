@@ -50,6 +50,13 @@ impl LambdaType {
         }
     }
 
+    pub fn is_function(&self) -> bool {
+        match self {
+            LambdaType::Composition(..) => true,
+            LambdaType::E | LambdaType::T => false,
+        }
+    }
+
     pub fn apply_clone(&self) -> Self {
         match self {
             LambdaType::Composition(_, rhs) => *rhs.clone(),

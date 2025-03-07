@@ -127,23 +127,36 @@ where
         }
     }
 
-    fn get_type(&self, x: LambdaExprRef) -> LambdaType {
+    ///This function trusts that the subexpressions are all valid! For example if a lambda's body
+    ///has the wrong type, it won't know.
+    fn check_type_clash(&self, x: LambdaExprRef) -> Option<LambdaType> {
         match self.get(x) {
-            LambdaExpr::Lambda(_, x)
-            | LambdaExpr::BoundVariable(_, x)
-            | LambdaExpr::FreeVariable(_, x) => x.clone(),
+            LambdaExpr::BoundVariable(_, x)
+            | LambdaExpr::FreeVariable(_, x)
+            | LambdaExpr::Lambda(.., x) => Some(x.clone()),
             LambdaExpr::Application {
                 subformula,
-                argument: _,
-            } => self.get_type(*subformula).apply(),
-            LambdaExpr::LanguageOfThoughtExpr(x) => x.get_type(),
+                argument,
+            } => {
+                if let Some(lhs_type) = self.check_type_clash(*argument) {
+                    if let Some(subformula) = self.check_type_clash(*subformula) {
+                        if subformula.can_apply(&lhs_type) {
+                            Some(subformula.apply())
+                        } else {
+                            //The subformula has a type clash
+                            None
+                        }
+                    } else {
+                        //The subformula has a type clash
+                        None
+                    }
+                } else {
+                    //The argument has a type clash
+                    None
+                }
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x) => Some(x.get_type()),
         }
-    }
-
-    fn types_clash(&self, lambda_type: &LambdaType, rhs: LambdaExprRef) -> bool {
-        //return false;
-        let rhs_type = self.get_type(rhs);
-        !lambda_type.can_apply(&rhs_type)
     }
 
     fn beta_reduce(&mut self, app: LambdaExprRef) -> anyhow::Result<()> {
@@ -161,9 +174,9 @@ where
         } = expr
         {
             let inner_term = match self.get(*subformula) {
-                LambdaExpr::Lambda(x, lambda_type) => {
+                LambdaExpr::Lambda(x,..) => {
 
-                    if self.types_clash(lambda_type, *argument) {
+                    if self.check_type_clash(app).is_none() {
                         bail!("Type clash!");
                     }
 
@@ -403,6 +416,35 @@ mod test {
                 ExprRef(root.0)
             )
         );
+        Ok(())
+    }
+    #[test]
+    fn type_check() -> anyhow::Result<()> {
+        // [[[Mary sings] and]  [John dances]]
+        let mut pool = LambdaPool::<()>(vec![
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(1),
+                argument: LambdaExprRef(3),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+            LambdaExpr::BoundVariable(0, LambdaType::T),
+            LambdaExpr::FreeVariable(0, LambdaType::T),
+        ]);
+        assert_eq!(
+            pool.reduce(LambdaExprRef(0)).unwrap_err().to_string(),
+            "Type clash!"
+        );
+
+        let mut pool = LambdaPool::<()>(vec![
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(1),
+                argument: LambdaExprRef(3),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+            LambdaExpr::BoundVariable(0, LambdaType::T),
+            LambdaExpr::FreeVariable(0, LambdaType::E),
+        ]);
+        assert!(pool.reduce(LambdaExprRef(0)).is_ok());
         Ok(())
     }
 
