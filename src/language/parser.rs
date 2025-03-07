@@ -118,6 +118,17 @@ impl<'src> TypedParseTree<'src> {
                 labels.get_free_variable(str),
                 self.1.to_lambda_type().unwrap(),
             ),
+            ParseTree::Application {
+                subformula,
+                argument,
+            } => {
+                let subformula = subformula.add_to_pool(pool, labels, variable_names, lambda_depth);
+                let argument = argument.add_to_pool(pool, labels, variable_names, lambda_depth);
+                LambdaExpr::Application {
+                    subformula,
+                    argument,
+                }
+            }
             _ => todo!(),
         };
         pool.add(expr)
@@ -231,24 +242,38 @@ where
         .padded()
         .delimited_by(just('('), just(')'));
 
-    just("p")
-        .ignore_then(text::int(10))
-        .map(|p: &str| MonOp::Property(p.parse().unwrap()))
-        .map(LabeledProperty::Property)
-        .or(just("p_")
-            .ignore_then(text::ident())
-            .map(LabeledProperty::LabeledProperty))
-        .then(entity_or_var)
-        .map(|(x, (arg_is_lambdavar, arg))| {
-            TypedParseTree(
-                ParseTree::Unary(x, Box::new(arg)),
-                if arg_is_lambdavar {
-                    ParsingType::et()
-                } else {
-                    ParsingType::T
-                },
-            )
-        })
+    choice((
+        just("p")
+            .ignore_then(text::int(10))
+            .map(|p: &str| MonOp::Property(p.parse().unwrap()))
+            .map(LabeledProperty::Property)
+            .or(just("p_")
+                .ignore_then(text::ident())
+                .map(LabeledProperty::LabeledProperty))
+            .then(entity_or_var)
+            .map(|(x, (arg_is_lambdavar, arg))| {
+                TypedParseTree(
+                    ParseTree::Unary(x, Box::new(arg)),
+                    if arg_is_lambdavar {
+                        ParsingType::et()
+                    } else {
+                        ParsingType::T
+                    },
+                )
+            }),
+        lambda_variable()
+            .map(|x| TypedParseTree(x.0, ParsingType::et()))
+            .then(entity_or_var)
+            .map(|(x, (_arg_is_lambdavar, arg))| {
+                TypedParseTree(
+                    ParseTree::Application {
+                        subformula: Box::new(x),
+                        argument: Box::new(arg),
+                    },
+                    ParsingType::Unknown,
+                )
+            }),
+    ))
 }
 
 fn sets<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -650,7 +675,6 @@ mod tests {
             "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
             "every(x0, all_e, PatientOf(a_Mary, x0))",
             "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), p_Blue(x0))",
-            "~AgentOf(a_John, f_lol)",
         ] {
             println!("{statement}");
             let expression = parse_executable(statement, &mut labels)?;
@@ -659,6 +683,22 @@ mod tests {
                 LanguageResult::Bool(true)
             );
         }
+        let statement = "~f_hey(f_lol)";
+        let (pool, root) = language_parser()
+            .parse(statement)
+            .into_result()
+            .map_err(|x| {
+                anyhow::Error::msg(
+                    x.into_iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            })?
+            .to_pool(&mut labels);
+
+        dbg!(pool, root);
+        panic!();
 
         Ok(())
     }

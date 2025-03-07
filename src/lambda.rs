@@ -323,6 +323,31 @@ mod test {
         let mut pool = LambdaPool(vec![
             LambdaExpr::Application {
                 subformula: LambdaExprRef(1),
+                argument: LambdaExprRef(5),
+            },
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<<e, t>,t>")?),
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(3),
+                argument: LambdaExprRef(4),
+            },
+            LambdaExpr::BoundVariable(0, LambdaType::et()),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
+            LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::from_string("<e,t>")?),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(7))),
+            LambdaExpr::BoundVariable(0, LambdaType::E),
+        ]);
+        pool.reduce(LambdaExprRef(0))?;
+        assert_eq!(
+            pool,
+            LambdaPool(vec![
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(1))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
+            ])
+        );
+
+        let mut pool = LambdaPool(vec![
+            LambdaExpr::Application {
+                subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(6),
             },
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<t, <t,t>>")?),
