@@ -1,9 +1,15 @@
-use std::fmt::Debug;
+use std::{
+    collections::{vec_deque, HashMap, VecDeque},
+    fmt::Debug,
+    hash::Hash,
+};
 
 use crate::{
+    lambda::{LambdaExpr, LambdaExprRef, LambdaPool},
     language::{Constant, Expr, ExprPool, ExprRef, MonOp},
     Actor, Entity, LabelledScenarios, PropertyLabel,
 };
+use anyhow::Context;
 use chumsky::prelude::*;
 use chumsky::{
     extra::{self, ParserExtra},
@@ -12,7 +18,7 @@ use chumsky::{
     util::MaybeRef,
 };
 
-use super::{BinOp, LanguageExpression, Quantifier};
+use super::{BinOp, LanguageExpression, Quantifier, Variable};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum ParsingType {
@@ -46,6 +52,72 @@ pub struct LabeledExprPool<'a> {
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct TypedParseTree<'src>(ParseTree<'src>, ParsingType);
 
+impl<'src> TypedParseTree<'src> {
+    fn add_to_pool(
+        &'src self,
+        pool: &mut LambdaPool<Expr>,
+        labels: &mut LabelledScenarios,
+        variable_names: &mut HashMap<&'src str, u32>,
+    ) -> LambdaExprRef {
+        let expr = match &self.0 {
+            ParseTree::Constant(c) => LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(match c {
+                LabeledConstant::Constant(x) => *x,
+                LabeledConstant::LabeledProperty(p) => {
+                    Constant::Property(labels.get_property_label(p))
+                }
+            })),
+            ParseTree::Entity(e) => LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(match e {
+                LabeledEntity::Unlabeled(entity) => *entity,
+                LabeledEntity::LabeledActor(label) => Entity::Actor(labels.get_actor_label(label)),
+            })),
+            ParseTree::Unary(m, x) => {
+                let x = ExprRef(x.add_to_pool(pool, labels, variable_names).0);
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(*m, x))
+            }
+            ParseTree::Binary(b, x, y) => {
+                let x = ExprRef(x.add_to_pool(pool, labels, variable_names).0);
+                let y = ExprRef(y.add_to_pool(pool, labels, variable_names).0);
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x, y))
+            }
+            ParseTree::Quantifier {
+                quantifier,
+                variable,
+                restrictor,
+                subformula,
+            } => {
+                let n = variable_names.len();
+                let v = *variable_names.entry(*variable).or_insert(n as u32);
+
+                let restrictor = ExprRef(restrictor.add_to_pool(pool, labels, variable_names).0);
+                let subformula = ExprRef(subformula.add_to_pool(pool, labels, variable_names).0);
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                    quantifier: *quantifier,
+                    var: Variable(v),
+                    restrictor,
+                    subformula,
+                })
+            }
+            ParseTree::Variable(str) => {
+                let n = variable_names.len();
+                let v = variable_names.entry(*str).or_insert(n as u32);
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(Variable(*v)))
+            }
+            _ => todo!(),
+        };
+        pool.add(expr)
+    }
+
+    fn to_pool(&self, labels: &mut LabelledScenarios) -> (LambdaPool<Expr>, LambdaExprRef) {
+        let mut pool = LambdaPool::new();
+
+        //TODO: Make the var labels into a HashMap<&str, Vec<u32>> with a stack to keep track of
+        //scope.
+        let mut var_labels = HashMap::default();
+        let root = self.add_to_pool(&mut pool, labels, &mut var_labels);
+        (pool, root)
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum ParseTree<'src> {
     Lambda {
@@ -63,7 +135,7 @@ enum ParseTree<'src> {
     Binary(BinOp, Box<TypedParseTree<'src>>, Box<TypedParseTree<'src>>),
     Quantifier {
         quantifier: Quantifier,
-        variable: String,
+        variable: &'src str,
         restrictor: Box<TypedParseTree<'src>>,
         subformula: Box<TypedParseTree<'src>>,
     },
@@ -410,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_bin_op() {
+    fn parse_bin_op() -> anyhow::Result<()> {
         let mut labels = LabelledScenarios {
             scenarios: vec![],
             actor_labels: HashMap::default(),
@@ -435,12 +507,14 @@ mod tests {
                 ],
             ),
         ] {
-            //let mut pool = extra::SimpleState(LabeledExprPool::new(&mut labels));
-            binary_operation::<extra::Err<Simple<_>>>()
+            let (pool, root) = binary_operation::<extra::Err<Simple<_>>>()
                 .parse(s)
-                .unwrap();
-            //assert_eq!(pool.pool.0, result);
+                .unwrap()
+                .to_pool(&mut labels);
+            let pool = pool.into_pool(root)?;
+            assert_eq!(pool.pool.0, result);
         }
+        Ok(())
     }
 
     #[test]
@@ -496,7 +570,7 @@ mod tests {
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
                 TypedParseTree(
-                    ParseTree::Constant(LabeledConstant::LabeledProperty(&keyword)),
+                    ParseTree::Constant(LabeledConstant::LabeledProperty(keyword)),
                     ParsingType::et()
                 )
             );
