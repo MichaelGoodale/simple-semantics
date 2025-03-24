@@ -4,7 +4,7 @@ use std::collections::{HashSet, VecDeque};
 pub mod types;
 use types::LambdaType;
 
-type Bvar = usize;
+pub type Bvar = usize;
 pub type Fvar = usize;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -60,6 +60,10 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(T::to_pool(processed_pool, root))
+    }
+
+    pub fn from(x: Vec<LambdaExpr<T>>) -> Self {
+        LambdaPool(x)
     }
 
     pub fn new() -> LambdaPool<T> {

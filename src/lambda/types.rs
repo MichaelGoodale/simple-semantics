@@ -1,4 +1,4 @@
-use chumsky::prelude::*;
+use chumsky::{prelude::*, text::inline_whitespace};
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub enum LambdaType {
@@ -8,15 +8,20 @@ pub enum LambdaType {
     Composition(Box<Self>, Box<Self>),
 }
 
-fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType> {
+pub(crate) fn core_type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType> + Clone {
     let atom = choice((just('e').to(LambdaType::E), just('t').to(LambdaType::T)));
-    let composition = recursive(|expr| {
+    recursive(|expr| {
         atom.or((expr.clone().then_ignore(just(',').padded()).then(expr))
             .map(|(x, y)| LambdaType::Composition(Box::new(x), Box::new(y)))
-            .delimited_by(just('<'), just('>')))
-            .padded()
-    });
-    composition.then_ignore(end())
+            .delimited_by(
+                just('<').then(inline_whitespace()),
+                inline_whitespace().then(just('>')),
+            ))
+    })
+}
+
+fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType> + Clone {
+    core_type_parser().padded().then_ignore(end())
 }
 
 impl LambdaType {
@@ -118,7 +123,7 @@ mod test {
         let et_squared_to_et_squared =
             LambdaType::Composition(Box::new(et_to_et.clone()), Box::new(et_to_et));
         assert_eq!(
-            parser.parse("<<<e, t>, <e,t>>, <<e,t>, <e,t>>>").unwrap(),
+            parser.parse("<< <e, t>, <e,t>>, <<e,t>, <e,t>>>").unwrap(),
             et_squared_to_et_squared
         );
     }

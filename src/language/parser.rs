@@ -1,15 +1,30 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
-    lambda::{types::LambdaType, LambdaExpr, LambdaExprRef, LambdaPool},
+    lambda::{
+        types::{core_type_parser, LambdaType},
+        Bvar, LambdaExpr, LambdaExprRef, LambdaPool,
+    },
     language::{Constant, Expr, ExprRef, MonOp},
     Entity, LabelledScenarios,
 };
 use anyhow::bail;
-use chumsky::prelude::*;
 use chumsky::{extra::ParserExtra, label::LabelError, text::TextExpected, util::MaybeRef};
+use chumsky::{prelude::*, text::whitespace};
 
 use super::{BinOp, LanguageExpression, Quantifier, Variable};
+
+const RESERVED_KEYWORDS: [&str; 9] = [
+    "lambda",
+    "some",
+    "every",
+    "True",
+    "False",
+    "all_e",
+    "all_a",
+    "AgentOf",
+    "PatientOf",
+];
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum ParsingType {
@@ -17,6 +32,47 @@ enum ParsingType {
     T,
     Composition(Option<Box<Self>>, Option<Box<Self>>),
     Unknown,
+}
+
+impl TryFrom<&ParsingType> for LambdaType {
+    type Error = ();
+
+    fn try_from(value: &ParsingType) -> Result<Self, Self::Error> {
+        match value {
+            ParsingType::E => Ok(LambdaType::E),
+            ParsingType::T => Ok(LambdaType::T),
+            ParsingType::Composition(Some(lhs), Some(rhs)) => Ok(LambdaType::Composition(
+                Box::new(LambdaType::try_from(lhs.as_ref())?),
+                Box::new(LambdaType::try_from(rhs.as_ref())?),
+            )),
+            _ => Err(()),
+        }
+    }
+}
+impl TryFrom<ParsingType> for LambdaType {
+    type Error = ();
+    fn try_from(value: ParsingType) -> Result<Self, Self::Error> {
+        (&value).try_into()
+    }
+}
+
+impl From<LambdaType> for ParsingType {
+    fn from(value: LambdaType) -> Self {
+        (&value).into()
+    }
+}
+
+impl From<&LambdaType> for ParsingType {
+    fn from(value: &LambdaType) -> Self {
+        match value {
+            LambdaType::E => ParsingType::E,
+            LambdaType::T => ParsingType::T,
+            LambdaType::Composition(lhs, rhs) => ParsingType::Composition(
+                Some(Box::new(ParsingType::from(lhs.as_ref()))),
+                Some(Box::new(ParsingType::from(rhs.as_ref()))),
+            ),
+        }
+    }
 }
 
 impl ParsingType {
@@ -54,7 +110,7 @@ impl<'src> TypedParseTree<'src> {
         &'src self,
         pool: &mut LambdaPool<Expr>,
         labels: &mut LabelledScenarios,
-        variable_names: &mut HashMap<&'src str, u32>,
+        variable_names: &mut VariableContext<'src>,
         lambda_depth: usize,
     ) -> LambdaExprRef {
         let expr = match &self.0 {
@@ -89,35 +145,26 @@ impl<'src> TypedParseTree<'src> {
                 restrictor,
                 subformula,
             } => {
-                let n = variable_names.len();
-                let v = *variable_names.entry(*variable).or_insert(n as u32);
-
+                let var = variable_names.bind_fresh_quantifier(variable);
                 let restrictor = ExprRef(
                     restrictor
                         .add_to_pool(pool, labels, variable_names, lambda_depth)
                         .0,
                 );
+
                 let subformula = ExprRef(
                     subformula
                         .add_to_pool(pool, labels, variable_names, lambda_depth)
                         .0,
                 );
+                variable_names.unbind(variable);
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: *quantifier,
-                    var: Variable(v),
+                    var: Variable(var),
                     restrictor,
                     subformula,
                 })
             }
-            ParseTree::Variable(str) => {
-                let n = variable_names.len();
-                let v = variable_names.entry(*str).or_insert(n as u32);
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(Variable(*v)))
-            }
-            ParseTree::FreeVariable(str) => LambdaExpr::FreeVariable(
-                labels.get_free_variable(str),
-                self.1.to_lambda_type().unwrap(),
-            ),
             ParseTree::Application {
                 subformula,
                 argument,
@@ -129,7 +176,14 @@ impl<'src> TypedParseTree<'src> {
                     argument,
                 }
             }
-            _ => todo!(),
+            ParseTree::Lambda { body, var } => {
+                let lambda_type: LambdaType = (&self.1).try_into().unwrap();
+                variable_names.bind_lambda(var, lambda_depth + 1, lambda_type.clone());
+                let body = body.add_to_pool(pool, labels, variable_names, lambda_depth + 1);
+                variable_names.unbind(var);
+                LambdaExpr::Lambda(body, lambda_type)
+            }
+            ParseTree::Variable(var) => variable_names.to_expr(var, labels, &self.1, lambda_depth),
         };
         pool.add(expr)
     }
@@ -137,11 +191,65 @@ impl<'src> TypedParseTree<'src> {
     fn to_pool(&self, labels: &mut LabelledScenarios) -> (LambdaPool<Expr>, LambdaExprRef) {
         let mut pool = LambdaPool::new();
 
-        //TODO: Make the var labels into a HashMap<&str, Vec<u32>> with a stack to keep track of
-        //scope.
-        let mut var_labels = HashMap::default();
+        let mut var_labels = VariableContext::default();
         let root = self.add_to_pool(&mut pool, labels, &mut var_labels, 0);
         (pool, root)
+    }
+}
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum ContextVar {
+    QuantifierVar(u32),
+    LambdaVar(Bvar, LambdaType),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+struct VariableContext<'src>(HashMap<&'src str, Vec<ContextVar>>);
+
+impl<'src> VariableContext<'src> {
+    fn to_expr(
+        &self,
+        variable: &'src str,
+        labels: &mut LabelledScenarios,
+        lambda_type: &ParsingType,
+        lambda_depth: usize,
+    ) -> LambdaExpr<Expr> {
+        match self.0.get(variable) {
+            Some(vars) => match vars
+                .last()
+                .expect("There should never be an empty vec in the VariableContext")
+            {
+                ContextVar::QuantifierVar(q) => {
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(Variable(*q)))
+                }
+                ContextVar::LambdaVar(og_depth, lambda_type) => {
+                    LambdaExpr::BoundVariable(lambda_depth - og_depth, lambda_type.clone())
+                }
+            },
+            None => LambdaExpr::FreeVariable(
+                labels.get_free_variable(variable),
+                lambda_type.to_lambda_type().unwrap(),
+            ),
+        }
+    }
+
+    fn bind_lambda(&mut self, variable: &'src str, lambda_depth: usize, lambda_type: LambdaType) {
+        self.0
+            .entry(variable)
+            .or_default()
+            .push(ContextVar::LambdaVar(lambda_depth, lambda_type));
+    }
+
+    fn bind_fresh_quantifier(&mut self, variable: &'src str) -> u32 {
+        let n = self.0.len() as u32;
+        self.0
+            .entry(variable)
+            .or_default()
+            .push(ContextVar::QuantifierVar(n));
+        n
+    }
+
+    fn unbind(&mut self, variable: &'src str) {
+        self.0.get_mut(variable).unwrap().pop();
     }
 }
 
@@ -151,8 +259,7 @@ enum ParseTree<'src> {
         body: Box<TypedParseTree<'src>>,
         var: String,
     },
-    BoundVariable(&'src str),
-    FreeVariable(&'src str),
+    Variable(&'src str),
     Application {
         subformula: Box<TypedParseTree<'src>>,
         argument: Box<TypedParseTree<'src>>,
@@ -166,7 +273,6 @@ enum ParseTree<'src> {
         restrictor: Box<TypedParseTree<'src>>,
         subformula: Box<TypedParseTree<'src>>,
     },
-    Variable(&'src str),
     Entity(LabeledEntity<'src>),
 }
 
@@ -235,10 +341,9 @@ where
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>,
 {
-    let lambda_expr = lambda_variable().map(|x| (true, TypedParseTree(x.0, ParsingType::E)));
-    let var_expr = variable().map(|x| (false, x));
+    let var_expr = variable().map(|x| (true, TypedParseTree(x.0, ParsingType::E)));
     let entity_expr = entity().map(|x| (false, x));
-    let entity_or_var = choice((entity_expr, var_expr, lambda_expr))
+    let entity_or_var = choice((entity_expr, var_expr))
         .padded()
         .delimited_by(just('('), just(')'));
 
@@ -261,7 +366,7 @@ where
                     },
                 )
             }),
-        lambda_variable()
+        variable()
             .map(|x| TypedParseTree(x.0, ParsingType::et()))
             .then(entity_or_var)
             .map(|(x, (_arg_is_lambdavar, arg))| {
@@ -296,28 +401,18 @@ where
     .map(|x| TypedParseTree(ParseTree::Constant(x), ParsingType::et()))
 }
 
-fn lambda_variable<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
-where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
-{
-    choice((
-        just("f_")
-            .ignore_then(text::ident())
-            .map(|x| TypedParseTree(ParseTree::FreeVariable(x), ParsingType::Unknown)),
-        just("b_")
-            .ignore_then(text::ident())
-            .map(|x| TypedParseTree(ParseTree::BoundVariable(x), ParsingType::Unknown)),
-    ))
-}
 fn just_variable<'src, E>() -> impl Parser<'src, &'src str, &'src str, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>,
 {
-    just('x').ignore_then(text::int(10))
+    text::ident::<&'src str, E>()
+        .and_is(choice(RESERVED_KEYWORDS.map(|x| just(x))).not())
+        .and_is(one_of("ape").ignore_then(text::int(10)).not())
+        .and_is(just("a_").ignore_then(text::ident()).not())
+        .and_is(just("p_").ignore_then(text::ident()).not())
+    //This is a stupid way to do it, but I can't get one_of to work for the life of me.
 }
 
 fn variable<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -335,10 +430,9 @@ where
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>,
 {
-    let lambda_expr = lambda_variable().map(|x| (true, TypedParseTree(x.0, ParsingType::E)));
     let var_expr = variable().map(|x| (false, x));
     let entity_expr = entity().map(|x| (false, x));
-    let entity_or_var = choice((entity_expr, var_expr, lambda_expr)).padded();
+    let entity_or_var = choice((entity_expr, var_expr)).padded();
     choice((
         just("AgentOf").to(BinOp::AgentOf),
         just("PatientOf").to(BinOp::PatientOf),
@@ -433,11 +527,40 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
             )
         });
 
+        let lambda = just("lambda")
+            .then(whitespace().at_least(1))
+            .ignore_then(core_type_parser())
+            .then_ignore(whitespace().at_least(1))
+            .then(text::ident().padded())
+            .then(expr.clone().delimited_by(just('('), just(')')))
+            .map(|((lambda_type, var_name), body)| {
+                TypedParseTree(
+                    ParseTree::Lambda {
+                        body: Box::new(body),
+                        var: var_name.to_string(),
+                    },
+                    lambda_type.into(),
+                )
+            });
+
         choice((
+            lambda,
             non_quantified,
             quantified,
             entity_or_variable,
             possible_sets,
+            //expr.clone()
+            //    .delimited_by(just('('), just(')'))
+            //    .then(expr.delimited_by(just('('), just(')')).padded())
+            //    .map(|(a, b)| {
+            //        TypedParseTree(
+            //            ParseTree::Application {
+            //                subformula: Box::new(a),
+            //                argument: Box::new(b),
+            //            },
+            //            ParsingType::Unknown,
+            //        )
+            //    }),
         ))
     });
     truth_value.then_ignore(end())
@@ -467,7 +590,7 @@ pub fn parse_executable(
 mod tests {
 
     use super::*;
-    use crate::language::{ExprPool, LanguageResult, Variable, VariableBuffer};
+    use crate::language::{ExprPool, LanguageResult, VariableBuffer};
     use crate::{LabelledScenarios, Scenario, ThetaRoles};
     use std::collections::HashMap;
 
@@ -514,10 +637,10 @@ mod tests {
 
         for (s, result) in [
             (
-                "AgentOf(x0, x1)",
+                "AgentOf(a32, e2)",
                 vec![
-                    Expr::Variable(Variable(0)),
-                    Expr::Variable(Variable(1)),
+                    Expr::Entity(Entity::Actor(32)),
+                    Expr::Entity(Entity::Event(2)),
                     Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
                 ],
             ),
@@ -600,17 +723,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parse_variable() {
-        for n in [1, 6, 3, 4, 5, 100, 1032, 40343] {
-            let str = format!("x{n}");
-            assert_eq!(
-                variable::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                TypedParseTree(ParseTree::Variable(&n.to_string()), ParsingType::E)
-            );
-        }
-    }
-
     fn get_pool(s: &str) -> (ExprPool, ExprRef) {
         let mut labels = LabelledScenarios {
             scenarios: vec![],
@@ -629,8 +741,11 @@ mod tests {
         pool.interp(root, simple_scenario, &mut variables)
     }
 
-    #[test]
-    fn parse_with_keywords() -> anyhow::Result<()> {
+    fn check_lambdas(
+        statement: &str,
+        gold_pool: LambdaPool<Expr>,
+        gold_root: u32,
+    ) -> anyhow::Result<()> {
         let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
 
         properties.insert(1, vec![Entity::Actor(1)]);
@@ -661,6 +776,111 @@ mod tests {
             property_labels,
             free_variables: HashMap::default(),
         };
+        let (pool, root) = language_parser()
+            .parse(statement)
+            .into_result()
+            .map_err(|x| {
+                anyhow::Error::msg(
+                    x.into_iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            })?
+            .to_pool(&mut labels);
+
+        assert_eq!(pool, gold_pool);
+        assert_eq!(root, LambdaExprRef(gold_root));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_lambda() -> anyhow::Result<()> {
+        check_lambdas(
+            "lambda e x(p_Red(x))",
+            LambdaPool::from(vec![
+                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(1), ExprRef(0))),
+                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::E),
+            ]),
+            2,
+        )?;
+        check_lambdas(
+            "lambda  <e,t> P  (lambda e x (P(x)))",
+            LambdaPool::from(vec![
+                LambdaExpr::BoundVariable(1, LambdaType::et()),
+                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(0),
+                    argument: LambdaExprRef(1),
+                },
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
+                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et()),
+            ]),
+            4,
+        )?;
+        check_lambdas(
+            "lambda <e,t> P (P(a0))",
+            LambdaPool::from(vec![
+                LambdaExpr::BoundVariable(0, LambdaType::et()),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(0))),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(0),
+                    argument: LambdaExprRef(1),
+                },
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+            ]),
+            3,
+        )?;
+        check_lambdas(
+            "~hey(lol)",
+            LambdaPool::from(vec![
+                LambdaExpr::FreeVariable(0, LambdaType::et()),
+                LambdaExpr::FreeVariable(1, LambdaType::E),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(0),
+                    argument: LambdaExprRef(1),
+                },
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, ExprRef(2))),
+            ]),
+            3,
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_with_keywords() -> anyhow::Result<()> {
+        let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
+
+        properties.insert(1, vec![Entity::Actor(1)]);
+        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
+
+        let simple_scenario = Scenario {
+            actors: vec![0, 1],
+            thematic_relations: vec![
+                ThetaRoles {
+                    agent: Some(0),
+                    patient: Some(0),
+                },
+                ThetaRoles {
+                    agent: Some(1),
+                    patient: Some(0),
+                },
+            ],
+            properties,
+        };
+
+        let actor_labels =
+            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
+        let property_labels =
+            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
+        let mut labels = LabelledScenarios {
+            scenarios: vec![simple_scenario.clone()],
+            actor_labels,
+            property_labels,
+            free_variables: HashMap::default(),
+        };
 
         for statement in [
             "~AgentOf(a_John, e0)",
@@ -683,22 +903,19 @@ mod tests {
                 LanguageResult::Bool(true)
             );
         }
-        let statement = "~f_hey(f_lol)";
-        let (pool, root) = language_parser()
-            .parse(statement)
-            .into_result()
-            .map_err(|x| {
-                anyhow::Error::msg(
-                    x.into_iter()
-                        .map(|x| x.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            })?
-            .to_pool(&mut labels);
 
-        dbg!(pool, root);
-        panic!();
+        for (statement, result) in [
+            ("a_Mary", LanguageResult::Entity(Entity::Actor(0))),
+            ("p_Red", LanguageResult::EntitySet(vec![Entity::Actor(1)])),
+            (
+                "p_Blue",
+                LanguageResult::EntitySet(vec![Entity::Actor(0), Entity::Actor(1)]),
+            ),
+        ] {
+            println!("{statement}");
+            let expression = parse_executable(statement, &mut labels)?;
+            assert_eq!(expression.run(&labels.scenarios[0]), result);
+        }
 
         Ok(())
     }
