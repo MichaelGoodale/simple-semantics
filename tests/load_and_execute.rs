@@ -77,7 +77,9 @@ fn lambda_stuff() -> anyhow::Result<()> {
             .iter_scenarios()
             .map(|x| executable.run(x))
             .collect::<Vec<_>>(),
-        [true, false].map(LanguageResult::Bool).to_vec()
+        [true, false, true, false]
+            .map(LanguageResult::Bool)
+            .to_vec()
     );
 
     let man = "lambda <e,t> x (p_man(x))";
@@ -96,7 +98,9 @@ fn lambda_stuff() -> anyhow::Result<()> {
             .iter_scenarios()
             .map(|x| executable.run(x))
             .collect::<Vec<_>>(),
-        [true, false].map(LanguageResult::Bool).to_vec()
+        [true, false, true, false]
+            .map(LanguageResult::Bool)
+            .to_vec()
     );
 
     let not_every_woman_sleeps = format!("({not})((({every})({woman}))({sleeps}))");
@@ -109,7 +113,9 @@ fn lambda_stuff() -> anyhow::Result<()> {
             .iter_scenarios()
             .map(|x| executable.run(x))
             .collect::<Vec<_>>(),
-        [true, false].map(LanguageResult::Bool).to_vec()
+        [true, false, false, false]
+            .map(LanguageResult::Bool)
+            .to_vec()
     );
 
     Ok(())
