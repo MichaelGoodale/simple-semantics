@@ -178,7 +178,7 @@ impl<'src> TypedParseTree<'src> {
             }
             ParseTree::Lambda { body, var } => {
                 let lambda_type: LambdaType = (&self.1).try_into().unwrap();
-                variable_names.bind_lambda(var, lambda_depth + 1, lambda_type.clone());
+                variable_names.bind_lambda(var, lambda_depth + 1, lambda_type.lhs_clone().unwrap());
                 let body = body.add_to_pool(pool, labels, variable_names, lambda_depth + 1);
                 variable_names.unbind(var);
                 LambdaExpr::Lambda(body, lambda_type)
@@ -544,23 +544,23 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
             });
 
         choice((
+            expr.clone()
+                .delimited_by(just('('), just(')'))
+                .then(expr.delimited_by(just('('), just(')')).padded())
+                .map(|(a, b)| {
+                    TypedParseTree(
+                        ParseTree::Application {
+                            subformula: Box::new(a),
+                            argument: Box::new(b),
+                        },
+                        ParsingType::Unknown,
+                    )
+                }),
             lambda,
             non_quantified,
             quantified,
             entity_or_variable,
             possible_sets,
-            //expr.clone()
-            //    .delimited_by(just('('), just(')'))
-            //    .then(expr.delimited_by(just('('), just(')')).padded())
-            //    .map(|(a, b)| {
-            //        TypedParseTree(
-            //            ParseTree::Application {
-            //                subformula: Box::new(a),
-            //                argument: Box::new(b),
-            //            },
-            //            ParsingType::Unknown,
-            //        )
-            //    }),
         ))
     });
     truth_value.then_ignore(end())
@@ -746,6 +746,7 @@ mod tests {
         gold_pool: LambdaPool<Expr>,
         gold_root: u32,
     ) -> anyhow::Result<()> {
+        println!("{statement}");
         let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
 
         properties.insert(1, vec![Entity::Actor(1)]);
@@ -797,16 +798,16 @@ mod tests {
     #[test]
     fn parse_lambda() -> anyhow::Result<()> {
         check_lambdas(
-            "lambda e x(p_Red(x))",
+            "lambda <e,t> x(p_Red(x))",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::E),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(1), ExprRef(0))),
-                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::E),
+                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::et()),
             ]),
             2,
         )?;
         check_lambdas(
-            "lambda  <e,t> P  (lambda e x (P(x)))",
+            "lambda  <<e,t>,t> P  (lambda <e,t> x (P(x)))",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(1, LambdaType::et()),
                 LambdaExpr::BoundVariable(0, LambdaType::E),
@@ -814,13 +815,13 @@ mod tests {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
-                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::ett()),
             ]),
             4,
         )?;
         check_lambdas(
-            "lambda <e,t> P (P(a0))",
+            "lambda <<e,t>,t> P (P(a0))",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::et()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(0))),
@@ -828,7 +829,7 @@ mod tests {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::ett()),
             ]),
             3,
         )?;
@@ -846,6 +847,66 @@ mod tests {
             3,
         )?;
 
+        check_lambdas(
+            "(lambda <<e,t>,t> P (P(a0)))(lambda <e,t> x (p_Red(x)))",
+            LambdaPool::from(vec![
+                LambdaExpr::BoundVariable(0, LambdaType::et()),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(0))),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(0),
+                    argument: LambdaExprRef(1),
+                },
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::ett()),
+                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(1), ExprRef(4))),
+                LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::et()),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(3),
+                    argument: LambdaExprRef(6),
+                },
+            ]),
+            7,
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_with_beta_reduction() -> anyhow::Result<()> {
+        let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
+
+        properties.insert(1, vec![Entity::Actor(1)]);
+        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
+
+        let simple_scenario = Scenario {
+            actors: vec![0, 1],
+            thematic_relations: vec![
+                ThetaRoles {
+                    agent: Some(0),
+                    patient: Some(0),
+                },
+                ThetaRoles {
+                    agent: Some(1),
+                    patient: Some(0),
+                },
+            ],
+            properties,
+        };
+
+        let actor_labels =
+            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
+        let property_labels =
+            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
+        let mut labels = LabelledScenarios {
+            scenarios: vec![simple_scenario],
+            actor_labels,
+            property_labels,
+            free_variables: HashMap::default(),
+        };
+        parse_executable(
+            "(lambda <<e,t>,t> P (P(a0)))(lambda <e,t> x (p_Red(x)))",
+            &mut labels,
+        )?;
         Ok(())
     }
 

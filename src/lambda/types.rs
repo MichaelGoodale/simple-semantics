@@ -1,3 +1,6 @@
+use std::fmt::Display;
+
+use anyhow::bail;
 use chumsky::{prelude::*, text::inline_whitespace};
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -47,11 +50,42 @@ impl LambdaType {
             )),
         )
     }
+    pub fn ett() -> Self {
+        LambdaType::Composition(
+            Box::new(LambdaType::Composition(
+                Box::new(LambdaType::E),
+                Box::new(LambdaType::T),
+            )),
+            Box::new(LambdaType::T),
+        )
+    }
 
-    pub fn can_apply(&self, other: &Self) -> bool {
+    fn can_apply(&self, other: &Self) -> bool {
         match self {
             LambdaType::T | LambdaType::E => false,
             LambdaType::Composition(lhs, _) => **lhs == *other,
+        }
+    }
+
+    pub fn apply_clone(self, other: &Self) -> anyhow::Result<Self> {
+        if !self.can_apply(other) {
+            bail!("Cannot apply {other} to {self}!")
+        }
+
+        match self {
+            LambdaType::Composition(_, rhs) => Ok(*rhs),
+            LambdaType::T | LambdaType::E => bail!("Cannot apply to a primitive type"),
+        }
+    }
+
+    pub fn apply(self, other: &Self) -> anyhow::Result<Self> {
+        if !self.can_apply(other) {
+            bail!("Cannot apply {other} to {self}!")
+        }
+
+        match self {
+            LambdaType::Composition(_, rhs) => Ok(*rhs),
+            LambdaType::T | LambdaType::E => bail!("Cannot apply to a primitive type"),
         }
     }
 
@@ -62,17 +96,40 @@ impl LambdaType {
         }
     }
 
-    pub fn apply_clone(&self) -> Self {
+    pub fn rhs_clone(&self) -> anyhow::Result<Self> {
         match self {
-            LambdaType::Composition(_, rhs) => *rhs.clone(),
-            LambdaType::E | LambdaType::T => panic!("Type clash!"),
+            LambdaType::Composition(_, rhs) => Ok(*rhs.clone()),
+            LambdaType::E | LambdaType::T => bail!("Type clash!"),
         }
     }
 
-    pub fn apply(self) -> Self {
+    pub fn lhs_clone(&self) -> anyhow::Result<Self> {
         match self {
-            LambdaType::Composition(_, rhs) => *rhs,
-            LambdaType::E | LambdaType::T => panic!("Type clash!"),
+            LambdaType::Composition(lhs, ..) => Ok(*lhs.clone()),
+            LambdaType::E | LambdaType::T => bail!("Type clash!"),
+        }
+    }
+    pub fn lhs(self) -> anyhow::Result<Self> {
+        match self {
+            LambdaType::Composition(lhs, ..) => Ok(*lhs.clone()),
+            LambdaType::E | LambdaType::T => bail!("Type clash!"),
+        }
+    }
+
+    pub fn rhs(self) -> anyhow::Result<Self> {
+        match self {
+            LambdaType::Composition(_, rhs) => Ok(*rhs),
+            LambdaType::E | LambdaType::T => bail!("Type clash!"),
+        }
+    }
+}
+
+impl Display for LambdaType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LambdaType::E => write!(f, "e"),
+            LambdaType::T => write!(f, "t"),
+            LambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
         }
     }
 }
@@ -80,8 +137,9 @@ impl LambdaType {
 #[cfg(test)]
 mod test {
     use super::*;
+
     #[test]
-    fn check_application() {
+    fn check_application() -> anyhow::Result<()> {
         let et = LambdaType::et();
         let et_to_et = LambdaType::Composition(Box::new(et.clone()), Box::new(et.clone()));
         let et_squared_to_et_squared =
@@ -93,14 +151,15 @@ mod test {
         assert!(!et_to_et.can_apply(&et_squared_to_et_squared));
         assert!(!et_squared_to_et_squared.can_apply(&et_squared_to_et_squared));
 
-        assert_eq!(et_to_et, et_squared_to_et_squared.clone().apply());
-        assert_eq!(et_to_et, et_squared_to_et_squared.apply_clone());
+        assert_eq!(et_to_et, et_squared_to_et_squared.clone().rhs()?);
+        assert_eq!(et_to_et, et_squared_to_et_squared.rhs_clone()?);
 
-        assert_eq!(et, et_to_et.clone().apply());
-        assert_eq!(et, et_to_et.apply_clone());
+        assert_eq!(et, et_to_et.clone().rhs()?);
+        assert_eq!(et, et_to_et.rhs_clone()?);
 
-        assert_eq!(LambdaType::T, et.clone().apply());
-        assert_eq!(LambdaType::T, et.apply_clone());
+        assert_eq!(LambdaType::T, et.clone().rhs()?);
+        assert_eq!(LambdaType::T, et.rhs_clone()?);
+        Ok(())
     }
 
     #[test]
@@ -126,5 +185,13 @@ mod test {
             parser.parse("<< <e, t>, <e,t>>, <<e,t>, <e,t>>>").unwrap(),
             et_squared_to_et_squared
         );
+    }
+
+    #[test]
+    fn check_printing() {
+        let parser = type_parser();
+        for s in ["e", "t", "<e,t>", "<e,<e,t>>", "<t,<<t,t>,<e,t>>>"] {
+            assert_eq!(parser.parse(s).unwrap().to_string(), s);
+        }
     }
 }

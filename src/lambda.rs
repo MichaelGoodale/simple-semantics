@@ -133,33 +133,20 @@ where
 
     ///This function trusts that the subexpressions are all valid! For example if a lambda's body
     ///has the wrong type, it won't know.
-    fn check_type_clash(&self, x: LambdaExprRef) -> Option<LambdaType> {
+    fn check_type_clash(&self, x: LambdaExprRef) -> anyhow::Result<LambdaType> {
         match self.get(x) {
             LambdaExpr::BoundVariable(_, x)
             | LambdaExpr::FreeVariable(_, x)
-            | LambdaExpr::Lambda(.., x) => Some(x.clone()),
+            | LambdaExpr::Lambda(.., x) => Ok(x.clone()),
             LambdaExpr::Application {
                 subformula,
                 argument,
             } => {
-                if let Some(lhs_type) = self.check_type_clash(*argument) {
-                    if let Some(subformula) = self.check_type_clash(*subformula) {
-                        if subformula.can_apply(&lhs_type) {
-                            Some(subformula.apply())
-                        } else {
-                            //The subformula has a type clash
-                            None
-                        }
-                    } else {
-                        //The subformula has a type clash
-                        None
-                    }
-                } else {
-                    //The argument has a type clash
-                    None
-                }
+                let argument_type = self.check_type_clash(*argument)?;
+                let subformula_type = self.check_type_clash(*subformula)?;
+                subformula_type.apply(&argument_type)
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => Some(x.get_type()),
+            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type()),
         }
     }
 
@@ -179,10 +166,7 @@ where
         {
             let inner_term = match self.get(*subformula) {
                 LambdaExpr::Lambda(x,..) => {
-
-                    if self.check_type_clash(app).is_none() {
-                        bail!("Type clash!");
-                    }
+                    self.check_type_clash(app)?;
 
                 *x},
                 _ => bail!("You can only beta reduce if the left hand side of the application is a lambda!")
@@ -370,6 +354,7 @@ mod test {
             LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
         ]);
         pool.reduce(LambdaExprRef(0))?;
+
         assert_eq!(
             pool,
             LambdaPool(vec![
@@ -461,7 +446,7 @@ mod test {
         ]);
         assert_eq!(
             pool.reduce(LambdaExprRef(0)).unwrap_err().to_string(),
-            "Type clash!"
+            "Cannot apply t to <e,t>!"
         );
 
         let mut pool = LambdaPool::<()>(vec![
@@ -535,8 +520,7 @@ mod test {
         );
         let root = LambdaExprRef(4);
         pool.beta_reduce(root)?;
-        let root = pool.cleanup(root);
-        dbg!(&pool, root);
+        pool.cleanup(root);
 
         assert_eq!(
             pool,
