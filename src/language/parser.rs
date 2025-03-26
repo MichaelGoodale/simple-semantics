@@ -286,7 +286,8 @@ fn entity<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + 
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>
+        + LabelError<'src, &'src str, &'static str>,
 {
     let actor_or_event_number = one_of("ae")
         .then(text::int(10))
@@ -304,6 +305,7 @@ where
 
     choice((actor_or_event_keyword, actor_or_event_number))
         .map(|x| TypedParseTree(ParseTree::Entity(x), ParsingType::E))
+        .labelled("entity")
 }
 
 fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -339,7 +341,8 @@ fn properties<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>
+        + LabelError<'src, &'src str, &'static str>,
 {
     let var_expr = variable().map(|x| (true, TypedParseTree(x.0, ParsingType::E)));
     let entity_expr = entity().map(|x| (false, x));
@@ -405,13 +408,15 @@ fn just_variable<'src, E>() -> impl Parser<'src, &'src str, &'src str, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>
+        + LabelError<'src, &'src str, &'static str>,
 {
     text::ident::<&'src str, E>()
         .and_is(choice(RESERVED_KEYWORDS.map(|x| just(x))).not())
         .and_is(one_of("ape").ignore_then(text::int(10)).not())
         .and_is(just("a_").ignore_then(text::ident()).not())
         .and_is(just("p_").ignore_then(text::ident()).not())
+        .labelled("variable")
     //This is a stupid way to do it, but I can't get one_of to work for the life of me.
 }
 
@@ -419,7 +424,8 @@ fn variable<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> 
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>
+        + LabelError<'src, &'src str, &'static str>,
 {
     just_variable().map(|x| TypedParseTree(ParseTree::Variable(x), ParsingType::E))
 }
@@ -428,7 +434,8 @@ fn binary_operation<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'s
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>
+        + LabelError<'src, &'src str, &'static str>,
 {
     let var_expr = variable().map(|x| (false, x));
     let entity_expr = entity().map(|x| (false, x));
@@ -456,7 +463,8 @@ where
     )
 }
 
-fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
+fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>, extra::Err<Rich<'a, char>>>
+{
     let ent = entity();
     let var = variable();
     let entity_or_variable = choice((ent, var)).padded();
@@ -504,16 +512,13 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
             just("every").to(Quantifier::Universal),
             just("some").to(Quantifier::Existential),
         ))
+        .labelled("quantifier")
         .then_ignore(just('('))
         .then(just_variable())
         .then_ignore(just(','))
-        .then(
-            possible_sets
-                .or(entity_or_variable)
-                .or(non_quantified.clone()),
-        )
+        .then(expr.clone())
         .then_ignore(just(','))
-        .then(non_quantified.clone())
+        .then(expr.clone())
         .then_ignore(just(')'))
         .map(|(((quantifier, variable), restrictor), subformula)| {
             TypedParseTree(
@@ -529,9 +534,9 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
 
         let lambda = just("lambda")
             .then(whitespace().at_least(1))
-            .ignore_then(core_type_parser())
+            .ignore_then(core_type_parser().labelled("type label"))
             .then_ignore(whitespace().at_least(1))
-            .then(text::ident().padded())
+            .then(text::ident().padded().labelled("lambda variable"))
             .then(expr.clone().delimited_by(just('('), just(')')))
             .map(|((lambda_type, var_name), body)| {
                 TypedParseTree(
@@ -541,12 +546,13 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
                     },
                     lambda_type.into(),
                 )
-            });
+            })
+            .labelled("lambda expression");
 
         choice((
             expr.clone()
                 .delimited_by(just('('), just(')'))
-                .then(expr.delimited_by(just('('), just(')')).padded())
+                .then(expr.delimited_by(just('('), just(')')))
                 .map(|(a, b)| {
                     TypedParseTree(
                         ParseTree::Application {
@@ -562,6 +568,7 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>> {
             entity_or_variable,
             possible_sets,
         ))
+        .padded()
     });
     truth_value.then_ignore(end())
 }
@@ -867,7 +874,6 @@ mod tests {
             ]),
             7,
         )?;
-
         Ok(())
     }
 
@@ -950,7 +956,7 @@ mod tests {
             "~(p_Red(a_John) & ~(True & p_Red(a_John)))",
             "every(x0, all_a, p_Blue(x0))",
             "every(x0, p_Blue, p_Blue(x0))",
-            "every(x0, p1, p4(x0))",
+            "every(x, p1, p4(x))",
             "every(x0, p_Red, p_Blue(x0))",
             "every(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
             "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",

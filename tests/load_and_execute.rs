@@ -62,3 +62,38 @@ fn load_dataset() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn lambda_stuff() -> anyhow::Result<()> {
+    let path = get_resource_path()?.join("men.scenario");
+    let mut parsed_data = LabelledScenarios::from_file(path)?;
+
+    let executable = simple_semantics::parse_executable(
+        "every(x,p_man, some(y, all_e, AgentOf(x, y) & p_sleep(y)))",
+        &mut parsed_data,
+    )?;
+    assert_eq!(
+        parsed_data
+            .iter_scenarios()
+            .map(|x| executable.run(x))
+            .collect::<Vec<_>>(),
+        [true, false].map(LanguageResult::Bool).to_vec()
+    );
+
+    let man = "lambda <e,t> x (p_man(x))";
+    let sleeps = "lambda <e,t> x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))";
+    let every = "lambda <<e,t>,<<e,t>,t>> p(lambda <<e,t>, t> q(every(x, p(x), q(x))))";
+
+    let statement = format!("(({every})({man}))({sleeps})");
+    println!("{statement}");
+    let executable = simple_semantics::parse_executable(statement.as_str(), &mut parsed_data)?;
+    assert_eq!(
+        parsed_data
+            .iter_scenarios()
+            .map(|x| executable.run(x))
+            .collect::<Vec<_>>(),
+        [true, false].map(LanguageResult::Bool).to_vec()
+    );
+
+    Ok(())
+}

@@ -1,7 +1,12 @@
 use std::fmt::Display;
 
 use anyhow::bail;
-use chumsky::{prelude::*, text::inline_whitespace};
+use chumsky::{
+    extra::ParserExtra,
+    label::LabelError,
+    prelude::*,
+    text::{inline_whitespace, TextExpected},
+};
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub enum LambdaType {
@@ -11,7 +16,11 @@ pub enum LambdaType {
     Composition(Box<Self>, Box<Self>),
 }
 
-pub(crate) fn core_type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType> + Clone {
+pub(crate) fn core_type_parser<'src, E>() -> impl Parser<'src, &'src str, LambdaType, E> + Clone
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
+{
     let atom = choice((just('e').to(LambdaType::E), just('t').to(LambdaType::T)));
     recursive(|expr| {
         atom.or((expr.clone().then_ignore(just(',').padded()).then(expr))
