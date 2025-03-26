@@ -2,7 +2,7 @@
 use ahash::RandomState;
 use chumsky::prelude::*;
 use lambda::Fvar;
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, fmt::Display, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,15 @@ pub type Event = u8;
 pub enum Entity {
     Actor(Actor),
     Event(Event),
+}
+
+impl Display for Entity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Entity::Actor(a) => write!(f, "a{a}"),
+            Entity::Event(a) => write!(f, "e{a}"),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

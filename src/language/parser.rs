@@ -203,7 +203,7 @@ enum ContextVar {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-struct VariableContext<'src>(HashMap<&'src str, Vec<ContextVar>>);
+struct VariableContext<'src>(HashMap<&'src str, Vec<ContextVar>>, u32);
 
 impl<'src> VariableContext<'src> {
     fn to_expr(
@@ -240,11 +240,12 @@ impl<'src> VariableContext<'src> {
     }
 
     fn bind_fresh_quantifier(&mut self, variable: &'src str) -> u32 {
-        let n = self.0.len() as u32;
+        let n = self.1;
         self.0
             .entry(variable)
             .or_default()
             .push(ContextVar::QuantifierVar(n));
+        self.1 += 1;
         n
     }
 
@@ -475,6 +476,7 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>, extra::
         let atom = true_or_false
             .or(binary_operation())
             .or(properties())
+            .or(variable())
             .or(expr.clone().delimited_by(just('('), just(')')))
             .padded();
 
@@ -873,6 +875,17 @@ mod tests {
                 },
             ]),
             7,
+        )?;
+        check_lambdas(
+            "lambda <t,<t,t>> phi (lambda <t,t> psi (phi & psi))",
+            LambdaPool::from(vec![
+                LambdaExpr::BoundVariable(1, LambdaType::T),
+                LambdaExpr::BoundVariable(0, LambdaType::T),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(0), ExprRef(1))),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<t,t>")?),
+                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::from_string("<t,<t,t>>")?),
+            ]),
+            4,
         )?;
         Ok(())
     }

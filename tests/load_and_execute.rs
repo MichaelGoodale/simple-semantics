@@ -81,12 +81,29 @@ fn lambda_stuff() -> anyhow::Result<()> {
     );
 
     let man = "lambda <e,t> x (p_man(x))";
+    let woman = "lambda <e,t> x (p_woman(x))";
     let sleeps = "lambda <e,t> x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))";
     let every = "lambda <<e,t>,<<e,t>,t>> p(lambda <<e,t>, t> q(every(x, p(x), q(x))))";
+    let and = "lambda <t,<t,t>> psi (lambda <t,t> phi (psi & phi))";
+    let not = "lambda <t,t> phi (~phi)";
 
-    let statement = format!("(({every})({man}))({sleeps})");
+    let every_man_sleeps = format!("(({every})({man}))({sleeps})");
+    println!("{every_man_sleeps}");
+    let executable =
+        simple_semantics::parse_executable(every_man_sleeps.as_str(), &mut parsed_data)?;
+    assert_eq!(
+        parsed_data
+            .iter_scenarios()
+            .map(|x| executable.run(x))
+            .collect::<Vec<_>>(),
+        [true, false].map(LanguageResult::Bool).to_vec()
+    );
+
+    let not_every_woman_sleeps = format!("({not})((({every})({woman}))({sleeps}))");
+    let statement = format!("(({and})({every_man_sleeps}))({not_every_woman_sleeps})");
     println!("{statement}");
     let executable = simple_semantics::parse_executable(statement.as_str(), &mut parsed_data)?;
+    println!("{executable}");
     assert_eq!(
         parsed_data
             .iter_scenarios()

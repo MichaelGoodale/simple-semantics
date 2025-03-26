@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -8,12 +10,38 @@ pub enum BinOp {
     Or,
 }
 
+impl Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                BinOp::AgentOf => "AgentOf",
+                BinOp::PatientOf => "PatientOf",
+                BinOp::And => "&",
+                BinOp::Or => "|",
+            }
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum MonOp {
     Not,
     Property(PropertyLabel),
     Tautology,
     Contradiction,
+}
+
+impl Display for MonOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MonOp::Not => write!(f, "~"),
+            MonOp::Property(x) => write!(f, "p{x}"),
+            MonOp::Tautology => write!(f, "True"),
+            MonOp::Contradiction => write!(f, "False"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +53,18 @@ pub enum Constant {
     Property(PropertyLabel),
 }
 
+impl Display for Constant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Constant::Everyone => write!(f, "all_a"),
+            Constant::EveryEvent => write!(f, "all_e"),
+            Constant::Tautology => write!(f, "True"),
+            Constant::Contradiction => write!(f, "False"),
+            Constant::Property(x) => write!(f, "p{x}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Variable(u32);
 
@@ -32,6 +72,15 @@ pub struct Variable(u32);
 pub enum Quantifier {
     Universal,
     Existential,
+}
+
+impl Display for Quantifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Quantifier::Universal => write!(f, "every"),
+            Quantifier::Existential => write!(f, "some"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -61,6 +110,13 @@ pub struct LanguageExpression {
     start: ExprRef,
 }
 
+impl Display for LanguageExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let string = self.string(self.start);
+        write!(f, "{string}")
+    }
+}
+
 impl LanguageExpression {
     pub fn run(&self, scenario: &Scenario) -> LanguageResult {
         let mut variables = VariableBuffer::default();
@@ -69,6 +125,36 @@ impl LanguageExpression {
 
     pub fn new(pool: ExprPool, start: ExprRef) -> Self {
         LanguageExpression { pool, start }
+    }
+
+    fn string(&self, expr: ExprRef) -> String {
+        match self.pool.get(expr) {
+            Expr::Quantifier {
+                quantifier,
+                var,
+                restrictor,
+                subformula,
+            } => format!(
+                "{}(x{},{},{})",
+                quantifier,
+                var.0,
+                self.string(*restrictor),
+                self.string(*subformula)
+            ),
+            Expr::Variable(variable) => format!("x{}", variable.0),
+            Expr::Entity(entity) => format!("{}", entity),
+            Expr::Binary(bin_op, x, y) => match bin_op {
+                BinOp::AgentOf | BinOp::PatientOf => {
+                    format!("{bin_op}({},{})", self.string(*x), self.string(*y))
+                }
+
+                BinOp::And | BinOp::Or => {
+                    format!("({}){bin_op}({})", self.string(*x), self.string(*y))
+                }
+            },
+            Expr::Unary(mon_op, arg) => format!("{mon_op}({})", self.string(*arg)),
+            Expr::Constant(constant) => format!("{constant}"),
+        }
     }
 }
 
