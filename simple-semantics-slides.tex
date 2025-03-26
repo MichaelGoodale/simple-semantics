@@ -1,0 +1,303 @@
+\documentclass[aspectratio=169]{beamer}
+\usetheme{Berlin}
+\author{Michael Goodale}
+\title{Simple semantics for compositional language learning}
+
+\usepackage{listings}
+\usepackage{enumerate}
+\usepackage{times}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{tcolorbox}
+\usepackage{booktabs}
+\usepackage{multicol}
+\usepackage{subcaption}
+\newcommand{\lex}[3]{{#1}::{\texttt{#2}}::{#3}}
+
+\usepackage[citestyle=authoryear]{biblatex}
+\addbibresource{simple-semantics.bib}
+
+\lstset{basicstyle=\ttfamily}
+\begin{document}
+\begin{frame}
+	\titlepage
+\end{frame}
+
+
+\begin{frame}
+  \frametitle{Semantic scenarios}
+  \begin{itemize}
+    \item Learn language by pairing \textbf{semantic scenarios} with sentences. 
+    \item \textbf{Semantic scenarios} are simple, finite structures (e.g.\ descriptions of a scenario.
+    \item Basic ontology consisting of individuals, events and predicates without tense nor modality.
+  \end{itemize}
+\end{frame}
+
+\section{Semantic scenarios}
+\begin{frame}
+The basic ontology consists of four kinds of semantic objects:
+\begin{itemize}
+  \item Individuals: An individual is a simple atom that belong to the set of individuals, $\mathcal{D}$.
+  \item Events: An event is an atom that belong to the set of events, $\mathcal{E}$. 
+  \item Thematic relations: A thematic relation is a tuple, $\left\langle x, y, \theta\right\rangle\in \Theta$ consisting of one event, $x\in\mathcal{E}$ and an individual, $y\in\mathcal{D}$ and a theta role, $\theta\in\{\textsc{Agent}, \textsc{Patient}\}$.
+  \item Properties: A property is a tuple of an atom paired with a set of individuals or events. The atoms in the tuple are members of the set of properties, $\mathcal{P}$.\footnote{This is a bit odd, but it is a way to allow a word to refer to the same property across scenarios, even as that property has different members}
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Example scenario}
+\begin{align*}
+  \langle&\left\{j, m, p\right\}, \\
+         &\{e_1, e_2\}, \\
+    &\left\{
+      \left\langle e_1, j, \textsc{Agent} \right\rangle, \left\langle e_1, m, \textsc{Patient} \right\rangle 
+    \left\langle e_2, j, \textsc{Agent} \right\rangle, \left\langle e_1, p, \textsc{Patient} \right\rangle \right\} \\
+    &\left\{ \left\langle S, \left\{ e_1, e_2 \right\} \right\rangle\right\}\rangle
+\end{align*}
+
+Here there are three individuals, and two events occuring (to which the property $S$ applies). 
+The agent of both events is $j$ while $m$ is the patient of the first event and $p$ the patient of the second. 
+
+The scenario refers to one where ``John saw Mary and John saw Phil'' is true or other sentences (e.g. ``John saw Mary'', ``Someone saw someone'', ``Someone saw at least two people'', etc\ldots).
+\end{frame}
+
+
+\section{Language of thought}
+\begin{frame}[fragile]
+  \frametitle{Language of thought}
+  We define a simple language of thought which can be evaluated relative to a scenario. 
+      \begin{small}
+\begin{align*}
+  \langle&\left\{John, Mary\right\}, \\
+         &\{e_1, e_2\}, \\
+    &\left\{
+      \left\langle e_1, m, \textsc{Agent} \right\rangle, \left\langle e_1, m, \textsc{Patient} \right\rangle 
+    \left\langle e_2, j, \textsc{Agent} \right\rangle, \left\langle e_1, m, \textsc{Patient} \right\rangle \right\} \\
+    &\left\{ \left\langle Red, \left\{ j \right\} \right\rangle, \left\langle Blue, \left\{ j, m\right\} \right\rangle \right\}\rangle
+\end{align*}
+\vspace{-1em}
+    \begin{itemize}
+      \item \lstinline{some(x,all_e,AgentOf(a_John, x))}
+        $\rightarrow$ "John is the agent of an event"
+      \item \lstinline{every(x,p_Red(x),p_Blue(x))}
+        $\rightarrow$ "Every red thing is blue."
+      \item \begin{tiny}\lstinline{~every(x,some(y,all_e,AgentOf(y, x)), some(y,all_e,PatientOf(x, y))) }\end{tiny}
+        $\rightarrow$ "Not every agent is a patient"
+    \end{itemize}
+  \end{small}
+\end{frame}
+
+
+\section{Montagovian Minimalist Grammars}
+\begin{frame}
+\frametitle{Montagovian Minimalist Grammars}
+We define each lexical item of Montagovian MG as tuple consisting of:
+\begin{itemize}
+  \item The word
+  \item The features of the word (including both selectors and selectees)
+  \item A lambda expression 
+\end{itemize}
+\end{frame}
+%Given our logic and semantic models, we need a way to connect it to natural language.
+%We can do this with Minimalist Grammars by attaching simple lambda expressions to each lexical entry (a similar approach could be done for CCG). 
+%As for movement, this can be handled in various ways (c.f. \cite{kobele_importing_2012} for one way)
+%
+%
+%In principle, these could be maximally unconstrained. 
+%However, the interest of this thesis is to describe precisely what constraints are necessary to learn language. 
+%
+\begin{frame}
+  \frametitle{Meta-grammars}
+
+For example, the following meta-grammar only allows grammars which have proper names and intransitive verbs. 
+Here, I'll write the changable parts of a meta-grammar in {\color{red} red}.
+
+\begin{itemize}
+  \item \lex{\color{red} $w$}{d}{\color{red} e}\hspace{2em}
+    A word, $w$  which has a single feature (showing its type \texttt{d}) and whose lambda expression \emph{must} be a atomic individual.
+\item \lex{\color{red}$w$}{=d v}{\lstinline{lambda e x (some(y,}{\color{red}\lstinline{S}}\lstinline{(y), AgentOf(y, x))}} 
+
+    A word, $w$ which has a two features (it takes a \texttt{d} as a complement and is itself of type \texttt{v}) and whose lambda expression requires there to be an event with property $S$ such that its complement is the agent.
+\end{itemize}
+\end{frame}
+%As such, I will write \textbf{meta-grammars} which define possible lexical entries under some theory. 
+%Eventually it might be nice to formally describe how these are written, but for now I will write them informally. 
+%
+\begin{frame}
+  \frametitle{Transitive verbs}
+\begin{center}
+  \begin{footnotesize}
+  \lex{$w$}{d=~=d~v}{\lstinline{lambda e y(lambda e x(some(z,}{\color{red} \lstinline{S}}\lstinline{(z), AgentOf(z,x)&PatientOf(z, y)}}
+  \end{footnotesize}
+\end{center}
+\end{frame}
+%\section{An example}
+%The following section outlines a way of putting this all together and outlines possible learning pressures (e.g. potential functions to optimize grammars with).
+%
+%Let our grammars be restricted to the following meta-grammar:
+%
+%
+%This is a simple meta-grammar that allows sentences consisting of a proper name, a transitive verb and a proper name and only in SVO order. 
+%In principle, one could allow meta-grammars that allow exclusively \lex{w}{d= =d v}{\lambda yx. P(x, y)} or exclusively \lex{w}{=d =d v}{\lambda yx. P(x, y)}, providing a dumb Principles and Parameters approach with a parameter switching between SOV and SVO.
+%
+\begin{frame}
+  \frametitle{Conceptual universe and alphabet}
+  %Assume that the MG has the following alphabet: $\left\{\text{John, Mary, Phil, Sue, sees, hears}\right\}$
+
+  %The space of possible concepts are following individuals, $\{j,m,p,s\}$ and a set of properties, $\left\{S, H\right\}$.
+\end{frame}
+%We then also define an alphabet, $\left\{\text{John, Mary, Phil, Sue, sees, hears}\right\}$, and our concepts for our meta-grammars.
+%The concepts are the following individuals, $\{j,m,p,s\}$ and a set of properties, $\left\{S, H\right\}$.
+%
+%Given this meta-grammar, alphabet and conceptual repertoire, the possible grammars are defined by the power set of all possible lexical entries. 
+%We call the set of possible lexical entries, $\Lambda$ and the set of possible grammars is thus $\mathcal{P}(\Lambda)$.
+%The elements of $\Lambda$ for this problem are the following\footnote{I'm using $S(x)$ as a shorthand for $\lambda yx. \exists y S(y) \land \textsc{Agent}(z,x) \land \textsc{Patient}(z, y)$}
+
+\begin{frame}
+
+\begin{tiny}
+\begin{multicols}{3}
+\begin{itemize}
+  \item \lex{John}{d}{j}
+  \item \lex{John}{d}{m}
+  \item \lex{John}{d}{p}
+  \item \lex{John}{d}{s}
+
+  \item \lex{Mary}{d}{j}
+  \item \lex{Mary}{d}{m}
+  \item \lex{Mary}{d}{p}
+  \item \lex{Mary}{d}{s}
+
+  \item \lex{Phil}{d}{j}
+  \item \lex{Phil}{d}{m}
+  \item \lex{Phil}{d}{p}
+  \item \lex{Phil}{d}{s}
+
+  \item \lex{Sue}{d}{j}
+  \item \lex{Sue}{d}{m}
+  \item \lex{Sue}{d}{p}
+  \item \lex{Sue}{d}{s}
+
+
+  \item \lex{sees}{d}{j}
+  \item \lex{sees}{d}{m}
+  \item \lex{sees}{d}{p}
+  \item \lex{sees}{d}{s}
+  \item \lex{sees}{d=~=d~v}{lambda e y(lambda e x(S(x, y)}
+  \item \lex{sees}{d=~=d~v}{lambda e y(lambda e x(H(x, y)}
+
+  \item \lex{hears}{d}{j}
+  \item \lex{hears}{d}{m}
+  \item \lex{hears}{d}{p}
+  \item \lex{hears}{d}{s}
+  \item \lex{hears}{d=~=d~v}{lambda e y(lambda e x(S(x, y)}
+  \item \lex{hears}{d=~=d~v}{lambda e y(lambda e x(H(x, y)}
+
+  \item \lex{Phil}{d=~=d~v}{lambda e y(lambda e x(S(x, y)}
+  \item \lex{John}{d=~=d~v}{lambda e y(lambda e x(S(x, y)}
+  \item \lex{Mary}{d=~=d~v}{lambda e y(lambda e x(S(x, y)}
+  \item \lex{Sue}{d=~=d~v}{lambda e y(lambda e x(S(x, y)}
+  \item \lex{Phil}{d=~=d~v}{lambda e y(lambda e x(H(x, y)}
+  \item \lex{John}{d=~=d~v}{lambda e y(lambda e x(H(x, y)}
+  \item \lex{Mary}{d=~=d~v}{lambda e y(lambda e x(H(x, y)}
+  \item \lex{Sue}{d=~=d~v}{lambda e y(lambda e x(H(x, y)}
+\end{itemize}
+\end{multicols}
+\end{tiny}\footnote{I'm using $S(x)$ as a shorthand for  \tiny\lstinline{lambda e y(lambda e x(some(z,S(z), AgentOf(z,x)&PatientOf(z, y)}}
+
+
+\end{frame}
+%
+%
+%
+\begin{frame}
+\frametitle{Learning a grammar}
+Learning a lexicon, then, consists of identifying the right subset in $\mathcal{P}(\Lambda)$.
+\vspace{1em}
+\begin{tabular}{ccc}
+  \toprule
+  Provided string & Minimal situation & Situation provided to model\\ 
+  \midrule
+  John sees Mary & $\left\langle\left\{j, m\right\}, \left\{\left\langle S, \left\{\left\langle j, m \right\rangle\right\}\right\rangle\right\}\right\rangle$ &
+  $\left\langle\left\{j, m, p, s\right\}, \left\{\left\langle S, \left\{\left\langle j, m \right\rangle, \left\langle p, s \right\rangle\right\}\right\rangle\right\}\right\rangle$
+  \\
+  Phil sees Sue & $\left\langle\left\{p, s\right\}, \left\{\left\langle S, \left\{\left\langle p, s \right\rangle\right\}\right\rangle\right\}\right\rangle$ &
+  $\left\langle\left\{j, m, p, s\right\}, \left\{\left\langle S, \left\{\left\langle j, m \right\rangle, \left\langle p, s \right\rangle\right\}\right\rangle\right\}\right\rangle$
+  \\
+  \bottomrule
+\end{tabular}
+\end{frame}
+%\caption{An example set of two sentences paired with different scenarios.\label{tab:data}
+%  I've elided the representation to make it easier to represent: $\left\langle\left\{j, m\right\}, \left\{\left\langle S, \left\{\left\langle j, m \right\rangle\right\}\right\rangle\right\}\right\rangle$ is properly rendered as 
+%  $\left\langle\left\{j, m\right\}, \left\{e_1\right\}, \left\{\left\langle e_1, j, \textsc{Agent}\right\rangle,\left\langle e_1, p, \textsc{Patient}\right\rangle\right\}, \left\{\left\langle S, \left\{e_1 \right\}\right\rangle \right\}\right\rangle$
+%  }
+%\end{table}
+%
+%\begin{tcolorbox}[colback=red!5!white,colframe=red!75!black,title=Solvable situation sets]
+%
+\begin{frame}
+  \frametitle{Solveable datasets}
+Some situations are solvable for a certain meta-grammar, while others are not. 
+We say a situation is solveable such that there exists a lexicon such that: 
+
+\begin{enumerate}[i.]
+  \item Every sentence has a parse. 
+  \item Every sentence can be made true in its paired scenario.
+\end{enumerate}
+
+Curiously, there is reason to suspect that the input of a child could very often be unsolvable (c.f. creolisation and home-sign) and that linguistic structure would be imposed by finding the best possible solution.
+\end{frame}
+%For example, there would be no way to learn ditransitive verbs with this meta-grammar. 
+%\end{tcolorbox}
+%
+%To solve this dataset, one possible lexicon could be to simply take the language defined by $\Lambda$, that is, all possible lexical entries at once. 
+%While this grammar will produce parses for every sentence, and every sentence will have a parse which is true in a scenario (this will always be true provided that the model is \textbf{solvable}).
+%The grammar will however have enormous syntactic ambiguity and will not be an ideal solution.
+%
+
+\begin{frame}
+  \begin{columns}
+  \begin{column}{0.5\textwidth}
+  \begin{itemize}
+    \item \lex{sees}{d=~=d~v}{lambda e y (lambda e x (S(x, y)))}
+    \item \lex{John}{d}{j}
+    \item \lex{Mary}{d}{m}
+    \item \lex{Phil}{d}{p}
+    \item \lex{Sue}{d}{s}
+  \end{itemize}
+  {Grammar 1}
+  \end{column}
+  \begin{column}{0.5\textwidth}
+  \begin{itemize}
+    \item \lex{sees}{d=~=d~v}{lambda e y (lambda e x (S(x, y)))}
+    \item \lex{Phil}{d}{j}
+    \item \lex{Sue}{d}{m}
+    \item \lex{John}{d}{p}
+    \item \lex{Mary}{d}{s}
+  \end{itemize}
+  {Grammar 2}
+  \end{column}
+
+  \end{columns}
+\end{frame}
+%
+%While this data would not be sufficient to allow us to narrow down the grammar to a single solution, it does eliminate $2^36-2$ grammars. 
+%If we have one more scenario in which Phil is referred to while John is not present or vice versa, or the same thing with Sue and Mary, then we would be able to deduce the actual target grammar.
+%
+\begin{frame}
+\frametitle{Learning pressures}
+\begin{itemize}
+  \item \textbf{Minimise lexical ambiguity!} Try to minimise the number of lexical items which share the same lemma.
+  \item \textbf{Maximise truth!} Try to make the maximal number of sentences true in their scenarios.
+  \item \textbf{Maximise parseability!} Try to find a valid parse for every sentence (n.b.\ probably need a mechanism for choosing the closest possible parse to do creolisation).
+\end{itemize}
+\end{frame}
+%
+%
+%
+%
+%
+
+%\printbibliography
+
+\end{document}
