@@ -1,5 +1,7 @@
 /target
 ## Core latex/pdflatex auxiliary files:
+*.bcf-SAVE-ERROR
+*.pdf
 *.aux
 *.lof
 *.log
