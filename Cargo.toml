@@ -1,5 +1,5 @@
 [package]
-name = "simple_semantics"
+name = "simple-semantics"
 version = "0.1.0"
 edition = "2021"
 
