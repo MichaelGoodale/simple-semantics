@@ -53,7 +53,7 @@ impl Scenario {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct LabelledScenarios {
     scenarios: Vec<Scenario>,
     property_labels: HashMap<String, PropertyLabel, RandomState>,
