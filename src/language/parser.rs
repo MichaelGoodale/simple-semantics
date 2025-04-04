@@ -464,7 +464,12 @@ where
     )
 }
 
-fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>, extra::Err<Rich<'a, char>>>
+fn language_parser<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E>
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>
+        + LabelError<'src, &'src str, &'static str>,
 {
     let ent = entity();
     let var = variable();
@@ -572,14 +577,24 @@ fn language_parser<'a>() -> impl Parser<'a, &'a str, TypedParseTree<'a>, extra::
         ))
         .padded()
     });
-    truth_value.then_ignore(end())
+    truth_value
 }
 
+type ExtraType<'a> = extra::Full<Rich<'a, char>, extra::SimpleState<LabelledScenarios>, ()>;
+
+///A parsing function that can be used to incorpate LOT parsers into other parsers.
+pub fn lot_parser<'a>() -> impl Parser<'a, &'a str, (LambdaPool<Expr>, LambdaExprRef), ExtraType<'a>>
+{
+    language_parser::<ExtraType>().map_with(|x, e| x.to_pool(e.state()))
+}
+
+///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
 pub fn parse_executable(
     s: &str,
     labels: &mut LabelledScenarios,
 ) -> anyhow::Result<LanguageExpression> {
-    let (mut pool, root) = language_parser()
+    let (mut pool, root) = language_parser::<extra::Err<Rich<char>>>()
+        .then_ignore(end())
         .parse(s)
         .into_result()
         .map_err(|x| {
@@ -739,7 +754,10 @@ mod tests {
             property_labels: HashMap::default(),
             free_variables: HashMap::default(),
         };
-        let (parse, root) = language_parser().parse(s).unwrap().to_pool(&mut labels);
+        let (parse, root) = language_parser::<extra::Err<Rich<char>>>()
+            .parse(s)
+            .unwrap()
+            .to_pool(&mut labels);
         let LanguageExpression { pool, start } = parse.into_pool(root).unwrap();
         (pool, start)
     }
@@ -786,7 +804,7 @@ mod tests {
             property_labels,
             free_variables: HashMap::default(),
         };
-        let (pool, root) = language_parser()
+        let (pool, root) = language_parser::<extra::Err<Rich<char>>>()
             .parse(statement)
             .into_result()
             .map_err(|x| {
@@ -798,6 +816,23 @@ mod tests {
                 )
             })?
             .to_pool(&mut labels);
+
+        assert_eq!(pool, gold_pool);
+        assert_eq!(root, LambdaExprRef(gold_root));
+
+        //try again with the context-sensitive parser
+        let mut label_state = extra::SimpleState(labels.clone());
+        let (pool, root) = lot_parser()
+            .parse_with_state(statement, &mut label_state)
+            .into_result()
+            .map_err(|x| {
+                anyhow::Error::msg(
+                    x.into_iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            })?;
 
         assert_eq!(pool, gold_pool);
         assert_eq!(root, LambdaExprRef(gold_root));
