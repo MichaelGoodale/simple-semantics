@@ -423,6 +423,7 @@ impl ExprPool {
 }
 
 mod parser;
+pub use parser::lot_parser;
 pub use parser::parse_executable;
 
 mod lambda_implementation;

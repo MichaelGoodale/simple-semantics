@@ -46,7 +46,7 @@ pub enum LambdaExpr<T> {
     LanguageOfThoughtExpr(T),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct LambdaPool<T: LambdaLanguageOfThought>(Vec<LambdaExpr<T>>);
 
 impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
