@@ -478,17 +478,16 @@ where
 {
     let ent = entity();
     let var = variable();
-    let entity_or_variable = choice((ent, var)).padded();
+    let entity_or_variable = choice((ent, var));
 
-    let true_or_false = bool_literal().padded();
-    let possible_sets = sets().padded();
+    let true_or_false = bool_literal();
+    let possible_sets = sets();
     let truth_value = recursive(|expr| {
         let atom = true_or_false
             .or(binary_operation())
             .or(properties())
             .or(variable())
-            .or(expr.clone().delimited_by(just('('), just(')')))
-            .padded();
+            .or(expr.clone().delimited_by(just('('), just(')')));
 
         let neg = just("~").repeated().foldr(atom, |_, b| {
             let new_type = b.1.clone();
@@ -528,9 +527,9 @@ where
         .then_ignore(just('('))
         .then(just_variable())
         .then_ignore(just(','))
-        .then(expr.clone())
+        .then(expr.clone().padded())
         .then_ignore(just(','))
-        .then(expr.clone())
+        .then(expr.clone().padded())
         .then_ignore(just(')'))
         .map(|(((quantifier, variable), restrictor), subformula)| {
             TypedParseTree(
@@ -580,7 +579,6 @@ where
             entity_or_variable,
             possible_sets,
         ))
-        .padded()
     });
     truth_value
 }
