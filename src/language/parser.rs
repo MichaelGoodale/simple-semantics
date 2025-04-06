@@ -9,8 +9,13 @@ use crate::{
     Entity, LabelledScenarios,
 };
 use anyhow::bail;
-use chumsky::{extra::ParserExtra, label::LabelError, text::TextExpected, util::MaybeRef};
-use chumsky::{prelude::*, text::whitespace};
+use chumsky::prelude::*;
+use chumsky::{
+    extra::ParserExtra,
+    label::LabelError,
+    text::{inline_whitespace, TextExpected},
+    util::MaybeRef,
+};
 
 use super::{BinOp, LanguageExpression, Quantifier, Variable};
 
@@ -540,9 +545,9 @@ where
         });
 
         let lambda = just("lambda")
-            .then(whitespace().at_least(1))
+            .then(inline_whitespace().at_least(1))
             .ignore_then(core_type_parser().labelled("type label"))
-            .then_ignore(whitespace().at_least(1))
+            .then_ignore(inline_whitespace().at_least(1))
             .then(text::ident().padded().labelled("lambda variable"))
             .then(expr.clone().delimited_by(just('('), just(')')))
             .map(|((lambda_type, var_name), body)| {
