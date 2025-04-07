@@ -66,21 +66,47 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         (self.pool, self.root)
     }
 
-    pub fn merge(mut self, other: Self) -> Self {
+    pub fn merge(mut self, other: Self) -> Option<Self> {
+        let self_type = self.pool.get_type(self.root).expect("malformed type");
+        let other_type = other.pool.get_type(other.root).expect("malformed type");
+
+        let self_subformula = if self_type.can_apply(&other_type) {
+            true
+        } else if other_type.can_apply(&self_type) {
+            false
+        } else {
+            return None;
+        };
+
         let shift_n = self.pool.0.len();
         let (mut other_pool, mut other_root) = other.into();
-        T::alpha_reduce(&mut self.pool, &mut other_pool);
+
+        //To make sure that the rebound fresh variables are identical.
+        if self_subformula {
+            T::alpha_reduce(&mut self.pool, &mut other_pool);
+        } else {
+            T::alpha_reduce(&mut other_pool, &mut self.pool);
+        }
+
         let remap: Vec<_> = (0..other_pool.0.len()).map(|x| x + shift_n).collect();
         other_pool.0.iter_mut().for_each(|x| x.remap_refs(&remap));
         other_root.0 += shift_n as u32;
 
         self.pool.0.append(&mut other_pool.0);
-        self.root = self.pool.add(LambdaExpr::Application {
-            subformula: self.root,
-            argument: other_root,
+
+        self.root = self.pool.add(if self_subformula {
+            LambdaExpr::Application {
+                subformula: self.root,
+                argument: other_root,
+            }
+        } else {
+            LambdaExpr::Application {
+                subformula: other_root,
+                argument: self.root,
+            }
         });
 
-        self
+        Some(self)
     }
 
     pub fn reduce(&mut self) -> anyhow::Result<()> {
@@ -197,6 +223,19 @@ where
                 let argument_type = self.check_type_clash(*argument)?;
                 let subformula_type = self.check_type_clash(*subformula)?;
                 subformula_type.apply(&argument_type)
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type()),
+        }
+    }
+
+    fn get_type(&self, x: LambdaExprRef) -> anyhow::Result<LambdaType> {
+        match self.get(x) {
+            LambdaExpr::BoundVariable(_, x)
+            | LambdaExpr::FreeVariable(_, x)
+            | LambdaExpr::Lambda(.., x) => Ok(x.clone()),
+            LambdaExpr::Application { subformula, .. } => {
+                let subformula_type = self.get_type(*subformula)?;
+                subformula_type.rhs()
             }
             LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type()),
         }
@@ -615,8 +654,16 @@ mod test {
             )
             .unwrap();
 
-        let phi = every.merge(man);
-        let mut phi = phi.merge(sleeps);
+        let phi = every.clone().merge(man.clone()).unwrap();
+        let mut phi = phi.merge(sleeps.clone()).unwrap();
+        phi.reduce()?;
+        let pool = phi.into_pool()?;
+        assert_eq!(
+            "every(x0,p0(x0),some(x1,all_e,(AgentOf(x0,x1))&(p1(x1))))",
+            pool.to_string()
+        );
+        let phi = man.merge(every).unwrap();
+        let mut phi = sleeps.merge(phi).unwrap();
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(

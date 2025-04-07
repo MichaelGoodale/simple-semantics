@@ -69,7 +69,7 @@ impl LambdaType {
         )
     }
 
-    fn can_apply(&self, other: &Self) -> bool {
+    pub fn can_apply(&self, other: &Self) -> bool {
         match self {
             LambdaType::T | LambdaType::E => false,
             LambdaType::Composition(lhs, _) => **lhs == *other,
