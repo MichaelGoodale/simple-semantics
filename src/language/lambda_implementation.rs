@@ -105,3 +105,48 @@ impl LambdaLanguageOfThought for Expr {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
+
+    use crate::{lot_parser, LabelledScenarios};
+    use chumsky::prelude::*;
+
+    #[test]
+    fn type_checking() -> anyhow::Result<()> {
+        let labels = LabelledScenarios {
+            scenarios: vec![],
+            actor_labels: HashMap::default(),
+            property_labels: HashMap::default(),
+            free_variables: HashMap::default(),
+        };
+        let mut label_state = extra::SimpleState(labels.clone());
+        let parser = lot_parser().then_ignore(end());
+        let john = parser.parse_with_state("a_j", &mut label_state).unwrap();
+        let likes = parser
+            .parse_with_state(
+                "lambda <e,<e,t>> x ((lambda <e,t> y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & p_likes(e)))))",
+                &mut label_state,
+            )
+            .unwrap();
+        let mary = parser.parse_with_state("a_m", &mut label_state).unwrap();
+        let phi = mary.clone().merge(likes.clone()).unwrap();
+        let mut phi = phi.merge(john.clone()).unwrap();
+        phi.reduce()?;
+        let pool = phi.into_pool()?;
+        assert_eq!(
+            "some(x0,all_e,((AgentOf(x0,a1))&(PatientOf(x0,a0)))&(p0(x0)))",
+            pool.to_string()
+        );
+        let phi = likes.merge(mary).unwrap();
+        let mut phi = john.merge(phi).unwrap();
+        phi.reduce()?;
+        let pool = phi.into_pool()?;
+        assert_eq!(
+            "some(x0,all_e,((AgentOf(x0,a1))&(PatientOf(x0,a0)))&(p0(x0)))",
+            pool.to_string()
+        );
+        Ok(())
+    }
+}
