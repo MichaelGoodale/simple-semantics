@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug};
 use crate::{
     lambda::{
         types::{core_type_parser, LambdaType},
-        Bvar, LambdaExpr, LambdaExprRef, LambdaPool,
+        Bvar, LambdaExpr, LambdaExprRef, LambdaPool, RootedLambdaPool,
     },
     language::{Constant, Expr, ExprRef, MonOp},
     Entity, LabelledScenarios,
@@ -193,12 +193,12 @@ impl<'src> TypedParseTree<'src> {
         pool.add(expr)
     }
 
-    fn to_pool(&self, labels: &mut LabelledScenarios) -> (LambdaPool<Expr>, LambdaExprRef) {
+    fn to_pool(&self, labels: &mut LabelledScenarios) -> RootedLambdaPool<Expr> {
         let mut pool = LambdaPool::new();
 
         let mut var_labels = VariableContext::default();
         let root = self.add_to_pool(&mut pool, labels, &mut var_labels, 0);
-        (pool, root)
+        RootedLambdaPool::new(pool, root)
     }
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -586,8 +586,7 @@ where
 type ExtraType<'a> = extra::Full<Rich<'a, char>, extra::SimpleState<LabelledScenarios>, ()>;
 
 ///A parsing function that can be used to incorpate LOT parsers into other parsers.
-pub fn lot_parser<'a>() -> impl Parser<'a, &'a str, (LambdaPool<Expr>, LambdaExprRef), ExtraType<'a>>
-{
+pub fn lot_parser<'a>() -> impl Parser<'a, &'a str, RootedLambdaPool<Expr>, ExtraType<'a>> {
     language_parser::<ExtraType>().map_with(|x, e| x.to_pool(e.state()))
 }
 
@@ -596,7 +595,7 @@ pub fn parse_executable(
     s: &str,
     labels: &mut LabelledScenarios,
 ) -> anyhow::Result<LanguageExpression> {
-    let (mut pool, root) = language_parser::<extra::Err<Rich<char>>>()
+    let mut pool = language_parser::<extra::Err<Rich<char>>>()
         .then_ignore(end())
         .parse(s)
         .into_result()
@@ -609,8 +608,8 @@ pub fn parse_executable(
             )
         })?
         .to_pool(labels);
-    let root = pool.reduce(root)?;
-    pool.into_pool(root)
+    pool.reduce()?;
+    pool.into_pool()
 }
 
 #[cfg(test)]
@@ -683,7 +682,8 @@ mod tests {
             let (pool, root) = binary_operation::<extra::Err<Simple<_>>>()
                 .parse(s)
                 .unwrap()
-                .to_pool(&mut labels);
+                .to_pool(&mut labels)
+                .into();
             let pool = pool.into_pool(root)?;
             assert_eq!(pool.pool.0, result);
         }
@@ -760,7 +760,8 @@ mod tests {
         let (parse, root) = language_parser::<extra::Err<Rich<char>>>()
             .parse(s)
             .unwrap()
-            .to_pool(&mut labels);
+            .to_pool(&mut labels)
+            .into();
         let LanguageExpression { pool, start } = parse.into_pool(root).unwrap();
         (pool, start)
     }
@@ -818,7 +819,8 @@ mod tests {
                         .join("\n"),
                 )
             })?
-            .to_pool(&mut labels);
+            .to_pool(&mut labels)
+            .into();
 
         assert_eq!(pool, gold_pool);
         assert_eq!(root, LambdaExprRef(gold_root));
@@ -835,7 +837,8 @@ mod tests {
                         .collect::<Vec<_>>()
                         .join("\n"),
                 )
-            })?;
+            })?
+            .into();
 
         assert_eq!(pool, gold_pool);
         assert_eq!(root, LambdaExprRef(gold_root));

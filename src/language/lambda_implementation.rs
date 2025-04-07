@@ -1,5 +1,7 @@
-use super::{BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp};
-use crate::lambda::{types::LambdaType, LambdaExprRef, LambdaLanguageOfThought};
+use super::{BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Variable};
+use crate::lambda::{
+    types::LambdaType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
+};
 
 impl LambdaLanguageOfThought for Expr {
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
@@ -74,6 +76,32 @@ impl LambdaLanguageOfThought for Expr {
         LanguageExpression {
             pool: ExprPool(pool),
             start: ExprRef(root.0),
+        }
+    }
+
+    fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>) {
+        let mut max_var = 0;
+        for x in a.iter_mut() {
+            match x {
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
+                | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
+                    let v = v.0;
+                    if v > max_var {
+                        max_var = v;
+                    }
+                }
+                _ => (),
+            }
+        }
+
+        for x in b.iter_mut() {
+            match x {
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
+                | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
+                    *v = Variable(max_var + v.0 + 1);
+                }
+                _ => (),
+            }
         }
     }
 }

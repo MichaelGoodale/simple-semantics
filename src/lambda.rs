@@ -14,6 +14,9 @@ pub trait LambdaLanguageOfThought {
     type Pool;
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef>;
     fn remap_refs(&mut self, remap: &[usize]);
+    fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>)
+    where
+        Self: Sized;
     fn get_type(&self) -> LambdaType;
     fn to_pool(pool: Vec<Self>, root: LambdaExprRef) -> Self::Pool
     where
@@ -31,6 +34,8 @@ impl LambdaLanguageOfThought for () {
         unimplemented!()
     }
 
+    fn alpha_reduce(_a: &mut LambdaPool<Self>, _b: &mut LambdaPool<Self>) {}
+
     fn to_pool(_: Vec<Self>, _: LambdaExprRef) -> Self::Pool {}
 }
 
@@ -44,6 +49,49 @@ pub enum LambdaExpr<T> {
         argument: LambdaExprRef,
     },
     LanguageOfThoughtExpr(T),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct RootedLambdaPool<T: LambdaLanguageOfThought> {
+    pool: LambdaPool<T>,
+    root: LambdaExprRef,
+}
+
+impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
+    pub fn new(pool: LambdaPool<T>, root: LambdaExprRef) -> Self {
+        RootedLambdaPool { pool, root }
+    }
+
+    pub fn into(self) -> (LambdaPool<T>, LambdaExprRef) {
+        (self.pool, self.root)
+    }
+
+    pub fn merge(mut self, other: Self) -> Self {
+        let shift_n = self.pool.0.len();
+        let (mut other_pool, mut other_root) = other.into();
+        T::alpha_reduce(&mut self.pool, &mut other_pool);
+        let remap: Vec<_> = (0..other_pool.0.len()).map(|x| x + shift_n).collect();
+        other_pool.0.iter_mut().for_each(|x| x.remap_refs(&remap));
+        other_root.0 += shift_n as u32;
+
+        self.pool.0.append(&mut other_pool.0);
+        self.root = self.pool.add(LambdaExpr::Application {
+            subformula: self.root,
+            argument: other_root,
+        });
+
+        self
+    }
+
+    pub fn reduce(&mut self) -> anyhow::Result<()> {
+        let root = self.pool.reduce(self.root)?;
+        self.root = root;
+        Ok(())
+    }
+
+    pub fn into_pool(self) -> anyhow::Result<T::Pool> {
+        self.pool.into_pool(self.root)
+    }
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
@@ -86,6 +134,10 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
         let idx = self.0.len();
         self.0.push(expr);
         LambdaExprRef(idx.try_into().expect("Too many exprs in the pool"))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut LambdaExpr<T>> {
+        self.0.iter_mut()
     }
 }
 
@@ -268,10 +320,12 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::{
         language::{BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
-        Entity,
+        Entity, LabelledScenarios,
     };
 
     fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
@@ -528,6 +582,46 @@ mod test {
                 LambdaExpr::FreeVariable(32, LambdaType::E),
                 LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::from_string("<e,e>")?)
             ])
+        );
+        Ok(())
+    }
+
+    use crate::language::lot_parser;
+    use chumsky::prelude::*;
+
+    #[test]
+    fn test_root_and_merger() -> anyhow::Result<()> {
+        let labels = LabelledScenarios {
+            scenarios: vec![],
+            actor_labels: HashMap::default(),
+            property_labels: HashMap::default(),
+            free_variables: HashMap::default(),
+        };
+        let mut label_state = extra::SimpleState(labels.clone());
+        let parser = lot_parser().then_ignore(end());
+        let man = parser
+            .parse_with_state("lambda <e,t> x (p_man(x))", &mut label_state)
+            .unwrap();
+        let sleeps = parser
+            .parse_with_state(
+                "lambda <e,t> x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))",
+                &mut label_state,
+            )
+            .unwrap();
+        let every = parser
+            .parse_with_state(
+                "lambda <<e,t>,<<e,t>,t>> p(lambda <<e,t>, t> q(every(x, p(x), q(x))))",
+                &mut label_state,
+            )
+            .unwrap();
+
+        let phi = every.merge(man);
+        let mut phi = phi.merge(sleeps);
+        phi.reduce()?;
+        let pool = phi.into_pool()?;
+        assert_eq!(
+            "every(x0,p0(x0),some(x1,all_e,(AgentOf(x0,x1))&(p1(x1))))",
+            pool.to_string()
         );
         Ok(())
     }
