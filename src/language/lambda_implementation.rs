@@ -80,27 +80,33 @@ impl LambdaLanguageOfThought for Expr {
     }
 
     fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>) {
-        let mut max_var = 0;
+        let mut max_var = None;
         for x in a.iter_mut() {
             match x {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
                 | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
-                    let v = v.0;
-                    if v > max_var {
-                        max_var = v;
+                    if let Some(max_var) = max_var.as_mut() {
+                        let v = v.0;
+                        if v > *max_var {
+                            *max_var = v;
+                        }
+                    } else {
+                        max_var = Some(v.0);
                     }
                 }
                 _ => (),
             }
         }
 
-        for x in b.iter_mut() {
-            match x {
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
-                | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
-                    *v = Variable(max_var + v.0 + 1);
+        if let Some(max_var) = max_var {
+            for x in b.iter_mut() {
+                match x {
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
+                    | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
+                        *v = Variable(max_var + v.0 + 1);
+                    }
+                    _ => (),
                 }
-                _ => (),
             }
         }
     }
