@@ -78,8 +78,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
             return None;
         };
 
-        let shift_n = self.pool.0.len();
-        let (mut other_pool, mut other_root) = other.into();
+        let (mut other_pool, other_root) = other.into();
 
         //To make sure that the rebound fresh variables are identical.
         if self_subformula {
@@ -87,12 +86,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         } else {
             T::alpha_reduce(&mut other_pool, &mut self.pool);
         }
-
-        let remap: Vec<_> = (0..other_pool.0.len()).map(|x| x + shift_n).collect();
-        other_pool.0.iter_mut().for_each(|x| x.remap_refs(&remap));
-        other_root.0 += shift_n as u32;
-
-        self.pool.0.append(&mut other_pool.0);
+        let other_root = self.pool.extend_pool(other_root, other_pool);
 
         self.root = self.pool.add(if self_subformula {
             LambdaExpr::Application {
@@ -118,12 +112,37 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
     pub fn into_pool(self) -> anyhow::Result<T::Pool> {
         self.pool.into_pool(self.root)
     }
+
+    pub fn bind_free_variable(
+        &mut self,
+        fvar: Fvar,
+        replacement: RootedLambdaPool<T>,
+    ) -> anyhow::Result<()> {
+        let (other_pool, other_root) = replacement.into();
+        let other_root = self.pool.extend_pool(other_root, other_pool);
+        self.pool.bind_free_variable(self.root, fvar, other_root)?;
+        self.root = self.pool.cleanup(self.root);
+        Ok(())
+    }
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct LambdaPool<T: LambdaLanguageOfThought>(Vec<LambdaExpr<T>>);
 
 impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
+    fn extend_pool(
+        &mut self,
+        mut other_root: LambdaExprRef,
+        mut other_pool: LambdaPool<T>,
+    ) -> LambdaExprRef {
+        let shift_n = self.0.len();
+        let remap: Vec<_> = (0..other_pool.0.len()).map(|x| x + shift_n).collect();
+        other_pool.0.iter_mut().for_each(|x| x.remap_refs(&remap));
+        other_root.0 += shift_n as u32;
+        self.0.append(&mut other_pool.0);
+        other_root
+    }
+
     pub fn into_pool(self, root: LambdaExprRef) -> anyhow::Result<T::Pool> {
         let processed_pool = self
             .0
@@ -241,6 +260,27 @@ where
             }
             LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type()),
         }
+    }
+
+    fn bind_free_variable(
+        &mut self,
+        root: LambdaExprRef,
+        fvar: Fvar,
+        replacement_root: LambdaExprRef,
+    ) -> anyhow::Result<()> {
+        //TODO: Add type checking here maybe.
+        let to_change = self
+            .bfs_from(root)
+            .filter_map(|(x, _)| match self.get(x) {
+                LambdaExpr::FreeVariable(var, _t) if *var == fvar => Some(x),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let new_argument = self.get(replacement_root).clone();
+        for x in to_change {
+            self.0[x.0 as usize] = new_argument.clone();
+        }
+        Ok(())
     }
 
     fn beta_reduce(&mut self, app: LambdaExprRef) -> anyhow::Result<()> {
@@ -666,6 +706,29 @@ mod test {
             "every(x0,p0(x0),some(x1,all_e,(AgentOf(x0,x1))&(p1(x1))))",
             pool.to_string()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn apply_free_variable() -> anyhow::Result<()> {
+        let labels = LabelledScenarios {
+            scenarios: vec![],
+            actor_labels: HashMap::default(),
+            property_labels: HashMap::default(),
+            free_variables: HashMap::default(),
+        };
+        let mut label_state = extra::SimpleState(labels.clone());
+        let parser = lot_parser().then_ignore(end());
+        let mut pool = parser
+            .parse_with_state("phi_t & True", &mut label_state)
+            .unwrap();
+
+        pool.bind_free_variable(
+            0,
+            parser.parse_with_state("False", &mut label_state).unwrap(),
+        )?;
+        dbg!(&pool);
+        assert_eq!("(False)&(True)", pool.into_pool()?.to_string());
         Ok(())
     }
 }
