@@ -182,11 +182,11 @@ impl<'src> TypedParseTree<'src> {
                 }
             }
             ParseTree::Lambda { body, var } => {
-                let lambda_type: LambdaType = (&self.1).try_into().unwrap();
-                variable_names.bind_lambda(var, lambda_depth + 1, lambda_type.lhs_clone().unwrap());
+                let arg_type: LambdaType = (&self.1).try_into().unwrap();
+                variable_names.bind_lambda(var, lambda_depth + 1, arg_type.clone());
                 let body = body.add_to_pool(pool, labels, variable_names, lambda_depth + 1);
                 variable_names.unbind(var);
-                LambdaExpr::Lambda(body, lambda_type)
+                LambdaExpr::Lambda(body, arg_type)
             }
             ParseTree::Variable(var) => variable_names.to_expr(var, labels, &self.1, lambda_depth),
         };
@@ -774,10 +774,11 @@ mod tests {
 
     fn check_lambdas(
         statement: &str,
+        lambda_type: &str,
         gold_pool: LambdaPool<Expr>,
         gold_root: u32,
     ) -> anyhow::Result<()> {
-        println!("{statement}");
+        print!("{statement}");
         let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
 
         properties.insert(1, vec![Entity::Actor(1)]);
@@ -822,6 +823,7 @@ mod tests {
             .to_pool(&mut labels)
             .into();
 
+        assert_eq!(pool.get_type(root)?, LambdaType::from_string(lambda_type)?);
         assert_eq!(pool, gold_pool);
         assert_eq!(root, LambdaExprRef(gold_root));
 
@@ -842,22 +844,25 @@ mod tests {
 
         assert_eq!(pool, gold_pool);
         assert_eq!(root, LambdaExprRef(gold_root));
+        println!(" is good!");
         Ok(())
     }
 
     #[test]
     fn parse_lambda() -> anyhow::Result<()> {
         check_lambdas(
-            "lambda <e,t> x(p_Red(x))",
+            "lambda e x (p_Red(x))",
+            "<e,t>",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::E),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(1), ExprRef(0))),
-                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::E),
             ]),
             2,
         )?;
         check_lambdas(
-            "lambda  <<e,t>,t> P  (lambda <e,t> x (P(x)))",
+            "lambda  <e,t> P  (lambda e x (P(x)))",
+            "<<e,t>, <e,t>>",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(1, LambdaType::et()),
                 LambdaExpr::BoundVariable(0, LambdaType::E),
@@ -865,13 +870,14 @@ mod tests {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
-                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::ett()),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
+                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et()),
             ]),
             4,
         )?;
         check_lambdas(
-            "lambda <<e,t>,t> P (P(a0))",
+            "lambda <e,t> P (P(a0))",
+            "<<e,t>,t>",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::et()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(0))),
@@ -879,12 +885,13 @@ mod tests {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::ett()),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
             ]),
             3,
         )?;
         check_lambdas(
             "~hey(lol)",
+            "t",
             LambdaPool::from(vec![
                 LambdaExpr::FreeVariable(0, LambdaType::et()),
                 LambdaExpr::FreeVariable(1, LambdaType::E),
@@ -898,7 +905,8 @@ mod tests {
         )?;
 
         check_lambdas(
-            "(lambda <<e,t>,t> P (P(a0)))(lambda <e,t> x (p_Red(x)))",
+            "(lambda <e,t> P (P(a0)))(lambda e x (p_Red(x)))",
+            "t",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::et()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(0))),
@@ -906,10 +914,10 @@ mod tests {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::ett()),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
                 LambdaExpr::BoundVariable(0, LambdaType::E),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(1), ExprRef(4))),
-                LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::E),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(6),
@@ -918,13 +926,14 @@ mod tests {
             7,
         )?;
         check_lambdas(
-            "lambda <t,<t,t>> phi (lambda <t,t> psi (phi & psi))",
+            "lambda t phi (lambda t psi (phi & psi))",
+            "<t,<t,t>>",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(1, LambdaType::T),
                 LambdaExpr::BoundVariable(0, LambdaType::T),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(0), ExprRef(1))),
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<t,t>")?),
-                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::from_string("<t,<t,t>>")?),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::T),
+                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::T),
             ]),
             4,
         )?;
@@ -964,7 +973,7 @@ mod tests {
             free_variables: HashMap::default(),
         };
         parse_executable(
-            "(lambda <<e,t>,t> P (P(a0)))(lambda <e,t> x (p_Red(x)))",
+            "(lambda <e,t> P (P(a0)))(lambda e x (p_Red(x)))",
             &mut labels,
         )?;
         Ok(())

@@ -212,27 +212,29 @@ where
     ///This function trusts that the subexpressions are all valid! For example if a lambda's body
     ///has the wrong type, it won't know.
     fn check_type_clash(&self, x: LambdaExprRef) -> anyhow::Result<LambdaType> {
-        match self.get(x) {
-            LambdaExpr::BoundVariable(_, x)
-            | LambdaExpr::FreeVariable(_, x)
-            | LambdaExpr::Lambda(.., x) => Ok(x.clone()),
-            LambdaExpr::Application {
-                subformula,
-                argument,
-            } => {
-                let argument_type = self.check_type_clash(*argument)?;
-                let subformula_type = self.check_type_clash(*subformula)?;
-                subformula_type.apply(&argument_type)
-            }
-            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type()),
+        if let LambdaExpr::Application {
+            subformula,
+            argument,
+        } = self.get(x)
+        {
+            let argument_type = self.get_type(*argument)?;
+            let subformula_type = self.get_type(*subformula)?;
+            subformula_type.apply(&argument_type)
+        } else {
+            bail!("Can't apply when its not an application!")
         }
     }
 
-    fn get_type(&self, x: LambdaExprRef) -> anyhow::Result<LambdaType> {
+    pub fn get_type(&self, x: LambdaExprRef) -> anyhow::Result<LambdaType> {
         match self.get(x) {
-            LambdaExpr::BoundVariable(_, x)
-            | LambdaExpr::FreeVariable(_, x)
-            | LambdaExpr::Lambda(.., x) => Ok(x.clone()),
+            LambdaExpr::BoundVariable(_, x) | LambdaExpr::FreeVariable(_, x) => Ok(x.clone()),
+            LambdaExpr::Lambda(s, x) => {
+                let result = self.get_type(*s);
+                Ok(LambdaType::Composition(
+                    Box::new(x.clone()),
+                    Box::new(result?),
+                ))
+            }
             LambdaExpr::Application { subformula, .. } => {
                 let subformula_type = self.get_type(*subformula)?;
                 subformula_type.rhs()
@@ -369,11 +371,8 @@ mod test {
 
     fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
         Ok([
-            LambdaExpr::Lambda(
-                LambdaExprRef(pos + 1),
-                LambdaType::from_string("<e, <e,e>>")?,
-            ),
-            LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::from_string("<e,e>")?),
+            LambdaExpr::Lambda(LambdaExprRef(pos + 1), LambdaType::E),
+            LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::E),
             LambdaExpr::BoundVariable(1, LambdaType::E),
         ])
     }
@@ -386,7 +385,7 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(4),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(3))),
             LambdaExpr::BoundVariable(0, LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3))),
@@ -406,14 +405,14 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(5),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<<e, t>,t>")?),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<e, t>")?),
             LambdaExpr::Application {
                 subformula: LambdaExprRef(3),
                 argument: LambdaExprRef(4),
             },
             LambdaExpr::BoundVariable(0, LambdaType::et()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
-            LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::from_string("<e,t>")?),
+            LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(7))),
             LambdaExpr::BoundVariable(0, LambdaType::E),
         ]);
@@ -431,8 +430,8 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(6),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<t, <t,t>>")?),
-            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::from_string("<t,t>")?),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::T),
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::T),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(4), ExprRef(5))), //10
             LambdaExpr::BoundVariable(1, LambdaType::T),
             LambdaExpr::BoundVariable(0, LambdaType::T),
@@ -441,7 +440,7 @@ mod test {
                 subformula: LambdaExprRef(7),
                 argument: LambdaExprRef(10),
             },
-            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::et()),
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(9))),
             LambdaExpr::BoundVariable(0, LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
@@ -451,10 +450,7 @@ mod test {
         assert_eq!(
             pool,
             LambdaPool(vec![
-                LambdaExpr::Lambda(
-                    LambdaExprRef(1),
-                    LambdaType::Composition(Box::new(LambdaType::T), Box::new(LambdaType::T))
-                ),
+                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::T),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3))),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(4))),
                 LambdaExpr::BoundVariable(0, LambdaType::T),
@@ -473,7 +469,7 @@ mod test {
                 subformula: LambdaExprRef(2),
                 argument: LambdaExprRef(5),
             },
-            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et()),
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(4))),
             LambdaExpr::BoundVariable(0, LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3))),
@@ -483,8 +479,8 @@ mod test {
                 subformula: LambdaExprRef(7),
                 argument: LambdaExprRef(12),
             },
-            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::from_string("<t, <t,t>>")?),
-            LambdaExpr::Lambda(LambdaExprRef(9), LambdaType::from_string("<t,t>")?),
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::T),
+            LambdaExpr::Lambda(LambdaExprRef(9), LambdaType::T),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(10), ExprRef(11))), //10
             LambdaExpr::BoundVariable(1, LambdaType::T),
             LambdaExpr::BoundVariable(0, LambdaType::T),
@@ -493,7 +489,7 @@ mod test {
                 subformula: LambdaExprRef(13),
                 argument: LambdaExprRef(16),
             },
-            LambdaExpr::Lambda(LambdaExprRef(14), LambdaType::et()),
+            LambdaExpr::Lambda(LambdaExprRef(14), LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(15))),
             LambdaExpr::BoundVariable(0, LambdaType::E),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
@@ -533,7 +529,7 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(3),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
             LambdaExpr::BoundVariable(0, LambdaType::T),
             LambdaExpr::FreeVariable(0, LambdaType::T),
         ]);
@@ -547,7 +543,7 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(3),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
             LambdaExpr::BoundVariable(0, LambdaType::T),
             LambdaExpr::FreeVariable(0, LambdaType::E),
         ]);
@@ -568,7 +564,7 @@ mod test {
                 subformula: LambdaExprRef(2),
                 argument: LambdaExprRef(4),
             },
-            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et()),
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::E),
             LambdaExpr::FreeVariable(0, LambdaType::T),
             LambdaExpr::FreeVariable(2, LambdaType::E),
             // 5
@@ -577,15 +573,15 @@ mod test {
                 subformula: LambdaExprRef(6),
                 argument: LambdaExprRef(9),
             },
-            LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::from_string("<t, <t,t>>")?),
-            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::from_string("<t,t>")?),
+            LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::T),
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::T),
             LambdaExpr::BoundVariable(1, LambdaType::T),
             LambdaExpr::Application {
                 //10
                 subformula: LambdaExprRef(10),
                 argument: LambdaExprRef(12),
             },
-            LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::et()),
+            LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::E),
             LambdaExpr::FreeVariable(1337, LambdaType::T),
             LambdaExpr::FreeVariable(5, LambdaType::E),
         ]);
@@ -619,7 +615,7 @@ mod test {
             pool,
             LambdaPool(vec![
                 LambdaExpr::FreeVariable(32, LambdaType::E),
-                LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::from_string("<e,e>")?)
+                LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::E)
             ])
         );
         Ok(())
@@ -639,17 +635,17 @@ mod test {
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let man = parser
-            .parse_with_state("lambda <e,t> x (p_man(x))", &mut label_state)
+            .parse_with_state("lambda e x (p_man(x))", &mut label_state)
             .unwrap();
         let sleeps = parser
             .parse_with_state(
-                "lambda <e,t> x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))",
+                "lambda e x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))",
                 &mut label_state,
             )
             .unwrap();
         let every = parser
             .parse_with_state(
-                "lambda <<e,t>,<<e,t>,t>> p(lambda <<e,t>, t> q(every(x, p(x), q(x))))",
+                "lambda <e,t> p(lambda <e,t> q(every(x, p(x), q(x))))",
                 &mut label_state,
             )
             .unwrap();

@@ -82,12 +82,12 @@ fn lambda_stuff() -> anyhow::Result<()> {
             .to_vec()
     );
 
-    let man = "lambda <e,t> x (p_man(x))";
-    let woman = "lambda <e,t> x (p_woman(x))";
-    let sleeps = "lambda <e,t> x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))";
-    let every = "lambda <<e,t>,<<e,t>,t>> p(lambda <<e,t>, t> q(every(x, p(x), q(x))))";
-    let and = "lambda <t,<t,t>> psi (lambda <t,t> phi (psi & phi))";
-    let not = "lambda <t,t> phi (~phi)";
+    let man = "lambda e x (p_man(x))";
+    let woman = "lambda e x (p_woman(x))";
+    let sleeps = "lambda e x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))";
+    let every = "lambda <e,t> p(lambda <e,t> q(every(x, p(x), q(x))))";
+    let and = "lambda t psi (lambda t phi (psi & phi))";
+    let not = "lambda t phi (~phi)";
 
     let every_man_sleeps = format!("(({every})({man}))({sleeps})");
     println!("{every_man_sleeps}");

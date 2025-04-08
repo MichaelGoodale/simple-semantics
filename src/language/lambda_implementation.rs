@@ -46,19 +46,11 @@ impl LambdaLanguageOfThought for Expr {
             Expr::Variable(_) => LambdaType::E,
             Expr::Entity(_) => LambdaType::E,
             Expr::Binary(bin, ..) => match bin {
-                BinOp::AgentOf | BinOp::PatientOf => LambdaType::eet(),
-                BinOp::And | BinOp::Or => LambdaType::Composition(
-                    Box::new(LambdaType::T),
-                    Box::new(LambdaType::Composition(
-                        Box::new(LambdaType::T),
-                        Box::new(LambdaType::T),
-                    )),
-                ),
+                BinOp::AgentOf | BinOp::PatientOf | BinOp::And | BinOp::Or => LambdaType::T,
             },
             Expr::Unary(mon_op, _) => match mon_op {
-                MonOp::Property(_) | MonOp::Tautology | MonOp::Contradiction => LambdaType::et(),
-                MonOp::Not => {
-                    LambdaType::Composition(Box::new(LambdaType::T), Box::new(LambdaType::T))
+                MonOp::Property(_) | MonOp::Tautology | MonOp::Contradiction | MonOp::Not => {
+                    LambdaType::T
                 }
             },
             Expr::Constant(constant) => match constant {
@@ -132,7 +124,7 @@ mod test {
         let john = parser.parse_with_state("a_j", &mut label_state).unwrap();
         let likes = parser
             .parse_with_state(
-                "lambda <e,<e,t>> x ((lambda <e,t> y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & p_likes(e)))))",
+                "lambda e x ((lambda e y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & p_likes(e)))))",
                 &mut label_state,
             )
             .unwrap();
