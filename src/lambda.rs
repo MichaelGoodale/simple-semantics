@@ -129,6 +129,24 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         Ok(())
     }
 
+    pub fn lambda_abstract_free_variable(&mut self, fvar: Fvar) -> anyhow::Result<()> {
+        let vars = self
+            .pool
+            .bfs_from(self.root)
+            .filter_map(|(x, d)| match self.pool.get(x) {
+                LambdaExpr::FreeVariable(var, lambda_type) if *var == fvar => {
+                    Some((x, d, lambda_type.clone()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        for (x, lambda_depth, lambda_type) in vars.into_iter() {
+            *self.pool.get_mut(x) = LambdaExpr::BoundVariable(lambda_depth, lambda_type);
+        }
+        Ok(())
+    }
+
     pub fn apply_new_free_variable(&mut self, fvar: Fvar) -> anyhow::Result<()> {
         let pool_type = self.pool.get_type(self.root)?;
         let var_type = pool_type.lhs()?;
@@ -787,6 +805,58 @@ mod test {
             ]),
             root: LambdaExprRef(8),
         };
+        assert_eq!(pool, gold_pool);
+        Ok(())
+    }
+
+    #[test]
+    fn lambda_abstraction() -> anyhow::Result<()> {
+        let labels = LabelledScenarios {
+            scenarios: vec![],
+            actor_labels: HashMap::default(),
+            property_labels: HashMap::default(),
+            free_variables: HashMap::default(),
+        };
+        let mut label_state = extra::SimpleState(labels.clone());
+        let parser = lot_parser().then_ignore(end());
+        let mut pool = parser
+            .parse_with_state(
+                "lambda <e,t> P (lambda <e,t> Q (lambda e x (Z(x) & P(x) & Q(x))))",
+                &mut label_state,
+            )
+            .unwrap();
+
+        pool.lambda_abstract_free_variable(0)?;
+
+        let gold_pool = RootedLambdaPool {
+            pool: LambdaPool(vec![
+                LambdaExpr::BoundVariable(3, LambdaType::et()),
+                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(0),
+                    argument: LambdaExprRef(1),
+                },
+                LambdaExpr::BoundVariable(2, LambdaType::et()),
+                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(3),
+                    argument: LambdaExprRef(4),
+                },
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(5))),
+                LambdaExpr::BoundVariable(1, LambdaType::et()),
+                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(7),
+                    argument: LambdaExprRef(8),
+                },
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(6), ExprRef(9))),
+                LambdaExpr::Lambda(LambdaExprRef(10), LambdaType::E),
+                LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(12), LambdaType::et()),
+            ]),
+            root: LambdaExprRef(13),
+        };
+
         assert_eq!(pool, gold_pool);
         Ok(())
     }
