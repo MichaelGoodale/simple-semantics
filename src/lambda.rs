@@ -58,7 +58,7 @@ pub struct RootedLambdaPool<T: LambdaLanguageOfThought> {
 }
 
 impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
-    fn get_type(&self) -> anyhow::Result<LambdaType> {
+    pub fn get_type(&self) -> anyhow::Result<LambdaType> {
         self.pool.get_type(self.root)
     }
 
