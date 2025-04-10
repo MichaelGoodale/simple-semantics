@@ -141,8 +141,17 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
             })
             .collect::<Vec<_>>();
 
-        for (x, lambda_depth, lambda_type) in vars.into_iter() {
-            *self.pool.get_mut(x) = LambdaExpr::BoundVariable(lambda_depth, lambda_type);
+        let mut lambda_type = None;
+        for (x, lambda_depth, inner_lambda_type) in vars.into_iter() {
+            if lambda_type.is_none() {
+                lambda_type = Some(inner_lambda_type.clone());
+            }
+            *self.pool.get_mut(x) = LambdaExpr::BoundVariable(lambda_depth, inner_lambda_type);
+        }
+        if let Some(lambda_type) = lambda_type {
+            //This way we only abstract if there is such a free
+            //variable
+            self.root = self.pool.add(LambdaExpr::Lambda(self.root, lambda_type));
         }
         Ok(())
     }
@@ -853,8 +862,9 @@ mod test {
                 LambdaExpr::Lambda(LambdaExprRef(10), LambdaType::E),
                 LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::et()),
                 LambdaExpr::Lambda(LambdaExprRef(12), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(13), LambdaType::et()),
             ]),
-            root: LambdaExprRef(13),
+            root: LambdaExprRef(14),
         };
 
         assert_eq!(pool, gold_pool);
