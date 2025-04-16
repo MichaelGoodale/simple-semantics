@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use crate::lambda::{Bvar, Fvar, LambdaExpr, LambdaExprRef, RootedLambdaPool};
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -113,6 +114,72 @@ pub struct LanguageExpression {
 impl Display for LanguageExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let string = self.string(self.start);
+        write!(f, "{string}")
+    }
+}
+
+enum PrintVariableType {
+    Free(Fvar),
+    Bound(Bvar),
+    Quantifier(Variable),
+}
+
+impl RootedLambdaPool<Expr> {
+    fn string(&self, expr: LambdaExprRef) -> String {
+        match self.get(expr) {
+            LambdaExpr::Lambda(child, lambda_type) => {
+                format!("lambda {} x ({})", lambda_type, self.string(*child))
+            }
+            LambdaExpr::BoundVariable(bvar, lambda_type) => format!("z"),
+            LambdaExpr::FreeVariable(bvar, lambda_type) => format!("y"),
+            LambdaExpr::Application {
+                subformula,
+                argument,
+            } => format!("({})({})", self.string(*subformula), self.string(*argument)),
+            LambdaExpr::LanguageOfThoughtExpr(x) => match x {
+                Expr::Quantifier {
+                    quantifier,
+                    var,
+                    restrictor,
+                    subformula,
+                } => format!(
+                    "{}(x{},{},{})",
+                    quantifier,
+                    var.0,
+                    self.string(LambdaExprRef(restrictor.0)),
+                    self.string(LambdaExprRef(subformula.0))
+                ),
+                Expr::Variable(variable) => format!("x{}", variable.0),
+                Expr::Entity(entity) => format!("{}", entity),
+                Expr::Binary(bin_op, x, y) => match bin_op {
+                    BinOp::AgentOf | BinOp::PatientOf => {
+                        format!(
+                            "{bin_op}({},{})",
+                            self.string(LambdaExprRef(x.0)),
+                            self.string(LambdaExprRef(y.0))
+                        )
+                    }
+
+                    BinOp::And | BinOp::Or => {
+                        format!(
+                            "({}){bin_op}({})",
+                            self.string(LambdaExprRef(x.0)),
+                            self.string(LambdaExprRef(y.0))
+                        )
+                    }
+                },
+                Expr::Unary(mon_op, arg) => {
+                    format!("{mon_op}({})", self.string(LambdaExprRef(arg.0)))
+                }
+                Expr::Constant(constant) => format!("{constant}"),
+            },
+        }
+    }
+}
+
+impl Display for RootedLambdaPool<Expr> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let string = self.string(self.root());
         write!(f, "{string}")
     }
 }
@@ -423,6 +490,7 @@ impl ExprPool {
 }
 
 mod parser;
+use ahash::{HashMap, RandomState};
 pub use parser::lot_parser;
 pub use parser::parse_executable;
 

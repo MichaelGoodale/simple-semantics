@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use std::collections::{HashSet, VecDeque};
 
 pub mod types;
@@ -58,6 +58,14 @@ pub struct RootedLambdaPool<T: LambdaLanguageOfThought> {
 }
 
 impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
+    pub(crate) fn root(&self) -> LambdaExprRef {
+        self.root
+    }
+
+    pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
+        self.pool.get(x)
+    }
+
     pub fn get_type(&self) -> anyhow::Result<LambdaType> {
         self.pool.get_type(self.root)
     }
@@ -341,11 +349,14 @@ where
         } = expr
         {
             let inner_term = match self.get(*subformula) {
-                LambdaExpr::Lambda(x,..) => {
+                LambdaExpr::Lambda(x, ..) => {
                     self.check_type_clash(app)?;
 
-                *x},
-                _ => bail!("You can only beta reduce if the left hand side of the application is a lambda!")
+                    *x
+                }
+                _ => bail!(
+                    "You can only beta reduce if the left hand side of the application is a lambda!"
+                ),
             };
 
             (
@@ -448,8 +459,8 @@ mod test {
 
     use super::*;
     use crate::{
-        language::{BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
         Entity, LabelledScenarios,
+        language::{BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
     };
 
     fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {

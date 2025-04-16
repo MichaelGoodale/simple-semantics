@@ -1,6 +1,6 @@
 use super::{BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Variable};
 use crate::lambda::{
-    types::LambdaType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
+    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, types::LambdaType,
 };
 
 impl LambdaLanguageOfThought for Expr {
@@ -108,7 +108,7 @@ impl LambdaLanguageOfThought for Expr {
 mod test {
     use std::collections::HashMap;
 
-    use crate::{lot_parser, LabelledScenarios};
+    use crate::{LabelledScenarios, lot_parser};
     use chumsky::prelude::*;
 
     #[test]
@@ -128,6 +128,7 @@ mod test {
                 &mut label_state,
             )
             .unwrap();
+
         let mary = parser.parse_with_state("a_m", &mut label_state).unwrap();
         let phi = mary.clone().merge(likes.clone()).unwrap();
         let mut phi = phi.merge(john.clone()).unwrap();
