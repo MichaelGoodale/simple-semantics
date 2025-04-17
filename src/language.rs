@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
-use crate::lambda::{Bvar, Fvar, LambdaExpr, LambdaExprRef, RootedLambdaPool};
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
+use lambda_implementation::to_var;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BinOp {
@@ -66,7 +66,7 @@ impl Display for Constant {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Variable(u32);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -118,72 +118,6 @@ impl Display for LanguageExpression {
     }
 }
 
-enum PrintVariableType {
-    Free(Fvar),
-    Bound(Bvar),
-    Quantifier(Variable),
-}
-
-impl RootedLambdaPool<Expr> {
-    fn string(&self, expr: LambdaExprRef) -> String {
-        match self.get(expr) {
-            LambdaExpr::Lambda(child, lambda_type) => {
-                format!("lambda {} x ({})", lambda_type, self.string(*child))
-            }
-            LambdaExpr::BoundVariable(bvar, lambda_type) => format!("z"),
-            LambdaExpr::FreeVariable(bvar, lambda_type) => format!("y"),
-            LambdaExpr::Application {
-                subformula,
-                argument,
-            } => format!("({})({})", self.string(*subformula), self.string(*argument)),
-            LambdaExpr::LanguageOfThoughtExpr(x) => match x {
-                Expr::Quantifier {
-                    quantifier,
-                    var,
-                    restrictor,
-                    subformula,
-                } => format!(
-                    "{}(x{},{},{})",
-                    quantifier,
-                    var.0,
-                    self.string(LambdaExprRef(restrictor.0)),
-                    self.string(LambdaExprRef(subformula.0))
-                ),
-                Expr::Variable(variable) => format!("x{}", variable.0),
-                Expr::Entity(entity) => format!("{}", entity),
-                Expr::Binary(bin_op, x, y) => match bin_op {
-                    BinOp::AgentOf | BinOp::PatientOf => {
-                        format!(
-                            "{bin_op}({},{})",
-                            self.string(LambdaExprRef(x.0)),
-                            self.string(LambdaExprRef(y.0))
-                        )
-                    }
-
-                    BinOp::And | BinOp::Or => {
-                        format!(
-                            "({}){bin_op}({})",
-                            self.string(LambdaExprRef(x.0)),
-                            self.string(LambdaExprRef(y.0))
-                        )
-                    }
-                },
-                Expr::Unary(mon_op, arg) => {
-                    format!("{mon_op}({})", self.string(LambdaExprRef(arg.0)))
-                }
-                Expr::Constant(constant) => format!("{constant}"),
-            },
-        }
-    }
-}
-
-impl Display for RootedLambdaPool<Expr> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = self.string(self.root());
-        write!(f, "{string}")
-    }
-}
-
 impl LanguageExpression {
     pub fn run(&self, scenario: &Scenario) -> LanguageResult {
         let mut variables = VariableBuffer::default();
@@ -202,13 +136,13 @@ impl LanguageExpression {
                 restrictor,
                 subformula,
             } => format!(
-                "{}(x{},{},{})",
+                "{}({},{},{})",
                 quantifier,
-                var.0,
+                to_var(var.0 as usize),
                 self.string(*restrictor),
                 self.string(*subformula)
             ),
-            Expr::Variable(variable) => format!("x{}", variable.0),
+            Expr::Variable(variable) => to_var(variable.0 as usize),
             Expr::Entity(entity) => format!("{}", entity),
             Expr::Binary(bin_op, x, y) => match bin_op {
                 BinOp::AgentOf | BinOp::PatientOf => {
@@ -216,7 +150,7 @@ impl LanguageExpression {
                 }
 
                 BinOp::And | BinOp::Or => {
-                    format!("({}){bin_op}({})", self.string(*x), self.string(*y))
+                    format!("({} {bin_op} {})", self.string(*x), self.string(*y))
                 }
             },
             Expr::Unary(mon_op, arg) => format!("{mon_op}({})", self.string(*arg)),
@@ -490,7 +424,6 @@ impl ExprPool {
 }
 
 mod parser;
-use ahash::{HashMap, RandomState};
 pub use parser::lot_parser;
 pub use parser::parse_executable;
 

@@ -1,6 +1,7 @@
 use super::{BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Variable};
 use crate::lambda::{
-    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, types::LambdaType,
+    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
+    types::LambdaType,
 };
 
 impl LambdaLanguageOfThought for Expr {
@@ -104,8 +105,98 @@ impl LambdaLanguageOfThought for Expr {
     }
 }
 
+impl std::fmt::Display for RootedLambdaPool<Expr> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let string = self.string(self.root(), 0);
+        write!(f, "{string}")
+    }
+}
+
+static VARIABLENAMES: [char; 26] = [
+    'x', 'y', 'z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
+    'q', 'r', 's', 't', 'u', 'v', 'w',
+];
+
+pub fn to_var(x: usize) -> String {
+    if x < VARIABLENAMES.len() {
+        format!("{}", VARIABLENAMES[x])
+    } else {
+        format!(
+            "{}{}",
+            VARIABLENAMES[x % VARIABLENAMES.len()],
+            x / VARIABLENAMES.len()
+        )
+    }
+}
+
+impl RootedLambdaPool<Expr> {
+    fn string(&self, expr: LambdaExprRef, lambda_depth: usize) -> String {
+        match self.get(expr) {
+            LambdaExpr::Lambda(child, lambda_type) => {
+                format!(
+                    "lambda {} {}_l ({})",
+                    lambda_type,
+                    to_var(lambda_depth),
+                    self.string(*child, lambda_depth + 1)
+                )
+            }
+            LambdaExpr::BoundVariable(bvar, _) => format!("{}_l", to_var(lambda_depth - bvar - 1)),
+            LambdaExpr::FreeVariable(fvar, _) => format!("{fvar}_f"),
+            LambdaExpr::Application {
+                subformula,
+                argument,
+            } => format!(
+                "({})({})",
+                self.string(*subformula, lambda_depth),
+                self.string(*argument, lambda_depth)
+            ),
+            LambdaExpr::LanguageOfThoughtExpr(x) => match x {
+                Expr::Quantifier {
+                    quantifier,
+                    var,
+                    restrictor,
+                    subformula,
+                } => format!(
+                    "{}({},{},{})",
+                    quantifier,
+                    to_var(var.0 as usize),
+                    self.string(LambdaExprRef(restrictor.0), lambda_depth),
+                    self.string(LambdaExprRef(subformula.0), lambda_depth)
+                ),
+                Expr::Variable(variable) => to_var(variable.0 as usize),
+                Expr::Entity(entity) => format!("{}", entity),
+                Expr::Binary(bin_op, x, y) => match bin_op {
+                    BinOp::AgentOf | BinOp::PatientOf => {
+                        format!(
+                            "{bin_op}({},{})",
+                            self.string(LambdaExprRef(x.0), lambda_depth),
+                            self.string(LambdaExprRef(y.0), lambda_depth)
+                        )
+                    }
+
+                    BinOp::And | BinOp::Or => {
+                        format!(
+                            "({} {bin_op} {})",
+                            self.string(LambdaExprRef(x.0), lambda_depth),
+                            self.string(LambdaExprRef(y.0), lambda_depth)
+                        )
+                    }
+                },
+                Expr::Unary(mon_op, arg) => {
+                    format!(
+                        "{mon_op}({})",
+                        self.string(LambdaExprRef(arg.0), lambda_depth)
+                    )
+                }
+                Expr::Constant(constant) => format!("{constant}"),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use super::to_var;
     use std::collections::HashMap;
 
     use crate::{LabelledScenarios, lot_parser};
@@ -135,7 +226,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some(x0,all_e,((AgentOf(x0,a1))&(PatientOf(x0,a0)))&(p0(x0)))",
+            "some(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & p0(x)))",
             pool.to_string()
         );
         let phi = likes.merge(mary).unwrap();
@@ -143,9 +234,55 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some(x0,all_e,((AgentOf(x0,a1))&(PatientOf(x0,a0)))&(p0(x0)))",
+            "some(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & p0(x)))",
             pool.to_string()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn var_name_assigner() {
+        assert_eq!(to_var(0), "x");
+        assert_eq!(to_var(1), "y");
+        assert_eq!(to_var(2), "z");
+        assert_eq!(to_var(26), "x1");
+        assert_eq!(to_var(27), "y1");
+        assert_eq!(to_var(28), "z1");
+        assert_eq!(to_var(26 * 300), "x300");
+    }
+
+    #[test]
+    fn printing() -> anyhow::Result<()> {
+        let labels = LabelledScenarios {
+            scenarios: vec![],
+            actor_labels: HashMap::default(),
+            property_labels: HashMap::default(),
+            free_variables: HashMap::default(),
+        };
+        let mut label_state = extra::SimpleState(labels.clone());
+        let parser = lot_parser().then_ignore(end());
+        let pool = parser
+            .parse_with_state(
+                "some(x0,all_e,((AgentOf(x0,a1) & PatientOf(x0,a0)) & p0(x0)))",
+                &mut label_state,
+            )
+            .unwrap();
+        assert_eq!(
+            pool.to_string(),
+            "some(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & p0(x)))"
+        );
+        let likes = parser
+            .parse_with_state(
+                "lambda e x ((lambda e y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & p_likes(e)))))",
+                &mut label_state,
+            )
+            .unwrap();
+
+        let s = "lambda e x_l (lambda e y_l (some(x,all_e,((AgentOf(x,x_l) & PatientOf(x,y_l)) & p0(x)))))";
+        assert_eq!(likes.to_string(), s,);
+        let likes2 = parser.parse_with_state(s, &mut label_state).unwrap();
+        assert_eq!(likes, likes2);
+
         Ok(())
     }
 }

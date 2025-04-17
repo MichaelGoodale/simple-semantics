@@ -749,7 +749,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "every(x0,p0(x0),some(x1,all_e,(AgentOf(x0,x1))&(p1(x1))))",
+            "every(x,p0(x),some(y,all_e,(AgentOf(x,y) & p1(y))))",
             pool.to_string()
         );
         let phi = man.merge(every).unwrap();
@@ -757,7 +757,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "every(x0,p0(x0),some(x1,all_e,(AgentOf(x0,x1))&(p1(x1))))",
+            "every(x,p0(x),some(y,all_e,(AgentOf(x,y) & p1(y))))",
             pool.to_string()
         );
         Ok(())
@@ -782,7 +782,7 @@ mod test {
             parser.parse_with_state("False", &mut label_state).unwrap(),
         )?;
         dbg!(&pool);
-        assert_eq!("(False)&(True)", pool.into_pool()?.to_string());
+        assert_eq!("(False & True)", pool.into_pool()?.to_string());
         Ok(())
     }
 
