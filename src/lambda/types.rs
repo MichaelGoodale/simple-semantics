@@ -7,6 +7,7 @@ use chumsky::{
     prelude::*,
     text::{TextExpected, inline_whitespace},
 };
+use rand::Rng;
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub enum LambdaType {
@@ -144,9 +145,38 @@ impl Display for LambdaType {
     }
 }
 
+impl LambdaType {
+    pub fn random(r: &mut impl Rng) -> Self {
+        let p: f64 = r.random();
+        if p < 0.4 {
+            LambdaType::E
+        } else if p < 0.8 {
+            LambdaType::T
+        } else {
+            LambdaType::Composition(
+                Box::new(LambdaType::random(r)),
+                Box::new(LambdaType::random(r)),
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
     use super::*;
+
+    #[test]
+    fn random_lambdas() -> anyhow::Result<()> {
+        let mut r = ChaCha8Rng::seed_from_u64(32);
+        for _ in 0..100 {
+            let t = LambdaType::random(&mut r);
+            println!("{t}");
+        }
+        Ok(())
+    }
 
     #[test]
     fn check_application() -> anyhow::Result<()> {
