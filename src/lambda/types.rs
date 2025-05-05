@@ -5,7 +5,7 @@ use chumsky::{
     extra::ParserExtra,
     label::LabelError,
     prelude::*,
-    text::{inline_whitespace, TextExpected},
+    text::{TextExpected, inline_whitespace},
 };
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -39,11 +39,12 @@ fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType> + Clone {
 impl LambdaType {
     pub fn from_string(s: &str) -> anyhow::Result<Self> {
         type_parser().parse(s).into_result().map_err(|x| {
-            anyhow::anyhow!(x
-                .into_iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(","))
+            anyhow::anyhow!(
+                x.into_iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
         })
     }
 

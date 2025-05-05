@@ -1,7 +1,16 @@
-use super::{BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Variable};
-use crate::lambda::{
-    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-    types::LambdaType,
+use super::{
+    BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Quantifier, Variable,
+};
+use crate::{
+    Entity,
+    lambda::{
+        LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
+        types::LambdaType,
+    },
+};
+use rand::{
+    Rng,
+    seq::{IndexedRandom, IteratorRandom},
 };
 
 impl LambdaLanguageOfThought for Expr {
@@ -192,6 +201,181 @@ impl RootedLambdaPool<Expr> {
             },
         }
     }
+
+    fn random_expr(lambda_type: LambdaType, rng: &mut impl Rng) -> Self {
+        let mut pool = vec![None];
+
+        let context = Context {
+            lambda_depth: 0,
+            available_vars: vec![],
+            available_actors: &[Entity::Actor(0)],
+        };
+        let mut fresher = Fresher::default();
+
+        let e = Expr::get_new_from_type(&lambda_type, &context, &mut fresher, rng)
+            .expect("Impossible type!");
+
+        let mut stack = add_expr(e, 0, context, &mut pool);
+
+        dbg!(&stack);
+        while let Some((pos, lambda_type, context)) = stack.pop() {
+            let e = Expr::get_new_from_type(&lambda_type, &context, &mut fresher, rng)
+                .expect("Impossible type!");
+
+            stack.extend(add_expr(e, pos, context, &mut pool));
+        }
+
+        dbg!(&pool);
+        let pool = pool.into_iter().collect::<Option<Vec<_>>>().unwrap();
+        RootedLambdaPool::new(LambdaPool::from(pool), LambdaExprRef(0))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Context<'a> {
+    lambda_depth: usize,
+    available_vars: Vec<(Variable, LambdaType)>,
+    available_actors: &'a [Entity],
+}
+
+impl Context<'_> {
+    fn sample_actor(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
+        self.available_actors
+            .choose(rng)
+            .cloned()
+            .map(UnbuiltExpr::Entity)
+    }
+}
+
+fn add_expr<'a>(
+    e: UnbuiltExpr,
+    pos: u32,
+    mut context: Context<'a>,
+    pool: &mut Vec<Option<LambdaExpr<Expr>>>,
+) -> Vec<(u32, LambdaType, Context<'a>)> {
+    let current_pool_size = pool.len() as u32 - 1;
+    let mut children = vec![];
+    let expr = match e {
+        UnbuiltExpr::Quantifier { quantifier, var } => {
+            children.extend_from_slice(&[
+                (current_pool_size + 1, LambdaType::et()),
+                (current_pool_size + 2, LambdaType::T),
+            ]);
+            context.available_vars.push((var, LambdaType::E));
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                quantifier,
+                var,
+                restrictor: ExprRef(current_pool_size + 1),
+                subformula: ExprRef(current_pool_size + 2),
+            })
+        }
+        UnbuiltExpr::Variable(var) => LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(var)),
+        UnbuiltExpr::Entity(entity) => LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(entity)),
+        UnbuiltExpr::Binary(bin_op) => {
+            children.extend_from_slice(&match bin_op {
+                BinOp::AgentOf | BinOp::PatientOf => [
+                    (current_pool_size + 1, LambdaType::E),
+                    (current_pool_size + 2, LambdaType::E),
+                ],
+                BinOp::And | BinOp::Or => [
+                    (current_pool_size + 1, LambdaType::T),
+                    (current_pool_size + 2, LambdaType::T),
+                ],
+            });
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                bin_op,
+                ExprRef(current_pool_size + 1),
+                ExprRef(current_pool_size + 2),
+            ))
+        }
+        UnbuiltExpr::Unary(mon_op) => {
+            children.push(match mon_op {
+                MonOp::Property(_) => (current_pool_size + 1, LambdaType::E),
+                MonOp::Not | MonOp::Tautology | MonOp::Contradiction => {
+                    (current_pool_size + 1, LambdaType::T)
+                }
+            });
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(mon_op, ExprRef(current_pool_size + 1)))
+        }
+        UnbuiltExpr::Constant(constant) => {
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(constant))
+        }
+    };
+
+    pool[pos as usize] = Some(expr);
+    pool.resize(pool.len() + children.len(), None);
+    children
+        .into_iter()
+        .map(|(a, b)| (a, b, context.clone()))
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+enum UnbuiltExpr {
+    Quantifier {
+        quantifier: Quantifier,
+        var: Variable,
+    },
+    Variable(Variable),
+    Entity(Entity),
+    Binary(BinOp),
+    Unary(MonOp),
+    Constant(Constant),
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+struct Fresher(u32);
+
+impl Fresher {
+    fn fresh(&mut self) -> Variable {
+        self.0 += 1;
+        Variable(self.0)
+    }
+}
+
+impl Expr {
+    fn get_new_from_type(
+        lambda_type: &LambdaType,
+        context: &Context,
+        fresher: &mut Fresher,
+        rng: &mut impl Rng,
+    ) -> Option<UnbuiltExpr> {
+        if lambda_type == &LambdaType::et() {
+            let mut options = [Constant::Everyone, Constant::EveryEvent]
+                .map(UnbuiltExpr::Constant)
+                .to_vec();
+
+            let choice = (0..options.len()).choose(rng).unwrap();
+            Some(options.remove(choice))
+        } else {
+            match lambda_type {
+                LambdaType::T => {
+                    let mut options: Vec<UnbuiltExpr> =
+                        [BinOp::AgentOf, BinOp::PatientOf, BinOp::And, BinOp::Or]
+                            .map(UnbuiltExpr::Binary)
+                            .into_iter()
+                            .chain([
+                                UnbuiltExpr::Unary(MonOp::Not),
+                                UnbuiltExpr::Unary(MonOp::Property(0)),
+                                UnbuiltExpr::Quantifier {
+                                    quantifier: Quantifier::Existential,
+                                    var: fresher.fresh(),
+                                },
+                                UnbuiltExpr::Quantifier {
+                                    quantifier: Quantifier::Universal,
+                                    var: fresher.fresh(),
+                                },
+                            ])
+                            .collect();
+
+                    let choice = (0..options.len()).choose(rng).unwrap();
+                    Some(options.remove(choice))
+                }
+                LambdaType::E => context.sample_actor(rng),
+                _ => None,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -199,8 +383,10 @@ mod test {
     use super::to_var;
     use std::collections::HashMap;
 
-    use crate::{LabelledScenarios, lot_parser};
+    use crate::{LabelledScenarios, lambda::RootedLambdaPool, lot_parser};
     use chumsky::prelude::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {
@@ -283,6 +469,17 @@ mod test {
         let likes2 = parser.parse_with_state(s, &mut label_state).unwrap();
         assert_eq!(likes, likes2);
 
+        Ok(())
+    }
+
+    #[test]
+    fn randomness() -> anyhow::Result<()> {
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        for _ in 0..10 {
+            let pool = RootedLambdaPool::random_expr(crate::lambda::types::LambdaType::T, &mut rng);
+            dbg!(pool);
+        }
+        panic!();
         Ok(())
     }
 }
