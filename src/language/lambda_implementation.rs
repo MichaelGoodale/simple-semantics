@@ -206,6 +206,7 @@ impl RootedLambdaPool<Expr> {
     pub fn random_expr(
         lambda_type: LambdaType,
         available_actors: &[Entity],
+        config: Option<&RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> Self {
         let mut pool = vec![None];
@@ -217,13 +218,14 @@ impl RootedLambdaPool<Expr> {
         };
         let mut fresher = Fresher::default();
 
-        let e = Expr::get_new_from_type(&lambda_type, &context, &mut fresher, rng)
+        let config = config.unwrap_or(&DEFAULT_CONFIG);
+        let e = Expr::get_new_from_type(&lambda_type, &context, &mut fresher, config, rng)
             .unwrap_or(UnbuiltExpr::Lambda(lambda_type));
 
         let mut stack = add_expr(e, 0, context, &mut pool);
 
         while let Some((pos, lambda_type, context)) = stack.pop() {
-            let e = Expr::get_new_from_type(&lambda_type, &context, &mut fresher, rng)
+            let e = Expr::get_new_from_type(&lambda_type, &context, &mut fresher, config, rng)
                 .unwrap_or(UnbuiltExpr::Lambda(lambda_type));
 
             stack.extend(add_expr(e, pos, context, &mut pool));
@@ -360,23 +362,63 @@ impl Fresher {
     }
 }
 
-static WEIGHTED_T: std::sync::LazyLock<WeightedIndex<usize>> =
-    std::sync::LazyLock::new(|| WeightedIndex::new([8, 8, 4, 4, 2, 2, 1, 1]).unwrap());
+static DEFAULT_CONFIG: std::sync::LazyLock<RandomExprConfig> =
+    std::sync::LazyLock::new(RandomExprConfig::default);
+
+#[derive(Debug, Clone)]
+pub struct RandomExprConfig {
+    lambda_prob: f64,
+    variable_prob: f64,
+    weighted_t: WeightedIndex<usize>,
+}
+
+impl RandomExprConfig {
+    fn new(lambda_prob: f64, variable_prob: f64, weighted_t: [usize; 8]) -> Self {
+        Self {
+            lambda_prob,
+            variable_prob,
+            weighted_t: WeightedIndex::new(weighted_t).unwrap(),
+        }
+    }
+}
+
+impl Default for RandomExprConfig {
+    fn default() -> Self {
+        Self {
+            lambda_prob: 0.2,
+            variable_prob: 0.5,
+            weighted_t: WeightedIndex::new([8, 8, 4, 4, 2, 2, 1, 1]).unwrap(),
+        }
+    }
+}
+impl RandomExprConfig {
+    fn is_lambda(&self, lambda_type: &LambdaType, rng: &mut impl Rng) -> bool {
+        lambda_type != &LambdaType::E
+            && lambda_type != &LambdaType::T
+            && rng.random_bool(self.lambda_prob)
+    }
+
+    fn random_t(&self, rng: &mut impl Rng) -> usize {
+        self.weighted_t.sample(rng)
+    }
+
+    fn is_variable(&self, rng: &mut impl Rng) -> bool {
+        rng.random_bool(self.variable_prob)
+    }
+}
 
 impl Expr {
     fn get_new_from_type(
         lambda_type: &LambdaType,
         context: &Context,
         fresher: &mut Fresher,
+        config: &RandomExprConfig,
         rng: &mut impl Rng,
     ) -> Option<UnbuiltExpr> {
-        if lambda_type != &LambdaType::E
-            && lambda_type != &LambdaType::T
-            && rng.random::<f64>() < 0.2
-        {
+        if config.is_lambda(lambda_type, rng) {
             return Some(UnbuiltExpr::Lambda(lambda_type.clone()));
         }
-        if rng.random::<f64>() < 0.5 {
+        if config.is_variable(rng) {
             let x = context.sample_variable(lambda_type, rng);
             if x.is_some() {
                 return x;
@@ -410,7 +452,7 @@ impl Expr {
                         },
                     ];
 
-                    let choice = WEIGHTED_T.sample(rng);
+                    let choice = config.random_t(rng);
                     Some(options.remove(choice))
                 }
                 LambdaType::E => context.sample_actor(rng),
@@ -524,7 +566,7 @@ mod test {
         let actors = [Entity::Actor(0), Entity::Actor(1)];
         for _ in 0..100 {
             let t = LambdaType::random(&mut rng);
-            let pool = RootedLambdaPool::random_expr(t.clone(), &actors, &mut rng);
+            let pool = RootedLambdaPool::random_expr(t.clone(), &actors, None, &mut rng);
             println!("{}: {}", t, pool);
         }
         Ok(())
