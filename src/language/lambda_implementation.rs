@@ -11,7 +11,7 @@ use crate::{
 use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
-    seq::{IndexedRandom, IteratorRandom},
+    seq::IteratorRandom,
 };
 
 impl LambdaLanguageOfThought for Expr {
@@ -219,16 +219,16 @@ impl RootedLambdaPool<Expr> {
         let mut fresher = Fresher::default();
 
         let config = config.unwrap_or(&DEFAULT_CONFIG);
-        let e = Expr::get_new_from_type(&lambda_type, &context, &mut fresher, config, rng)
+        let e = Expr::get_new_from_type(&lambda_type, &context, config, rng)
             .unwrap_or(UnbuiltExpr::Lambda(lambda_type));
 
-        let mut stack = add_expr(e, 0, context, &mut pool);
+        let mut stack = add_expr(e, 0, context, &mut fresher, &mut pool);
 
         while let Some((pos, lambda_type, context)) = stack.pop() {
-            let e = Expr::get_new_from_type(&lambda_type, &context, &mut fresher, config, rng)
+            let e = Expr::get_new_from_type(&lambda_type, &context, config, rng)
                 .unwrap_or(UnbuiltExpr::Lambda(lambda_type));
 
-            stack.extend(add_expr(e, pos, context, &mut pool));
+            stack.extend(add_expr(e, pos, context, &mut fresher, &mut pool));
         }
 
         let pool = pool.into_iter().collect::<Option<Vec<_>>>().unwrap();
@@ -239,16 +239,21 @@ impl RootedLambdaPool<Expr> {
 #[derive(Debug, Clone)]
 struct Context<'a> {
     lambdas: Vec<LambdaType>,
-    available_vars: Vec<(Variable, LambdaType)>,
+    available_vars: Vec<Variable>,
     available_actors: &'a [Entity],
 }
 
 impl Context<'_> {
     fn sample_actor(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
         self.available_actors
+            .iter()
+            .map(|x| UnbuiltExpr::Entity(*x))
+            .chain(
+                self.available_vars
+                    .iter()
+                    .map(|x| UnbuiltExpr::Variable(*x)),
+            )
             .choose(rng)
-            .cloned()
-            .map(UnbuiltExpr::Entity)
     }
 
     fn sample_variable(&self, lambda_type: &LambdaType, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
@@ -271,17 +276,19 @@ fn add_expr<'a>(
     e: UnbuiltExpr,
     pos: u32,
     mut context: Context<'a>,
+    fresher: &mut Fresher,
     pool: &mut Vec<Option<LambdaExpr<Expr>>>,
 ) -> Vec<(u32, LambdaType, Context<'a>)> {
     let cur_size = pool.len() as u32 - 1;
     let mut children = vec![];
     let expr = match e {
-        UnbuiltExpr::Quantifier { quantifier, var } => {
+        UnbuiltExpr::Quantifier(quantifier) => {
             children.extend_from_slice(&[
                 (cur_size + 1, LambdaType::et()),
                 (cur_size + 2, LambdaType::T),
             ]);
-            context.available_vars.push((var, LambdaType::E));
+            let var = fresher.fresh();
+            context.available_vars.push(var);
             LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                 quantifier,
                 var,
@@ -339,10 +346,7 @@ fn add_expr<'a>(
 //We never do applications since they would be redundant. Bound variables are not yet implemented.
 #[derive(Debug, Clone)]
 enum UnbuiltExpr {
-    Quantifier {
-        quantifier: Quantifier,
-        var: Variable,
-    },
+    Quantifier(Quantifier),
     Variable(Variable),
     Entity(Entity),
     Binary(BinOp),
@@ -411,7 +415,6 @@ impl Expr {
     fn get_new_from_type(
         lambda_type: &LambdaType,
         context: &Context,
-        fresher: &mut Fresher,
         config: &RandomExprConfig,
         rng: &mut impl Rng,
     ) -> Option<UnbuiltExpr> {
@@ -442,14 +445,8 @@ impl Expr {
                         UnbuiltExpr::Binary(BinOp::PatientOf),
                         UnbuiltExpr::Binary(BinOp::And),
                         UnbuiltExpr::Binary(BinOp::Or),
-                        UnbuiltExpr::Quantifier {
-                            quantifier: Quantifier::Existential,
-                            var: fresher.fresh(),
-                        },
-                        UnbuiltExpr::Quantifier {
-                            quantifier: Quantifier::Universal,
-                            var: fresher.fresh(),
-                        },
+                        UnbuiltExpr::Quantifier(Quantifier::Existential),
+                        UnbuiltExpr::Quantifier(Quantifier::Universal),
                     ];
 
                     let choice = config.random_t(rng);
