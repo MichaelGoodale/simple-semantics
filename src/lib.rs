@@ -57,7 +57,7 @@ impl Scenario {
 pub struct LabelledScenarios {
     scenarios: Vec<Scenario>,
     sentences: Vec<Vec<String>>,
-    lemmas: HashSet<String>,
+    lemmas: Vec<String>,
     property_labels: HashMap<String, PropertyLabel, RandomState>,
     actor_labels: HashMap<String, Actor, RandomState>,
     free_variables: HashMap<String, Fvar, RandomState>,
@@ -72,6 +72,8 @@ impl LabelledScenarios {
         actor_labels: HashMap<String, Actor, RandomState>,
         free_variables: HashMap<String, Fvar, RandomState>,
     ) -> Self {
+        let mut lemmas: Vec<String> = lemmas.into_iter().collect();
+        lemmas.sort();
         LabelledScenarios {
             scenarios,
             sentences,
@@ -84,6 +86,14 @@ impl LabelledScenarios {
 
     pub fn iter_scenarios(&self) -> impl Iterator<Item = &Scenario> {
         self.scenarios.iter()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Scenario, &Vec<String>)> {
+        self.scenarios.iter().zip(self.sentences.iter())
+    }
+
+    pub fn lemmas(&self) -> &[String] {
+        &self.lemmas
     }
 
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {

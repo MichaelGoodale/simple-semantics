@@ -1,4 +1,4 @@
-use ahash::RandomState;
+use ahash::{HashSet, RandomState};
 use chumsky::{prelude::*, text::inline_whitespace};
 use std::collections::{BTreeMap, HashMap};
 
@@ -149,7 +149,7 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
 
     scenario
         .map(|(s, ((actors, actor_props), events))| {
-            let mut dataset = LabelledScenarios::default();
+            let mut dataset = (LabelledScenarios::default(), HashSet::default());
             add_scenario(&mut dataset, s, actors, actor_props, events);
             dataset
         })
@@ -162,10 +162,15 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
         )
         .padded()
         .then_ignore(end())
+        .map(|(mut data, lemmas)| {
+            data.lemmas = lemmas.into_iter().collect();
+            data.lemmas.sort();
+            data
+        })
 }
 
 fn add_scenario<'a>(
-    training_dataset: &mut LabelledScenarios,
+    training_dataset: &mut (LabelledScenarios, HashSet<String>),
     s: String,
     actors: Vec<&'a str>,
     actor_props: HashMap<&'a str, Vec<&'a str>, RandomState>,
@@ -174,8 +179,9 @@ fn add_scenario<'a>(
     let actors: Vec<Actor> = actors
         .into_iter()
         .map(|x| {
-            let n = training_dataset.actor_labels.len();
+            let n = training_dataset.0.actor_labels.len();
             *training_dataset
+                .0
                 .actor_labels
                 .entry(x.to_string())
                 .or_insert(n as u16)
@@ -193,7 +199,7 @@ fn add_scenario<'a>(
             (
                 k,
                 v.into_iter()
-                    .map(|x| Entity::Actor(training_dataset.get_actor_label(x)))
+                    .map(|x| Entity::Actor(training_dataset.0.get_actor_label(x)))
                     .collect(),
             )
         })
@@ -210,17 +216,17 @@ fn add_scenario<'a>(
         .events
         .into_iter()
         .map(|x| ThetaRoles {
-            agent: x.agent.map(|x| training_dataset.get_actor_label(x)),
-            patient: x.patient.map(|x| training_dataset.get_actor_label(x)),
+            agent: x.agent.map(|x| training_dataset.0.get_actor_label(x)),
+            patient: x.patient.map(|x| training_dataset.0.get_actor_label(x)),
         })
         .collect();
 
     let properties = properties
         .into_iter()
-        .map(|(k, v)| (training_dataset.get_property_label(k), v))
+        .map(|(k, v)| (training_dataset.0.get_property_label(k), v))
         .collect();
 
-    training_dataset.scenarios.push(Scenario {
+    training_dataset.0.scenarios.push(Scenario {
         actors,
         thematic_relations,
         properties,
@@ -228,8 +234,8 @@ fn add_scenario<'a>(
 
     let s: Vec<String> = s.split(" ").map(ToString::to_string).collect();
 
-    training_dataset.lemmas.extend(s.clone());
-    training_dataset.sentences.push(s);
+    training_dataset.1.extend(s.clone());
+    training_dataset.0.sentences.push(s);
 }
 
 impl LabelledScenarios {

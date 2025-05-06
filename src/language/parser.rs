@@ -614,9 +614,6 @@ pub fn parse_executable(
 
 #[cfg(test)]
 mod tests {
-
-    use ahash::HashSet;
-
     use super::*;
     use crate::language::{ExprPool, LanguageResult, VariableBuffer};
     use crate::{LabelledScenarios, Scenario, ThetaRoles};
@@ -801,7 +798,7 @@ mod tests {
             property_labels,
             free_variables: HashMap::default(),
             sentences: vec![],
-            lemmas: HashSet::default(),
+            lemmas: vec![],
         };
         let (pool, root) = language_parser::<extra::Err<Rich<char>>>()
             .parse(statement)
@@ -966,7 +963,7 @@ mod tests {
             property_labels,
             free_variables: HashMap::default(),
             sentences: vec![],
-            lemmas: HashSet::default(),
+            lemmas: vec![],
         };
         parse_executable(
             "(lambda <e,t> P (P(a0)))(lambda e x (p_Red(x)))",
@@ -1007,7 +1004,7 @@ mod tests {
             property_labels,
             free_variables: HashMap::default(),
             sentences: vec![],
-            lemmas: HashSet::default(),
+            lemmas: vec![],
         };
 
         for statement in [
