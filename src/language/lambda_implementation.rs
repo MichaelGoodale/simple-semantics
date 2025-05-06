@@ -462,7 +462,6 @@ impl Expr {
 #[cfg(test)]
 mod test {
     use super::to_var;
-    use std::collections::HashMap;
 
     use crate::{
         Entity, LabelledScenarios,
@@ -475,12 +474,7 @@ mod test {
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {
-        let labels = LabelledScenarios {
-            scenarios: vec![],
-            actor_labels: HashMap::default(),
-            property_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
+        let labels = LabelledScenarios::default();
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let john = parser.parse_with_state("a_j", &mut label_state).unwrap();
@@ -524,12 +518,7 @@ mod test {
 
     #[test]
     fn printing() -> anyhow::Result<()> {
-        let labels = LabelledScenarios {
-            scenarios: vec![],
-            actor_labels: HashMap::default(),
-            property_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
+        let labels = LabelledScenarios::default();
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let pool = parser

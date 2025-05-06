@@ -1,9 +1,9 @@
 use ahash::RandomState;
-use chumsky::prelude::*;
+use chumsky::{prelude::*, text::inline_whitespace};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{
-    lambda::Fvar, Actor, Entity, Event, LabelledScenarios, PropertyLabel, Scenario, ThetaRoles,
+    Actor, Entity, Event, LabelledScenarios, PropertyLabel, Scenario, ThetaRoles, lambda::Fvar,
 };
 
 struct StringThetaRole<'a> {
@@ -17,6 +17,12 @@ struct StringEvents<'a> {
 }
 
 pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
+    let string = none_of("\"")
+        .repeated()
+        .to_slice()
+        .map(ToString::to_string)
+        .delimited_by(just('"'), just('"'));
+
     let properties = text::ident()
         .padded()
         .separated_by(just(','))
@@ -134,26 +140,23 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
             },
         );
 
-    let scenario = actors
-        .then((just(';')).ignore_then(events).or_not())
-        .padded()
-        .delimited_by(just('<'), just('>'));
+    let scenario = string.then_ignore(inline_whitespace().at_least(1)).then(
+        actors
+            .then((just(';')).ignore_then(events).or_not())
+            .padded()
+            .delimited_by(just('<'), just('>')),
+    );
 
     scenario
-        .map(|((actors, actor_props), events)| {
-            let mut dataset = LabelledScenarios {
-                scenarios: vec![],
-                actor_labels: HashMap::default(),
-                property_labels: HashMap::default(),
-                free_variables: HashMap::default(),
-            };
-            add_scenario(&mut dataset, actors, actor_props, events);
+        .map(|(s, ((actors, actor_props), events))| {
+            let mut dataset = LabelledScenarios::default();
+            add_scenario(&mut dataset, s, actors, actor_props, events);
             dataset
         })
         .foldl(
             text::newline().ignore_then(scenario).repeated(),
-            |mut dataset, ((actors, actor_props), events)| {
-                add_scenario(&mut dataset, actors, actor_props, events);
+            |mut dataset, (s, ((actors, actor_props), events))| {
+                add_scenario(&mut dataset, s, actors, actor_props, events);
                 dataset
             },
         )
@@ -163,6 +166,7 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, LabelledScenarios> {
 
 fn add_scenario<'a>(
     training_dataset: &mut LabelledScenarios,
+    s: String,
     actors: Vec<&'a str>,
     actor_props: HashMap<&'a str, Vec<&'a str>, RandomState>,
     events: Option<StringEvents>,
@@ -221,6 +225,11 @@ fn add_scenario<'a>(
         thematic_relations,
         properties,
     });
+
+    let s: Vec<String> = s.split(" ").map(ToString::to_string).collect();
+
+    training_dataset.lemmas.extend(s.clone());
+    training_dataset.sentences.push(s);
 }
 
 impl LabelledScenarios {
@@ -261,16 +270,20 @@ mod test {
 
     #[test]
     fn white_space_shenanigans() {
-        scenario_parser().parse("<John; {A: John (run)}>").unwrap();
-        scenario_parser().parse("<John ; {A: John (run)}>").unwrap();
         scenario_parser()
-            .parse("< John ; { A : John (run)}>")
+            .parse("\"blah\" <John; {A: John (run)}>")
             .unwrap();
         scenario_parser()
-            .parse("< John ; { A :  John ( run )  } >")
+            .parse("\" s\" <John ; {A: John (run)}>")
             .unwrap();
         scenario_parser()
-            .parse("< John; {A: John ( run)}>")
+            .parse("\"\" < John ; { A : John (run)}>")
+            .unwrap();
+        scenario_parser()
+            .parse("\"aaa\"      < John ; { A :  John ( run )  } >")
+            .unwrap();
+        scenario_parser()
+            .parse("\"aaa\" < John; {A: John ( run)}>")
             .unwrap();
     }
 
@@ -297,7 +310,7 @@ mod test {
         assert_eq!(
             scenarios,
             *scenario_parser()
-                .parse("<John>\n<Mary>\n<John>")
+                .parse("\"John\" <John>\n\"Mary\" <Mary>\n\"John\" <John>")
                 .unwrap()
                 .scenarios
         );
@@ -332,7 +345,7 @@ mod test {
         assert_eq!(
             scenarios,
             *scenario_parser()
-                .parse("<John; {A: John (run)}>\n<Mary; {A: Mary (run)}>\n<Mary, John; {A: John, P: Mary (see)}>")
+                .parse("\"John runs\" <John; {A: John (run)}>\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>")
                 .unwrap()
                 .scenarios
         );
@@ -350,7 +363,7 @@ mod test {
         assert_eq!(
             scenario,
             *scenario_parser()
-                .parse("<John>")
+                .parse("\"John\" <John>")
                 .unwrap()
                 .scenarios
                 .first()
@@ -359,7 +372,7 @@ mod test {
         assert_eq!(
             scenario,
             *scenario_parser()
-                .parse("<John;>")
+                .parse("\"John\" <John;>")
                 .unwrap()
                 .scenarios
                 .first()
@@ -368,7 +381,7 @@ mod test {
         assert_eq!(
             scenario,
             *scenario_parser()
-                .parse("< John; >")
+                .parse("\"John\" < John; >")
                 .unwrap()
                 .scenarios
                 .first()
@@ -386,7 +399,7 @@ mod test {
         assert_eq!(
             scenario,
             *scenario_parser()
-                .parse("<john;{}>")
+                .parse("\"john\" <john;{}>")
                 .unwrap()
                 .scenarios
                 .first()
@@ -415,7 +428,7 @@ mod test {
         assert_eq!(
             scenario,
             *scenario_parser()
-                .parse("<john,mary,phil;{A: john,P: mary},{A: mary},{P: phil}>")
+                .parse("\"john sees mary\" <john,mary,phil;{A: john,P: mary},{A: mary},{P: phil}>")
                 .unwrap()
                 .scenarios
                 .first()
@@ -448,7 +461,7 @@ mod test {
         assert_eq!(
             scenario,
             *scenario_parser()
-                .parse("<a (Red),b,c (Blue, Red);{(Green)},{A: a},{P: c (Blue)}>")
+                .parse("\"blue is blued\" <a (Red),b,c (Blue, Red);{(Green)},{A: a},{P: c (Blue)}>")
                 .unwrap()
                 .scenarios
                 .first()

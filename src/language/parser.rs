@@ -1,19 +1,19 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
+    Entity, LabelledScenarios,
     lambda::{
-        types::{core_type_parser, LambdaType},
         Bvar, LambdaExpr, LambdaExprRef, LambdaPool, RootedLambdaPool,
+        types::{LambdaType, core_type_parser},
     },
     language::{Constant, Expr, ExprRef, MonOp},
-    Entity, LabelledScenarios,
 };
 use anyhow::bail;
 use chumsky::prelude::*;
 use chumsky::{
     extra::ParserExtra,
     label::LabelError,
-    text::{inline_whitespace, TextExpected},
+    text::{TextExpected, inline_whitespace},
     util::MaybeRef,
 };
 
@@ -615,6 +615,8 @@ pub fn parse_executable(
 #[cfg(test)]
 mod tests {
 
+    use ahash::HashSet;
+
     use super::*;
     use crate::language::{ExprPool, LanguageResult, VariableBuffer};
     use crate::{LabelledScenarios, Scenario, ThetaRoles};
@@ -654,12 +656,7 @@ mod tests {
 
     #[test]
     fn parse_bin_op() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios {
-            scenarios: vec![],
-            actor_labels: HashMap::default(),
-            property_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
+        let mut labels = LabelledScenarios::default();
 
         for (s, result) in [
             (
@@ -751,12 +748,7 @@ mod tests {
     }
 
     fn get_pool(s: &str) -> (ExprPool, ExprRef) {
-        let mut labels = LabelledScenarios {
-            scenarios: vec![],
-            actor_labels: HashMap::default(),
-            property_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
+        let mut labels = LabelledScenarios::default();
         let (parse, root) = language_parser::<extra::Err<Rich<char>>>()
             .parse(s)
             .unwrap()
@@ -808,6 +800,8 @@ mod tests {
             actor_labels,
             property_labels,
             free_variables: HashMap::default(),
+            sentences: vec![],
+            lemmas: HashSet::default(),
         };
         let (pool, root) = language_parser::<extra::Err<Rich<char>>>()
             .parse(statement)
@@ -971,6 +965,8 @@ mod tests {
             actor_labels,
             property_labels,
             free_variables: HashMap::default(),
+            sentences: vec![],
+            lemmas: HashSet::default(),
         };
         parse_executable(
             "(lambda <e,t> P (P(a0)))(lambda e x (p_Red(x)))",
@@ -1010,6 +1006,8 @@ mod tests {
             actor_labels,
             property_labels,
             free_variables: HashMap::default(),
+            sentences: vec![],
+            lemmas: HashSet::default(),
         };
 
         for statement in [

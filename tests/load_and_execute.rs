@@ -44,6 +44,14 @@ fn load_dataset() -> anyhow::Result<()> {
 
     let data = LabelledScenarios::new(
         scenarios,
+        ["John ran", "Mary ran", "John saw Mary"]
+            .map(|x| x.split(" ").map(ToString::to_string).collect::<Vec<_>>())
+            .into_iter()
+            .collect::<Vec<_>>(),
+        ["John", "Mary", "ran", "saw"]
+            .map(ToString::to_string)
+            .into_iter()
+            .collect(),
         HashMap::from_iter([("run", 0), ("see", 1)].map(|(x, y)| (x.to_string(), y))),
         HashMap::from_iter([("John", 0), ("Mary", 1)].map(|(x, y)| (x.to_string(), y))),
         HashMap::default(),

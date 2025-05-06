@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use ahash::RandomState;
+use ahash::{HashSet, RandomState};
 use chumsky::prelude::*;
 use lambda::Fvar;
 use std::{collections::HashMap, fmt::Display, path::Path};
@@ -56,6 +56,8 @@ impl Scenario {
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct LabelledScenarios {
     scenarios: Vec<Scenario>,
+    sentences: Vec<Vec<String>>,
+    lemmas: HashSet<String>,
     property_labels: HashMap<String, PropertyLabel, RandomState>,
     actor_labels: HashMap<String, Actor, RandomState>,
     free_variables: HashMap<String, Fvar, RandomState>,
@@ -64,12 +66,16 @@ pub struct LabelledScenarios {
 impl LabelledScenarios {
     pub fn new(
         scenarios: Vec<Scenario>,
+        sentences: Vec<Vec<String>>,
+        lemmas: HashSet<String>,
         property_labels: HashMap<String, PropertyLabel, RandomState>,
         actor_labels: HashMap<String, Actor, RandomState>,
         free_variables: HashMap<String, Fvar, RandomState>,
     ) -> Self {
         LabelledScenarios {
             scenarios,
+            sentences,
+            lemmas,
             property_labels,
             actor_labels,
             free_variables,
@@ -110,5 +116,5 @@ impl LabelledScenarios {
 
 pub mod lambda;
 pub mod language;
-pub use language::{lot_parser, parse_executable, LanguageExpression, LanguageResult};
+pub use language::{LanguageExpression, LanguageResult, lot_parser, parse_executable};
 mod scenario;

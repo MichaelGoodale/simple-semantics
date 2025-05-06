@@ -1,4 +1,4 @@
-<Mary (woman), John (man), Phil (man); {A: John (sleep)}, {A: Phil (sleep)}>
-<Mary (woman), John (man), Phil (man); {A: Phil (sleep)}, {A: Mary (sleep)}>
-<Mary (woman), John (man), Phil (man); {A: John (sleep)}, {A: Phil (sleep)}, {A: Mary (sleep)}>
-<Mary (woman), John (man), Phil (man); {A: John (sleep)}>
+"John sleeps" <Mary (woman), John (man), Phil (man); {A: John (sleep)}, {A: Phil (sleep)}>
+"Mary sleeps" <Mary (woman), John (man), Phil (man); {A: Phil (sleep)}, {A: Mary (sleep)}>
+"Phil sleeps" <Mary (woman), John (man), Phil (man); {A: John (sleep)}, {A: Phil (sleep)}, {A: Mary (sleep)}>
+"John sleeps" <Mary (woman), John (man), Phil (man); {A: John (sleep)}>

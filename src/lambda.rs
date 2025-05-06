@@ -455,7 +455,6 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
 
     use super::*;
     use crate::{
@@ -720,12 +719,7 @@ mod test {
 
     #[test]
     fn test_root_and_merger() -> anyhow::Result<()> {
-        let labels = LabelledScenarios {
-            scenarios: vec![],
-            actor_labels: HashMap::default(),
-            property_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
+        let labels = LabelledScenarios::default();
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let man = parser
@@ -765,12 +759,7 @@ mod test {
 
     #[test]
     fn bind_free_variable() -> anyhow::Result<()> {
-        let labels = LabelledScenarios {
-            scenarios: vec![],
-            actor_labels: HashMap::default(),
-            property_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
+        let labels = LabelledScenarios::default();
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let mut pool = parser
@@ -788,12 +777,7 @@ mod test {
 
     #[test]
     fn apply_new_free_variable() -> anyhow::Result<()> {
-        let labels = LabelledScenarios {
-            scenarios: vec![],
-            actor_labels: HashMap::default(),
-            property_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
+        let labels = LabelledScenarios::default();
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let mut pool = parser
@@ -831,12 +815,7 @@ mod test {
 
     #[test]
     fn lambda_abstraction() -> anyhow::Result<()> {
-        let labels = LabelledScenarios {
-            scenarios: vec![],
-            actor_labels: HashMap::default(),
-            property_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
+        let labels = LabelledScenarios::default();
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let mut pool = parser
