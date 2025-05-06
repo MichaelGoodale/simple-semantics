@@ -203,7 +203,7 @@ impl RootedLambdaPool<Expr> {
         }
     }
 
-    fn random_expr(
+    pub fn random_expr(
         lambda_type: LambdaType,
         available_actors: &[Entity],
         rng: &mut impl Rng,
