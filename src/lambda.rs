@@ -166,16 +166,18 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         Ok(())
     }
 
-    pub fn apply_new_free_variable(&mut self, fvar: Fvar) -> anyhow::Result<()> {
+    pub fn apply_new_free_variable(&mut self, fvar: Fvar) -> anyhow::Result<LambdaType> {
         let pool_type = self.pool.get_type(self.root)?;
         let var_type = pool_type.lhs()?;
-        let argument = self.pool.add(LambdaExpr::FreeVariable(fvar, var_type));
+        let argument = self
+            .pool
+            .add(LambdaExpr::FreeVariable(fvar, var_type.clone()));
         self.root = self.pool.add(LambdaExpr::Application {
             subformula: self.root,
             argument,
         });
         self.reduce()?;
-        Ok(())
+        Ok(var_type)
     }
 }
 
