@@ -137,30 +137,32 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         Ok(())
     }
 
-    pub fn lambda_abstract_free_variable(&mut self, fvar: Fvar) -> anyhow::Result<()> {
+    pub fn lambda_abstract_free_variable(
+        &mut self,
+        fvar: Fvar,
+        lambda_type: LambdaType,
+    ) -> anyhow::Result<()> {
         let vars = self
             .pool
             .bfs_from(self.root)
             .filter_map(|(x, d)| match self.pool.get(x) {
-                LambdaExpr::FreeVariable(var, lambda_type) if *var == fvar => {
-                    Some((x, d, lambda_type.clone()))
+                LambdaExpr::FreeVariable(var, var_type) if *var == fvar => {
+                    if &lambda_type != var_type {
+                        Some(anyhow::Result::Err(anyhow::anyhow!(
+                            "Invalid type substitution"
+                        )))
+                    } else {
+                        Some(Ok((x, d)))
+                    }
                 }
                 _ => None,
             })
-            .collect::<Vec<_>>();
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
-        let mut lambda_type = None;
-        for (x, lambda_depth, inner_lambda_type) in vars.into_iter() {
-            if lambda_type.is_none() {
-                lambda_type = Some(inner_lambda_type.clone());
-            }
-            *self.pool.get_mut(x) = LambdaExpr::BoundVariable(lambda_depth, inner_lambda_type);
+        for (x, lambda_depth) in vars.into_iter() {
+            *self.pool.get_mut(x) = LambdaExpr::BoundVariable(lambda_depth, lambda_type.clone());
         }
-        if let Some(lambda_type) = lambda_type {
-            //This way we only abstract if there is such a free
-            //variable
-            self.root = self.pool.add(LambdaExpr::Lambda(self.root, lambda_type));
-        }
+        self.root = self.pool.add(LambdaExpr::Lambda(self.root, lambda_type));
         Ok(())
     }
 
@@ -825,7 +827,7 @@ mod test {
             )
             .unwrap();
 
-        pool.lambda_abstract_free_variable(0)?;
+        pool.lambda_abstract_free_variable(0, LambdaType::et())?;
 
         let gold_pool = RootedLambdaPool {
             pool: LambdaPool(vec![
