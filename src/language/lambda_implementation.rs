@@ -326,9 +326,10 @@ fn add_expr<'a>(
             LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(constant))
         }
         UnbuiltExpr::Lambda(lambda_type) => {
-            children.push((cur_size + 1, lambda_type.rhs_clone().unwrap()));
-            context.lambdas.push(lambda_type.lhs_clone().unwrap());
-            LambdaExpr::Lambda(LambdaExprRef(cur_size + 1), lambda_type)
+            let (lhs, rhs) = lambda_type.split().unwrap();
+            children.push((cur_size + 1, rhs));
+            context.lambdas.push(lhs.clone());
+            LambdaExpr::Lambda(LambdaExprRef(cur_size + 1), lhs)
         }
         UnbuiltExpr::BoundVariable(bvar, lambda_type) => {
             LambdaExpr::BoundVariable(bvar, lambda_type)
@@ -554,6 +555,7 @@ mod test {
             let t = LambdaType::random(&mut rng);
             let pool = RootedLambdaPool::random_expr(t.clone(), &actors, None, &mut rng);
             println!("{}: {}", t, pool);
+            assert_eq!(t, pool.get_type()?);
         }
         Ok(())
     }

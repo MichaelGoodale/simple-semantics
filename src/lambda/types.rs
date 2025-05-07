@@ -89,6 +89,13 @@ impl LambdaType {
         }
     }
 
+    pub fn split(self) -> anyhow::Result<(LambdaType, LambdaType)> {
+        match self {
+            LambdaType::Composition(a, b) => Ok((*a, *b)),
+            LambdaType::E | LambdaType::T => bail!("Cannot split an atomic type"),
+        }
+    }
+
     pub fn apply(self, other: &Self) -> anyhow::Result<Self> {
         if !self.can_apply(other) {
             bail!("Cannot apply {other} to {self}!")
