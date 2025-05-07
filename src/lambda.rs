@@ -159,6 +159,10 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
+        if vars.is_empty() {
+            bail!("can't abstract");
+        }
+
         for (x, lambda_depth) in vars.into_iter() {
             *self.pool.get_mut(x) = LambdaExpr::BoundVariable(lambda_depth, lambda_type.clone());
         }
