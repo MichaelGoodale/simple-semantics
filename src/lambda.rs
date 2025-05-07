@@ -141,6 +141,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         &mut self,
         fvar: Fvar,
         lambda_type: LambdaType,
+        always_abstract: bool,
     ) -> anyhow::Result<()> {
         let vars = self
             .pool
@@ -159,7 +160,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
-        if !vars.is_empty() {
+        if !vars.is_empty() || always_abstract {
             for (x, lambda_depth) in vars.into_iter() {
                 *self.pool.get_mut(x) =
                     LambdaExpr::BoundVariable(lambda_depth, lambda_type.clone());
@@ -832,7 +833,7 @@ mod test {
             )
             .unwrap();
 
-        pool.lambda_abstract_free_variable(0, LambdaType::et())?;
+        pool.lambda_abstract_free_variable(0, LambdaType::et(), false)?;
 
         let gold_pool = RootedLambdaPool {
             pool: LambdaPool(vec![
