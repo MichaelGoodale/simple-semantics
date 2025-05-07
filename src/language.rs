@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
+use anyhow::bail;
 use lambda_implementation::to_var;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -119,7 +120,7 @@ impl Display for LanguageExpression {
 }
 
 impl LanguageExpression {
-    pub fn run(&self, scenario: &Scenario) -> LanguageResult {
+    pub fn run(&self, scenario: &Scenario) -> anyhow::Result<LanguageResult> {
         let mut variables = VariableBuffer::default();
         self.pool.interp(self.start, scenario, &mut variables)
     }
@@ -195,56 +196,56 @@ enum LanguageResultType {
 }
 
 impl TryFrom<LanguageResult> for Event {
-    type Error = ();
+    type Error = anyhow::Error;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Entity(Entity::Event(x)) => Ok(x),
-            _ => Err(()),
+            _ => bail!("Not an event!"),
         }
     }
 }
 
 impl TryFrom<LanguageResult> for Entity {
-    type Error = ();
+    type Error = anyhow::Error;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Entity(x) => Ok(x),
-            _ => Err(()),
+            _ => bail!("Not an entity!"),
         }
     }
 }
 
 impl TryFrom<LanguageResult> for Actor {
-    type Error = ();
+    type Error = anyhow::Error;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Entity(Entity::Actor(x)) => Ok(x),
-            _ => Err(()),
+            _ => bail!("Not an actor!"),
         }
     }
 }
 
 impl TryFrom<LanguageResult> for bool {
-    type Error = ();
+    type Error = anyhow::Error;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Bool(vec) => Ok(vec),
-            _ => Err(()),
+            _ => bail!("Not a boolean!"),
         }
     }
 }
 
 impl TryFrom<LanguageResult> for Vec<Entity> {
-    type Error = ();
+    type Error = anyhow::Error;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::EntitySet(vec) => Ok(vec),
-            _ => Err(()),
+            _ => bail!("Not vector of entities!"),
         }
     }
 }
@@ -297,8 +298,8 @@ impl ExprPool {
         expr: ExprRef,
         scenario: &Scenario,
         variables: &mut VariableBuffer,
-    ) -> LanguageResult {
-        match self.get(expr) {
+    ) -> anyhow::Result<LanguageResult> {
+        Ok(match self.get(expr) {
             Expr::Quantifier {
                 quantifier,
                 var,
@@ -313,9 +314,8 @@ impl ExprPool {
                         for e in scenario.actors.iter() {
                             variables.set(*var, Entity::Actor(*e));
                             let truth_value_for_e: bool = self
-                                .interp(*restrictor, scenario, &mut variables)
-                                .try_into()
-                                .unwrap();
+                                .interp(*restrictor, scenario, &mut variables)?
+                                .try_into()?;
                             if truth_value_for_e {
                                 domain.push(Entity::Actor(*e))
                             }
@@ -324,15 +324,13 @@ impl ExprPool {
                     }
                     LanguageResultType::Entity => {
                         let e: Entity = self
-                            .interp(*restrictor, scenario, &mut variables)
-                            .try_into()
-                            .unwrap();
+                            .interp(*restrictor, scenario, &mut variables)?
+                            .try_into()?;
                         vec![e]
                     }
                     LanguageResultType::EntitySet => self
-                        .interp(*restrictor, scenario, &mut variables)
-                        .try_into()
-                        .unwrap(),
+                        .interp(*restrictor, scenario, &mut variables)?
+                        .try_into()?,
                 };
 
                 let mut result = match quantifier {
@@ -342,9 +340,8 @@ impl ExprPool {
                 for e in domain {
                     variables.set(*var, e);
                     let subformula_value: bool = self
-                        .interp(*subformula, scenario, &mut variables)
-                        .try_into()
-                        .unwrap();
+                        .interp(*subformula, scenario, &mut variables)?
+                        .try_into()?;
                     result = match quantifier {
                         Quantifier::Universal => subformula_value && result,
                         Quantifier::Existential => subformula_value || result,
@@ -355,12 +352,12 @@ impl ExprPool {
             Expr::Variable(i) => LanguageResult::Entity(variables.get(*i).unwrap()),
             Expr::Entity(a) => LanguageResult::Entity(*a),
             Expr::Binary(bin_op, lhs, rhs) => {
-                let lhs = self.interp(*lhs, scenario, variables);
-                let rhs = self.interp(*rhs, scenario, variables);
+                let lhs = self.interp(*lhs, scenario, variables)?;
+                let rhs = self.interp(*rhs, scenario, variables)?;
                 match bin_op {
                     BinOp::PatientOf | BinOp::AgentOf => {
-                        let a: Actor = lhs.try_into().unwrap();
-                        let e: Event = rhs.try_into().unwrap();
+                        let a: Actor = lhs.try_into()?;
+                        let e: Event = rhs.try_into()?;
                         match bin_op {
                             BinOp::AgentOf => match scenario.thematic_relations[e as usize].agent {
                                 Some(x) => LanguageResult::Bool(x == a),
@@ -376,8 +373,8 @@ impl ExprPool {
                         }
                     }
                     BinOp::Or | BinOp::And => {
-                        let phi: bool = lhs.try_into().unwrap();
-                        let psi: bool = rhs.try_into().unwrap();
+                        let phi: bool = lhs.try_into()?;
+                        let psi: bool = rhs.try_into()?;
                         LanguageResult::Bool(match bin_op {
                             BinOp::And => phi && psi,
                             BinOp::Or => phi || psi,
@@ -403,13 +400,13 @@ impl ExprPool {
                 },
             },
             Expr::Unary(mon_op, arg) => {
-                let arg = self.interp(*arg, scenario, variables);
+                let arg = self.interp(*arg, scenario, variables)?;
                 match mon_op {
-                    MonOp::Not => LanguageResult::Bool(!TryInto::<bool>::try_into(arg).unwrap()),
+                    MonOp::Not => LanguageResult::Bool(!TryInto::<bool>::try_into(arg)?),
                     MonOp::Contradiction => LanguageResult::Bool(false),
                     MonOp::Tautology => LanguageResult::Bool(true),
                     MonOp::Property(e) => {
-                        let arg: Entity = arg.try_into().unwrap();
+                        let arg: Entity = arg.try_into()?;
                         match scenario.properties.get(e) {
                             Some(property_members) => {
                                 LanguageResult::Bool(property_members.contains(&arg))
@@ -419,7 +416,7 @@ impl ExprPool {
                     }
                 }
             }
-        }
+        })
     }
 }
 
@@ -439,7 +436,7 @@ mod tests {
     use crate::ThetaRoles;
 
     #[test]
-    fn agent_of_and_patient_of() {
+    fn agent_of_and_patient_of() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             actors: vec![0, 1],
@@ -457,7 +454,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            simple_expr.interp(ExprRef(2), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(2), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(true)
         );
 
@@ -467,13 +464,14 @@ mod tests {
             Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(2), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(2), &simple_scenario, &mut variables)?,
             LanguageResult::PresuppositionError
         );
+        Ok(())
     }
 
     #[test]
-    fn quantification() {
+    fn quantification() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             actors: vec![0, 1],
@@ -511,7 +509,7 @@ mod tests {
             Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(true)
         );
 
@@ -536,13 +534,14 @@ mod tests {
             Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(false)
         );
+        Ok(())
     }
 
     #[test]
-    fn logic() {
+    fn logic() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             actors: vec![0, 1],
@@ -564,7 +563,7 @@ mod tests {
                 ExprRef(0),
                 &simple_scenario,
                 &mut variables
-            ),
+            )?,
             LanguageResult::Bool(false)
         );
 
@@ -573,7 +572,7 @@ mod tests {
                 ExprRef(0),
                 &simple_scenario,
                 &mut variables
-            ),
+            )?,
             LanguageResult::Bool(true)
         );
 
@@ -583,7 +582,7 @@ mod tests {
             Expr::Constant(Constant::Contradiction),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(true)
         );
 
@@ -593,7 +592,7 @@ mod tests {
             Expr::Constant(Constant::Tautology),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(false)
         );
 
@@ -605,7 +604,7 @@ mod tests {
             Expr::Constant(Constant::Contradiction),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(true)
         );
 
@@ -617,7 +616,7 @@ mod tests {
             Expr::Constant(Constant::Contradiction),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(false)
         );
 
@@ -644,13 +643,14 @@ mod tests {
             Expr::Constant(Constant::Tautology),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(false)
         );
+        Ok(())
     }
 
     #[test]
-    fn properties() {
+    fn properties() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
         properties.insert(1, vec![Entity::Actor(0), Entity::Actor(1)]);
@@ -683,7 +683,7 @@ mod tests {
             Expr::Variable(Variable(0)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(true)
         );
         // someone is of property type 534.
@@ -699,13 +699,14 @@ mod tests {
             Expr::Variable(Variable(0)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(true)
         );
+        Ok(())
     }
 
     #[test]
-    fn complicated_restrictors() {
+    fn complicated_restrictors() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
         properties.insert(534, vec![Entity::Actor(1)]);
@@ -741,7 +742,7 @@ mod tests {
             Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(true)
         );
         // all property type 2 objects are agents of a 235-event (which is false)
@@ -765,7 +766,7 @@ mod tests {
             Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(false)
         );
 
@@ -806,7 +807,7 @@ mod tests {
             Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(true)
         );
         //All property type 2 and property type 3 actors are patients of an event
@@ -834,8 +835,9 @@ mod tests {
             Expr::Variable(Variable(1)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables),
+            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(false)
         );
+        Ok(())
     }
 }

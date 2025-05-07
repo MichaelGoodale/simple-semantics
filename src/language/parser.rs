@@ -758,7 +758,7 @@ mod tests {
     fn get_parse(s: &str, simple_scenario: &Scenario) -> LanguageResult {
         let mut variables = VariableBuffer(vec![]);
         let (pool, root) = get_pool(s);
-        pool.interp(root, simple_scenario, &mut variables)
+        pool.interp(root, simple_scenario, &mut variables).unwrap()
     }
 
     fn check_lambdas(
@@ -1024,7 +1024,7 @@ mod tests {
             println!("{statement}");
             let expression = parse_executable(statement, &mut labels)?;
             assert_eq!(
-                expression.run(&labels.scenarios[0]),
+                expression.run(&labels.scenarios[0])?,
                 LanguageResult::Bool(true)
             );
         }
@@ -1039,7 +1039,7 @@ mod tests {
         ] {
             println!("{statement}");
             let expression = parse_executable(statement, &mut labels)?;
-            assert_eq!(expression.run(&labels.scenarios[0]), result);
+            assert_eq!(expression.run(&labels.scenarios[0])?, result);
         }
 
         Ok(())
