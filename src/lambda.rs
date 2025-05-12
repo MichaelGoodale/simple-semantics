@@ -1,5 +1,8 @@
 use anyhow::{Context, bail};
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    fmt::Debug,
+};
 
 pub mod types;
 use types::LambdaType;
@@ -389,7 +392,12 @@ where
                 }
             }
         }
-        self.0.swap(inner_term.0 as usize, app.0 as usize);
+
+        //We used to swap this, but that will cause an insanely arcane bug.
+        //This is because the same term may be referred to by multiple instructions so if you swap
+        //them, it gets invalidated.
+        self.0[app.0 as usize] = self.0[inner_term.0 as usize].clone();
+        //self.0.swap(inner_term.0 as usize, app.0 as usize); <- BAD
 
         Ok(())
     }
@@ -866,6 +874,23 @@ mod test {
         };
 
         assert_eq!(pool, gold_pool);
+        Ok(())
+    }
+
+    #[test]
+    fn could_time_out_if_swapping_instead_of_cloning() -> anyhow::Result<()> {
+        let p = lot_parser();
+        let mut state = extra::SimpleState(LabelledScenarios::default());
+        let mut x = p
+            .parse_with_state(
+                "(lambda e x_l (PatientOf(x_l,x_l)))((lambda e x_l (a1))(a0))",
+                &mut state,
+            )
+            .unwrap();
+
+        println!("{x}");
+        x.reduce()?;
+        println!("{x}");
         Ok(())
     }
 }
