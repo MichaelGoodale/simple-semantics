@@ -209,7 +209,7 @@ mod test {
     use super::to_var;
 
     use crate::{
-        Entity, LabelledScenarios,
+        LabelledScenarios,
         lambda::{RootedLambdaPool, types::LambdaType},
         lot_parser,
     };
@@ -294,13 +294,15 @@ mod test {
     #[test]
     fn randomness() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = [Entity::Actor(0), Entity::Actor(1)];
+        let actors = [0, 1];
+        let properties = [0, 1, 2, 3];
         for _ in 0..100 {
             let t = LambdaType::random(&mut rng);
-            let pool = RootedLambdaPool::random_expr(t.clone(), &actors, None, &mut rng);
+            let pool =
+                RootedLambdaPool::random_expr(t.clone(), &actors, &properties, None, &mut rng);
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
-            let pool = pool.resample_from_expr(&actors, None, &mut rng);
+            let pool = pool.resample_from_expr(&actors, &properties, None, &mut rng);
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
         }

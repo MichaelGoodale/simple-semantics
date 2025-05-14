@@ -1,11 +1,14 @@
 use std::collections::VecDeque;
 
+use crate::{Actor, PropertyLabel};
+
 use super::*;
 
 impl RootedLambdaPool<Expr> {
     pub fn resample_from_expr(
         self,
-        available_actors: &[Entity],
+        available_actors: &[Actor],
+        available_properties: &[PropertyLabel],
         config: Option<&RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> Self {
@@ -13,7 +16,10 @@ impl RootedLambdaPool<Expr> {
         let position = LambdaExprRef(rng.random_range(0..self.len()) as u32);
         let mut pos_context = None;
 
-        for (n, x) in self.context_bfs_iter(available_actors).enumerate() {
+        for (n, x) in self
+            .context_bfs_iter(available_actors, available_properties)
+            .enumerate()
+        {
             if n == position.0 as usize {
                 pos_context = Some(x);
                 break;
@@ -35,7 +41,8 @@ impl RootedLambdaPool<Expr> {
 
     pub fn random_expr(
         lambda_type: LambdaType,
-        available_actors: &[Entity],
+        available_actors: &[Actor],
+        available_properties: &[PropertyLabel],
         config: Option<&RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> Self {
@@ -45,6 +52,7 @@ impl RootedLambdaPool<Expr> {
             lambdas: vec![],
             available_vars: vec![],
             available_actors,
+            available_properties,
         };
         let config = config.unwrap_or(&DEFAULT_CONFIG);
 
@@ -81,14 +89,15 @@ fn build_out_pool(
 struct Context<'a> {
     lambdas: Vec<LambdaType>,
     available_vars: Vec<Variable>,
-    available_actors: &'a [Entity],
+    available_actors: &'a [Actor],
+    available_properties: &'a [PropertyLabel],
 }
 
 impl Context<'_> {
     fn sample_actor(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
         self.available_actors
             .iter()
-            .map(|x| UnbuiltExpr::Entity(*x))
+            .map(|x| UnbuiltExpr::Entity(Entity::Actor(*x)))
             .chain(
                 self.available_vars
                     .iter()
@@ -290,6 +299,12 @@ impl Expr {
                 .map(UnbuiltExpr::Constant)
                 .to_vec();
 
+            options.extend(
+                context
+                    .available_properties
+                    .iter()
+                    .map(|i| UnbuiltExpr::Constant(Constant::Property(*i))),
+            );
             let choice = (0..options.len()).choose(rng).unwrap();
             Some(options.remove(choice))
         } else {
@@ -297,7 +312,6 @@ impl Expr {
                 LambdaType::T => {
                     let mut options: Vec<UnbuiltExpr> = vec![
                         UnbuiltExpr::Unary(MonOp::Not),
-                        UnbuiltExpr::Unary(MonOp::Property(0)),
                         UnbuiltExpr::Binary(BinOp::AgentOf),
                         UnbuiltExpr::Binary(BinOp::PatientOf),
                         UnbuiltExpr::Binary(BinOp::And),
@@ -305,6 +319,12 @@ impl Expr {
                         UnbuiltExpr::Quantifier(Quantifier::Existential),
                         UnbuiltExpr::Quantifier(Quantifier::Universal),
                     ];
+                    options.extend(
+                        context
+                            .available_properties
+                            .iter()
+                            .map(|i| UnbuiltExpr::Unary(MonOp::Property(*i))),
+                    );
 
                     let choice = config.random_t(rng);
                     Some(options.remove(choice))
@@ -366,7 +386,8 @@ impl<'b> Iterator for ContextBFSIterator<'_, 'b> {
 impl RootedLambdaPool<Expr> {
     fn context_bfs_iter<'a, 'b>(
         &'a self,
-        available_actors: &'b [Entity],
+        available_actors: &'b [Actor],
+        available_properties: &'b [PropertyLabel],
     ) -> ContextBFSIterator<'a, 'b> {
         let mut queue = VecDeque::new();
         queue.push_back((
@@ -375,6 +396,7 @@ impl RootedLambdaPool<Expr> {
                 lambdas: vec![],
                 available_vars: vec![],
                 available_actors,
+                available_properties,
             },
         ));
         ContextBFSIterator { pool: self, queue }

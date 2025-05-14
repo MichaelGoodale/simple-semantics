@@ -51,6 +51,17 @@ impl Scenario {
             properties,
         }
     }
+    pub fn thematic_relations(&self) -> &[ThetaRoles] {
+        &self.thematic_relations
+    }
+
+    pub fn properties(&self) -> &HashMap<PropertyLabel, Vec<Entity>, RandomState> {
+        &self.properties
+    }
+
+    pub fn actors(&self) -> &[Actor] {
+        &self.actors
+    }
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
