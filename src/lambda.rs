@@ -475,7 +475,7 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum LambdaSummaryStats {
+pub enum LambdaSummaryStats {
     WellFormed {
         lambda_type: LambdaType,
         has_variable: bool,
@@ -486,7 +486,7 @@ enum LambdaSummaryStats {
 }
 
 impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
-    fn stats(&self) -> LambdaSummaryStats {
+    pub fn stats(&self) -> LambdaSummaryStats {
         let lambda_type = self.get_type();
         if lambda_type.is_err() {
             return LambdaSummaryStats::Malformed;
