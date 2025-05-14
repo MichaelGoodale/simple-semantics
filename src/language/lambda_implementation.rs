@@ -14,7 +14,7 @@ use rand::{
     seq::IteratorRandom,
 };
 
-mod mutations;
+pub mod mutations;
 
 impl LambdaLanguageOfThought for Expr {
     type Pool = LanguageExpression;
