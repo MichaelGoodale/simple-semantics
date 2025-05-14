@@ -98,11 +98,26 @@ impl Context<'_> {
         self.available_actors
             .iter()
             .map(|x| UnbuiltExpr::Entity(Entity::Actor(*x)))
-            .chain(
-                self.available_vars
-                    .iter()
-                    .map(|x| UnbuiltExpr::Variable(*x)),
-            )
+            .chain(self.available_vars.iter().filter_map(|x| {
+                if matches!(x, Variable::Actor(_)) {
+                    Some(UnbuiltExpr::Variable(*x))
+                } else {
+                    None
+                }
+            }))
+            .choose(rng)
+    }
+
+    fn sample_event(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
+        self.available_vars
+            .iter()
+            .filter_map(|x| {
+                if matches!(x, Variable::Event(_)) {
+                    Some(UnbuiltExpr::Variable(*x))
+                } else {
+                    None
+                }
+            })
             .choose(rng)
     }
 
@@ -213,16 +228,16 @@ struct Fresher(u32);
 impl Fresher {
     fn fresh(&mut self) -> Variable {
         self.0 += 1;
-        Variable(self.0)
+        Variable::Actor(self.0)
     }
 
     fn new(pool: &[Option<LambdaExpr<Expr>>]) -> Self {
         Fresher(
             pool.iter()
                 .filter_map(|x| match x {
-                    Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v))) => Some(v.0),
+                    Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v))) => Some(v.id()),
                     Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var, .. })) => {
-                        Some(var.0)
+                        Some(var.id())
                     }
                     _ => None,
                 })

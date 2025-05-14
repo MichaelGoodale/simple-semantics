@@ -33,6 +33,7 @@ const RESERVED_KEYWORDS: [&str; 9] = [
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum ParsingType {
+    A,
     E,
     T,
     Composition(Option<Box<Self>>, Option<Box<Self>>),
@@ -45,6 +46,7 @@ impl TryFrom<&ParsingType> for LambdaType {
     fn try_from(value: &ParsingType) -> Result<Self, Self::Error> {
         match value {
             ParsingType::E => Ok(LambdaType::E),
+            ParsingType::A => Ok(LambdaType::A),
             ParsingType::T => Ok(LambdaType::T),
             ParsingType::Composition(Some(lhs), Some(rhs)) => Ok(LambdaType::Composition(
                 Box::new(LambdaType::try_from(lhs.as_ref())?),
@@ -71,6 +73,7 @@ impl From<&LambdaType> for ParsingType {
     fn from(value: &LambdaType) -> Self {
         match value {
             LambdaType::E => ParsingType::E,
+            LambdaType::A => ParsingType::A,
             LambdaType::T => ParsingType::T,
             LambdaType::Composition(lhs, rhs) => ParsingType::Composition(
                 Some(Box::new(ParsingType::from(lhs.as_ref()))),
@@ -97,6 +100,7 @@ impl ParsingType {
     fn to_lambda_type(&self) -> anyhow::Result<LambdaType> {
         Ok(match self {
             ParsingType::E => LambdaType::E,
+            ParsingType::A => LambdaType::A,
             ParsingType::T => LambdaType::T,
             ParsingType::Composition(Some(a), Some(b)) => LambdaType::Composition(
                 Box::new(a.to_lambda_type()?),
@@ -165,7 +169,7 @@ impl<'src> TypedParseTree<'src> {
                 variable_names.unbind(variable);
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: *quantifier,
-                    var: Variable(var),
+                    var: Variable::Actor(var),
                     restrictor,
                     subformula,
                 })
@@ -203,7 +207,7 @@ impl<'src> TypedParseTree<'src> {
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum ContextVar {
-    QuantifierVar(u32),
+    QuantifierVar(Variable),
     LambdaVar(Bvar, LambdaType),
 }
 
@@ -224,7 +228,7 @@ impl<'src> VariableContext<'src> {
                 .expect("There should never be an empty vec in the VariableContext")
             {
                 ContextVar::QuantifierVar(q) => {
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(Variable(*q)))
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(*q))
                 }
                 ContextVar::LambdaVar(og_depth, lambda_type) => {
                     LambdaExpr::BoundVariable(lambda_depth - og_depth, lambda_type.clone())
@@ -249,7 +253,7 @@ impl<'src> VariableContext<'src> {
         self.0
             .entry(variable)
             .or_default()
-            .push(ContextVar::QuantifierVar(n));
+            .push(ContextVar::QuantifierVar(Variable::Actor(n)));
         self.1 += 1;
         n
     }

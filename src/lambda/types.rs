@@ -12,6 +12,7 @@ use rand::Rng;
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub enum LambdaType {
     #[default]
+    A,
     E,
     T,
     Composition(Box<Self>, Box<Self>),
@@ -22,7 +23,11 @@ where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
 {
-    let atom = choice((just('e').to(LambdaType::E), just('t').to(LambdaType::T)));
+    let atom = choice((
+        just('e').to(LambdaType::E),
+        just('t').to(LambdaType::T),
+        just('a').to(LambdaType::A),
+    ));
     recursive(|expr| {
         atom.or((expr.clone().then_ignore(just(',').padded()).then(expr))
             .map(|(x, y)| LambdaType::Composition(Box::new(x), Box::new(y)))
@@ -73,7 +78,7 @@ impl LambdaType {
 
     pub fn can_apply(&self, other: &Self) -> bool {
         match self {
-            LambdaType::T | LambdaType::E => false,
+            LambdaType::T | LambdaType::E | LambdaType::A => false,
             LambdaType::Composition(lhs, _) => **lhs == *other,
         }
     }
@@ -85,14 +90,16 @@ impl LambdaType {
 
         match self {
             LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::T | LambdaType::E => bail!("Cannot apply to a primitive type"),
+            LambdaType::A | LambdaType::T | LambdaType::E => {
+                bail!("Cannot apply to a primitive type")
+            }
         }
     }
 
     pub fn split(self) -> anyhow::Result<(LambdaType, LambdaType)> {
         match self {
             LambdaType::Composition(a, b) => Ok((*a, *b)),
-            LambdaType::E | LambdaType::T => bail!("Cannot split an atomic type"),
+            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Cannot split an atomic type"),
         }
     }
 
@@ -103,41 +110,43 @@ impl LambdaType {
 
         match self {
             LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::T | LambdaType::E => bail!("Cannot apply to a primitive type"),
+            LambdaType::A | LambdaType::T | LambdaType::E => {
+                bail!("Cannot apply to a primitive type")
+            }
         }
     }
 
     pub fn is_function(&self) -> bool {
         match self {
             LambdaType::Composition(..) => true,
-            LambdaType::E | LambdaType::T => false,
+            LambdaType::A | LambdaType::E | LambdaType::T => false,
         }
     }
 
     pub fn rhs_clone(&self) -> anyhow::Result<Self> {
         match self {
             LambdaType::Composition(_, rhs) => Ok(*rhs.clone()),
-            LambdaType::E | LambdaType::T => bail!("Type clash!"),
+            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
         }
     }
 
     pub fn lhs_clone(&self) -> anyhow::Result<Self> {
         match self {
             LambdaType::Composition(lhs, ..) => Ok(*lhs.clone()),
-            LambdaType::E | LambdaType::T => bail!("Type clash!"),
+            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
         }
     }
     pub fn lhs(self) -> anyhow::Result<Self> {
         match self {
             LambdaType::Composition(lhs, ..) => Ok(*lhs.clone()),
-            LambdaType::E | LambdaType::T => bail!("Type clash!"),
+            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
         }
     }
 
     pub fn rhs(self) -> anyhow::Result<Self> {
         match self {
             LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::E | LambdaType::T => bail!("Type clash!"),
+            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
         }
     }
 }
@@ -147,6 +156,7 @@ impl Display for LambdaType {
         match self {
             LambdaType::E => write!(f, "e"),
             LambdaType::T => write!(f, "t"),
+            LambdaType::A => write!(f, "a"),
             LambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
         }
     }
@@ -155,8 +165,10 @@ impl Display for LambdaType {
 impl LambdaType {
     pub fn random(r: &mut impl Rng) -> Self {
         let p: f64 = r.random();
-        if p < 0.4 {
+        if p < 0.25 {
             LambdaType::E
+        } else if p < 0.55 {
+            LambdaType::A
         } else if p < 0.8 {
             LambdaType::T
         } else {

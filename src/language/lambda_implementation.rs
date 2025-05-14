@@ -57,7 +57,8 @@ impl LambdaLanguageOfThought for Expr {
     fn get_type(&self) -> LambdaType {
         match self {
             Expr::Quantifier { .. } => LambdaType::T,
-            Expr::Variable(_) => LambdaType::E,
+            Expr::Variable(Variable::Event(_)) => LambdaType::E,
+            Expr::Variable(Variable::Actor(_)) => LambdaType::E,
             Expr::Entity(_) => LambdaType::E,
             Expr::Binary(bin, ..) => match bin {
                 BinOp::AgentOf | BinOp::PatientOf | BinOp::And | BinOp::Or => LambdaType::T,
@@ -90,12 +91,12 @@ impl LambdaLanguageOfThought for Expr {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
                 | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
                     if let Some(max_var) = max_var.as_mut() {
-                        let v = v.0;
+                        let v = v.id();
                         if v > *max_var {
                             *max_var = v;
                         }
                     } else {
-                        max_var = Some(v.0);
+                        max_var = Some(v.id());
                     }
                 }
                 _ => (),
@@ -107,7 +108,10 @@ impl LambdaLanguageOfThought for Expr {
                 match x {
                     LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
                     | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
-                        *v = Variable(max_var + v.0 + 1);
+                        *v = match v {
+                            Variable::Actor(a) => Variable::Actor(max_var + *a + 1),
+                            Variable::Event(e) => Variable::Event(max_var + *e + 1),
+                        }
                     }
                     _ => (),
                 }
@@ -170,11 +174,11 @@ impl RootedLambdaPool<Expr> {
                 } => format!(
                     "{}({},{},{})",
                     quantifier,
-                    to_var(var.0 as usize),
+                    var.to_string(),
                     self.string(LambdaExprRef(restrictor.0), lambda_depth),
                     self.string(LambdaExprRef(subformula.0), lambda_depth)
                 ),
-                Expr::Variable(variable) => to_var(variable.0 as usize),
+                Expr::Variable(variable) => variable.to_string(),
                 Expr::Entity(entity) => format!("{}", entity),
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {
