@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
-    Actor, Entity, LabelledScenarios,
+    Entity, LabelledScenarios,
     lambda::{
         Bvar, LambdaExpr, LambdaExprRef, LambdaPool, RootedLambdaPool,
         types::{LambdaType, core_type_parser},
@@ -84,6 +84,12 @@ impl From<&LambdaType> for ParsingType {
 }
 
 impl ParsingType {
+    fn at() -> Self {
+        ParsingType::Composition(
+            Some(Box::new(ParsingType::A)),
+            Some(Box::new(ParsingType::T)),
+        )
+    }
     fn et() -> Self {
         ParsingType::Composition(
             Some(Box::new(ParsingType::E)),
@@ -317,7 +323,15 @@ where
         .map(LabeledEntity::LabeledActor);
 
     choice((actor_or_event_keyword, actor_or_event_number))
-        .map(|x| TypedParseTree(ParseTree::Entity(x), ParsingType::E))
+        .map(|x| {
+            TypedParseTree(
+                ParseTree::Entity(x),
+                match x {
+                    LabeledEntity::Unlabeled(Entity::Event(_)) => ParsingType::E,
+                    _ => ParsingType::A,
+                },
+            )
+        })
         .labelled("entity")
 }
 
@@ -674,7 +688,7 @@ mod tests {
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
                 TypedParseTree(
                     ParseTree::Entity(LabeledEntity::LabeledActor(keyword)),
-                    ParsingType::E
+                    ParsingType::A
                 )
             );
         }
@@ -738,11 +752,25 @@ mod tests {
     #[test]
     fn parse_sets() {
         for n in [1, 6, 3, 4, 5, 100, 1032, 40343] {
-            let str = format!("p{n}");
+            let str = format!("pa{n}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
                 TypedParseTree(
-                    ParseTree::Constant(LabeledConstant::Constant(Constant::Property(n))),
+                    ParseTree::Constant(LabeledConstant::Constant(Constant::Property(
+                        n,
+                        ActorOrEvent::Actor
+                    ))),
+                    ParsingType::at()
+                )
+            );
+            let str = format!("pe{n}");
+            assert_eq!(
+                sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                TypedParseTree(
+                    ParseTree::Constant(LabeledConstant::Constant(Constant::Property(
+                        n,
+                        ActorOrEvent::Event
+                    ))),
                     ParsingType::et()
                 )
             );
@@ -762,12 +790,15 @@ mod tests {
             )
         );
         for keyword in ["john", "mary", "phil", "Anna"] {
-            let str = format!("p_{keyword}");
+            let str = format!("pa_{keyword}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
                 TypedParseTree(
-                    ParseTree::Constant(LabeledConstant::LabeledProperty(keyword)),
-                    ParsingType::et()
+                    ParseTree::Constant(LabeledConstant::LabeledProperty(
+                        keyword,
+                        ActorOrEvent::Actor
+                    )),
+                    ParsingType::at()
                 )
             );
         }
@@ -871,11 +902,14 @@ mod tests {
     #[test]
     fn parse_lambda() -> anyhow::Result<()> {
         check_lambdas(
-            "lambda e x (p_Red(x))",
+            "lambda e x (pe_Red(x))",
             "<e,t>",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::E),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(1), ExprRef(0))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                    MonOp::Property(1, ActorOrEvent::Event),
+                    ExprRef(0),
+                )),
                 LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::E),
             ]),
             2,
@@ -896,16 +930,16 @@ mod tests {
             4,
         )?;
         check_lambdas(
-            "lambda <e,t> P (P(a0))",
+            "lambda <a,t> P (P(a0))",
             "<<e,t>,t>",
             LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(0, LambdaType::et()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(0))),
+                LambdaExpr::BoundVariable(0, LambdaType::at()),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(0)),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at()),
             ]),
             3,
         )?;
@@ -925,19 +959,22 @@ mod tests {
         )?;
 
         check_lambdas(
-            "(lambda <e,t> P (P(a0)))(lambda e x (p_Red(x)))",
+            "(lambda <a,t> P (P(a0)))(lambda a x (pa_Red(x)))",
             "t",
             LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(0, LambdaType::et()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(0))),
+                LambdaExpr::BoundVariable(0, LambdaType::at()),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(0)),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::et()),
-                LambdaExpr::BoundVariable(0, LambdaType::E),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(1), ExprRef(4))),
-                LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::E),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at()),
+                LambdaExpr::BoundVariable(0, LambdaType::A),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                    MonOp::Property(1, ActorOrEvent::Actor),
+                    ExprRef(4),
+                )),
+                LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::A),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(6),
@@ -1038,17 +1075,17 @@ mod tests {
 
         for statement in [
             "~AgentOf(a_John, e0)",
-            "p_Red(a_John) & ~p_Red(a_Mary)",
-            "p_Red(a_John) & ~p_Red(a_Mary) & p_Red(a_John)",
-            "~(p_Red(a_John) & ~(True & p_Red(a_John)))",
-            "every(x0, all_a, p_Blue(x0))",
-            "every(x0, p_Blue, p_Blue(x0))",
-            "every(x, p1, p4(x))",
-            "every(x0, p_Red, p_Blue(x0))",
+            "pa_Red(a_John) & ~pa_Red(a_Mary)",
+            "pa_Red(a_John) & ~pa_Red(a_Mary) & pa_Red(a_John)",
+            "~(pa_Red(a_John) & ~(True & pa_Red(a_John)))",
+            "every(x0, all_a, pa_Blue(x0))",
+            "every(x0, pa_Blue, pa_Blue(x0))",
+            "every(x, pa1, pa4(x))",
+            "every(x0, pa_Red, pa_Blue(x0))",
             "every(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
             "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
             "every(x0, all_e, PatientOf(a_Mary, x0))",
-            "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), p_Blue(x0))",
+            "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), pa_Blue(x0))",
         ] {
             println!("{statement}");
             let expression = parse_executable(statement, &mut labels)?;
@@ -1059,12 +1096,9 @@ mod tests {
         }
 
         for (statement, result) in [
-            ("a_Mary", LanguageResult::Entity(Entity::Actor(0))),
-            ("p_Red", LanguageResult::EntitySet(vec![Entity::Actor(1)])),
-            (
-                "p_Blue",
-                LanguageResult::EntitySet(vec![Entity::Actor(0), Entity::Actor(1)]),
-            ),
+            ("a_Mary", LanguageResult::Actor(0)),
+            ("pa_Red", LanguageResult::ActorSet(vec![1])),
+            ("pa_Blue", LanguageResult::ActorSet(vec![0, 1])),
         ] {
             println!("{statement}");
             let expression = parse_executable(statement, &mut labels)?;
@@ -1104,15 +1138,15 @@ mod tests {
             "True | False",
             "(True & False) | True",
             "~(True & False) | False",
-            "p1(a1) & ~p1(a0)",
-            "p1(a1) & ~p1(a0) & p1(a1)",
-            "~(p1(a1) & ~(True & p1(a1)))",
-            "every(x0, all_a, p4(x0))",
+            "pa1(a1) & ~pa1(a0)",
+            "pa1(a1) & ~pa1(a0) & pa1(a1)",
+            "~(pa1(a1) & ~(True & pa1(a1)))",
+            "every(x0, all_a, pa4(x0))",
             "every(x0, p4, p4(x0))",
             "every(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
             "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
             "every(x0, all_e, PatientOf(a0, x0))",
-            "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), p4(x0))",
+            "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), pa4(x0))",
         ] {
             println!("{statement}");
             assert_eq!(
@@ -1121,21 +1155,12 @@ mod tests {
             );
         }
         for (statement, result) in [
-            ("a0", LanguageResult::Entity(Entity::Actor(0))),
-            ("e0", LanguageResult::Entity(Entity::Event(0))),
-            (
-                "all_e",
-                LanguageResult::EntitySet(vec![Entity::Event(0), Entity::Event(1)]),
-            ),
-            (
-                "all_a",
-                LanguageResult::EntitySet(vec![Entity::Actor(0), Entity::Actor(1)]),
-            ),
-            ("p1", LanguageResult::EntitySet(vec![Entity::Actor(1)])),
-            (
-                "p4",
-                LanguageResult::EntitySet(vec![Entity::Actor(0), Entity::Actor(1)]),
-            ),
+            ("a0", LanguageResult::Actor(0)),
+            ("e0", LanguageResult::Event(0)),
+            ("all_e", LanguageResult::EventSet(vec![0, 1])),
+            ("all_a", LanguageResult::ActorSet(vec![0, 1])),
+            ("pa1", LanguageResult::ActorSet(vec![1])),
+            ("pa4", LanguageResult::ActorSet(vec![0, 1])),
         ] {
             println!("{statement}");
             assert_eq!(get_parse(statement, &simple_scenario), result);

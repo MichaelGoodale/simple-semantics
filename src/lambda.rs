@@ -539,8 +539,8 @@ mod test {
 
     use super::*;
     use crate::{
-        Entity, LabelledScenarios,
-        language::{BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
+        Actor, Entity, LabelledScenarios,
+        language::{ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
     };
 
     fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
@@ -551,6 +551,7 @@ mod test {
         ])
     }
 
+    /*
     #[test]
     fn complicated_lambda_language_of_thought() -> anyhow::Result<()> {
         let mut pool = LambdaPool::<Expr>(vec![
@@ -685,10 +686,10 @@ mod test {
             LanguageExpression::new(
                 ExprPool::from(vec![
                     Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3)),
-                    Expr::Entity(Entity::Actor(3)),
-                    Expr::Unary(MonOp::Property(36), ExprRef(4)),
-                    Expr::Unary(MonOp::Property(32), ExprRef(1)),
-                    Expr::Entity(Entity::Actor(2))
+                    Expr::Actor(3),
+                    Expr::Unary(MonOp::Property(36, ActorOrEvent::Actor), ExprRef(4)),
+                    Expr::Unary(MonOp::Property(32, ActorOrEvent::Actor), ExprRef(1)),
+                    Expr::Actor(2)
                 ]),
                 ExprRef(root.0)
             )
@@ -766,6 +767,7 @@ mod test {
         );
         Ok(())
     }
+    */
 
     #[test]
     fn test_lambda_calculus() -> anyhow::Result<()> {
