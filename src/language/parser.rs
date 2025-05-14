@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
-    Entity, LabelledScenarios,
+    Actor, Entity, LabelledScenarios,
     lambda::{
         Bvar, LambdaExpr, LambdaExprRef, LambdaPool, RootedLambdaPool,
         types::{LambdaType, core_type_parser},
@@ -17,7 +17,7 @@ use chumsky::{
     util::MaybeRef,
 };
 
-use super::{BinOp, LanguageExpression, Quantifier, Variable};
+use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier, Variable};
 
 const RESERVED_KEYWORDS: [&str; 9] = [
     "lambda",
@@ -125,20 +125,23 @@ impl<'src> TypedParseTree<'src> {
         let expr = match &self.0 {
             ParseTree::Constant(c) => LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(match c {
                 LabeledConstant::Constant(x) => *x,
-                LabeledConstant::LabeledProperty(p) => {
-                    Constant::Property(labels.get_property_label(p))
+                LabeledConstant::LabeledProperty(p, a) => {
+                    Constant::Property(labels.get_property_label(p), *a)
                 }
             })),
-            ParseTree::Entity(e) => LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(match e {
-                LabeledEntity::Unlabeled(entity) => *entity,
-                LabeledEntity::LabeledActor(label) => Entity::Actor(labels.get_actor_label(label)),
-            })),
+            ParseTree::Entity(e) => LambdaExpr::LanguageOfThoughtExpr(match e {
+                LabeledEntity::Unlabeled(entity) => match entity {
+                    Entity::Actor(a) => Expr::Actor(*a),
+                    Entity::Event(e) => Expr::Event(*e),
+                },
+                LabeledEntity::LabeledActor(label) => Expr::Actor(labels.get_actor_label(label)),
+            }),
             ParseTree::Unary(m, x) => {
                 let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth).0);
                 let m = match m {
                     LabeledProperty::Property(mon_op) => *mon_op,
-                    LabeledProperty::LabeledProperty(label) => {
-                        MonOp::Property(labels.get_property_label(label))
+                    LabeledProperty::LabeledProperty(label, a) => {
+                        MonOp::Property(labels.get_property_label(label), *a)
                     }
                 };
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(m, x))
@@ -338,13 +341,13 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LabeledConstant<'a> {
     Constant(Constant),
-    LabeledProperty(&'a str),
+    LabeledProperty(&'a str, ActorOrEvent),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LabeledProperty<'a> {
     Property(MonOp),
-    LabeledProperty(&'a str),
+    LabeledProperty(&'a str, ActorOrEvent),
 }
 
 fn properties<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -362,12 +365,23 @@ where
 
     choice((
         just("p")
-            .ignore_then(text::int(10))
-            .map(|p: &str| MonOp::Property(p.parse().unwrap()))
+            .ignore_then(
+                just("a")
+                    .to(ActorOrEvent::Actor)
+                    .or(just("e").to(ActorOrEvent::Event)),
+            )
+            .then(text::int(10))
+            .map(|(a, p): (_, &str)| MonOp::Property(p.parse().unwrap(), a))
             .map(LabeledProperty::Property)
-            .or(just("p_")
-                .ignore_then(text::ident())
-                .map(LabeledProperty::LabeledProperty))
+            .or(just("p")
+                .ignore_then(
+                    just("a")
+                        .to(ActorOrEvent::Actor)
+                        .or(just("e").to(ActorOrEvent::Event)),
+                )
+                .then_ignore(just("_"))
+                .then(text::ident())
+                .map(|(a, p)| LabeledProperty::LabeledProperty(p, a)))
             .then(entity_or_var)
             .map(|(x, (arg_is_lambdavar, arg))| {
                 TypedParseTree(
@@ -404,13 +418,24 @@ where
         just("all_a").to(Constant::Everyone),
         just("all_e").to(Constant::EveryEvent),
         just("p")
-            .ignore_then(text::int(10))
-            .map(|p: &str| Constant::Property(p.parse().unwrap())),
+            .ignore_then(
+                just("a")
+                    .to(ActorOrEvent::Actor)
+                    .or(just("e").to(ActorOrEvent::Event)),
+            )
+            .then(text::int(10))
+            .map(|(a, p): (_, &str)| Constant::Property(p.parse().unwrap(), a)),
     ))
     .map(LabeledConstant::Constant)
-    .or(just("p_")
-        .ignore_then(text::ident())
-        .map(LabeledConstant::LabeledProperty))
+    .or(just("p")
+        .ignore_then(
+            just("a")
+                .to(ActorOrEvent::Actor)
+                .or(just("e").to(ActorOrEvent::Event)),
+        )
+        .then_ignore(just("_"))
+        .then(text::ident())
+        .map(|(a, p)| LabeledConstant::LabeledProperty(p, a)))
     .map(|x| TypedParseTree(ParseTree::Constant(x), ParsingType::et()))
 }
 
@@ -663,16 +688,16 @@ mod tests {
             (
                 "AgentOf(a32, e2)",
                 vec![
-                    Expr::Entity(Entity::Actor(32)),
-                    Expr::Entity(Entity::Event(2)),
+                    Expr::Actor(32),
+                    Expr::Event(2),
                     Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
                 ],
             ),
             (
                 "PatientOf(a0, e1)",
                 vec![
-                    Expr::Entity(Entity::Actor(0)),
-                    Expr::Entity(Entity::Event(1)),
+                    Expr::Actor(0),
+                    Expr::Event(1),
                     Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
                 ],
             ),
