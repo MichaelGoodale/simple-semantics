@@ -1,8 +1,9 @@
 use super::{
-    BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Quantifier, Variable,
+    ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Quantifier,
+    Variable,
 };
 use crate::{
-    Entity,
+    Actor, Entity,
     lambda::{
         Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
         types::LambdaType,
@@ -27,7 +28,7 @@ impl LambdaLanguageOfThought for Expr {
             } => vec![restrictor, subformula],
             Expr::Binary(_, x, y) => vec![x, y],
             Expr::Unary(_, x) => vec![x],
-            Expr::Constant(_) | Expr::Entity(_) | Expr::Variable(_) => vec![],
+            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Variable(_) => vec![],
         }
         .into_iter()
         .map(|x| LambdaExprRef(x.0))
@@ -50,7 +51,7 @@ impl LambdaLanguageOfThought for Expr {
             Expr::Unary(_, x) => {
                 *x = ExprRef(remap[x.0 as usize] as u32);
             }
-            Expr::Variable(_) | Expr::Entity(_) | Expr::Constant(_) => (),
+            Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => (),
         }
     }
 
@@ -58,18 +59,20 @@ impl LambdaLanguageOfThought for Expr {
         match self {
             Expr::Quantifier { .. } => LambdaType::T,
             Expr::Variable(Variable::Event(_)) => LambdaType::E,
-            Expr::Variable(Variable::Actor(_)) => LambdaType::E,
-            Expr::Entity(_) => LambdaType::E,
+            Expr::Variable(Variable::Actor(_)) => LambdaType::A,
+            Expr::Actor(_) => LambdaType::A,
+            Expr::Event(_) => LambdaType::E,
             Expr::Binary(bin, ..) => match bin {
                 BinOp::AgentOf | BinOp::PatientOf | BinOp::And | BinOp::Or => LambdaType::T,
             },
             Expr::Unary(mon_op, _) => match mon_op {
-                MonOp::Property(_) | MonOp::Tautology | MonOp::Contradiction | MonOp::Not => {
+                MonOp::Property(_, _) | MonOp::Tautology | MonOp::Contradiction | MonOp::Not => {
                     LambdaType::T
                 }
             },
             Expr::Constant(constant) => match constant {
-                Constant::Everyone | Constant::EveryEvent | Constant::Property(_) => {
+                Constant::Everyone | Constant::Property(_, ActorOrEvent::Actor) => LambdaType::at(),
+                Constant::EveryEvent | Constant::Property(_, ActorOrEvent::Event) => {
                     LambdaType::et()
                 }
                 Constant::Contradiction | Constant::Tautology => LambdaType::T,
@@ -179,7 +182,8 @@ impl RootedLambdaPool<Expr> {
                     self.string(LambdaExprRef(subformula.0), lambda_depth)
                 ),
                 Expr::Variable(variable) => variable.to_var_string(),
-                Expr::Entity(entity) => format!("{}", entity),
+                Expr::Actor(a) => format!("a{a}"),
+                Expr::Event(e) => format!("e{e}"),
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {
                         format!(

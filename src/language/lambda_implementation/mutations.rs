@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::{Actor, PropertyLabel};
+use crate::{Actor, Event, PropertyLabel};
 
 use super::*;
 
@@ -97,7 +97,7 @@ impl Context<'_> {
     fn sample_actor(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
         self.available_actors
             .iter()
-            .map(|x| UnbuiltExpr::Entity(Entity::Actor(*x)))
+            .map(|x| UnbuiltExpr::Actor(*x))
             .chain(self.available_vars.iter().filter_map(|x| {
                 if matches!(x, Variable::Actor(_)) {
                     Some(UnbuiltExpr::Variable(*x))
@@ -162,11 +162,12 @@ fn add_expr<'a>(
             })
         }
         UnbuiltExpr::Variable(var) => LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(var)),
-        UnbuiltExpr::Entity(entity) => LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(entity)),
+        UnbuiltExpr::Event(event) => LambdaExpr::LanguageOfThoughtExpr(Expr::Event(event)),
+        UnbuiltExpr::Actor(actor) => LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(actor)),
         UnbuiltExpr::Binary(bin_op) => {
             children.extend_from_slice(&match bin_op {
                 BinOp::AgentOf | BinOp::PatientOf => {
-                    [(cur_size + 1, LambdaType::E), (cur_size + 2, LambdaType::E)]
+                    [(cur_size + 1, LambdaType::E), (cur_size + 2, LambdaType::A)]
                 }
                 BinOp::And | BinOp::Or => {
                     [(cur_size + 1, LambdaType::T), (cur_size + 2, LambdaType::T)]
@@ -180,7 +181,8 @@ fn add_expr<'a>(
         }
         UnbuiltExpr::Unary(mon_op) => {
             children.push(match mon_op {
-                MonOp::Property(_) => (cur_size + 1, LambdaType::E),
+                MonOp::Property(_, ActorOrEvent::Actor) => (cur_size + 1, LambdaType::A),
+                MonOp::Property(_, ActorOrEvent::Event) => (cur_size + 1, LambdaType::E),
                 MonOp::Not | MonOp::Tautology | MonOp::Contradiction => {
                     (cur_size + 1, LambdaType::T)
                 }
@@ -214,7 +216,8 @@ fn add_expr<'a>(
 enum UnbuiltExpr {
     Quantifier(Quantifier),
     Variable(Variable),
-    Entity(Entity),
+    Actor(Actor),
+    Event(Event),
     Binary(BinOp),
     Unary(MonOp),
     Constant(Constant),
@@ -310,15 +313,24 @@ impl Expr {
         }
 
         if lambda_type == &LambdaType::et() {
-            let mut options = [Constant::Everyone, Constant::EveryEvent]
-                .map(UnbuiltExpr::Constant)
-                .to_vec();
+            let mut options = [Constant::Everyone].map(UnbuiltExpr::Constant).to_vec();
 
             options.extend(
                 context
                     .available_properties
                     .iter()
-                    .map(|i| UnbuiltExpr::Constant(Constant::Property(*i))),
+                    .map(|i| UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Actor))),
+            );
+            let choice = (0..options.len()).choose(rng).unwrap();
+            Some(options.remove(choice))
+        } else if lambda_type == &LambdaType::at() {
+            let mut options = [Constant::EveryEvent].map(UnbuiltExpr::Constant).to_vec();
+
+            options.extend(
+                context
+                    .available_properties
+                    .iter()
+                    .map(|i| UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Event))),
             );
             let choice = (0..options.len()).choose(rng).unwrap();
             Some(options.remove(choice))
@@ -338,13 +350,21 @@ impl Expr {
                         context
                             .available_properties
                             .iter()
-                            .map(|i| UnbuiltExpr::Unary(MonOp::Property(*i))),
+                            .map(|i| UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor))),
+                    );
+
+                    options.extend(
+                        context
+                            .available_properties
+                            .iter()
+                            .map(|i| UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event))),
                     );
 
                     let choice = config.random_t(rng);
                     Some(options.remove(choice))
                 }
                 LambdaType::E => context.sample_actor(rng),
+                LambdaType::A => context.sample_event(rng),
                 _ => None,
             }
         }

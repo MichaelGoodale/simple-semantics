@@ -53,6 +53,9 @@ impl LambdaType {
             )
         })
     }
+    pub fn at() -> Self {
+        LambdaType::Composition(Box::new(LambdaType::A), Box::new(LambdaType::T))
+    }
 
     pub fn et() -> Self {
         LambdaType::Composition(Box::new(LambdaType::E), Box::new(LambdaType::T))
