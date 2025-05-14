@@ -174,11 +174,11 @@ impl RootedLambdaPool<Expr> {
                 } => format!(
                     "{}({},{},{})",
                     quantifier,
-                    var.to_string(),
+                    var.to_var_string(),
                     self.string(LambdaExprRef(restrictor.0), lambda_depth),
                     self.string(LambdaExprRef(subformula.0), lambda_depth)
                 ),
-                Expr::Variable(variable) => variable.to_string(),
+                Expr::Variable(variable) => variable.to_var_string(),
                 Expr::Entity(entity) => format!("{}", entity),
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {

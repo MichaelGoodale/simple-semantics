@@ -30,7 +30,7 @@ impl Display for BinOp {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum MonOp {
     Not,
-    Property(PropertyLabel),
+    Property(PropertyLabel, ActorOrEvent),
     Tautology,
     Contradiction,
 }
@@ -39,11 +39,17 @@ impl Display for MonOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MonOp::Not => write!(f, "~"),
-            MonOp::Property(x) => write!(f, "p{x}"),
+            MonOp::Property(x, _) => write!(f, "p{x}"),
             MonOp::Tautology => write!(f, "True"),
             MonOp::Contradiction => write!(f, "False"),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorOrEvent {
+    Actor,
+    Event,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +58,7 @@ pub enum Constant {
     EveryEvent,
     Tautology,
     Contradiction,
-    Property(PropertyLabel),
+    Property(PropertyLabel, ActorOrEvent),
 }
 
 impl Display for Constant {
@@ -62,7 +68,7 @@ impl Display for Constant {
             Constant::EveryEvent => write!(f, "all_e"),
             Constant::Tautology => write!(f, "True"),
             Constant::Contradiction => write!(f, "False"),
-            Constant::Property(x) => write!(f, "p{x}"),
+            Constant::Property(x, _) => write!(f, "p{x}"),
         }
     }
 }
@@ -76,7 +82,7 @@ pub enum Variable {
 }
 
 impl Variable {
-    fn to_string(&self) -> String {
+    fn to_var_string(&self) -> String {
         match self {
             Variable::Actor(a) | Variable::Event(a) => to_var(*a as usize),
         }
@@ -113,7 +119,8 @@ pub enum Expr {
         subformula: ExprRef,
     },
     Variable(Variable),
-    Entity(Entity),
+    Actor(Actor),
+    Event(Event),
     Binary(BinOp, ExprRef, ExprRef),
     Unary(MonOp, ExprRef),
     Constant(Constant),
@@ -158,12 +165,13 @@ impl LanguageExpression {
             } => format!(
                 "{}({},{},{})",
                 quantifier,
-                var.to_string(),
+                var.to_var_string(),
                 self.string(*restrictor),
                 self.string(*subformula)
             ),
-            Expr::Variable(variable) => variable.to_string(),
-            Expr::Entity(entity) => format!("{}", entity),
+            Expr::Variable(variable) => variable.to_var_string(),
+            Expr::Actor(a) => format!("a{a}"),
+            Expr::Event(e) => format!("a{e}"),
             Expr::Binary(bin_op, x, y) => match bin_op {
                 BinOp::AgentOf | BinOp::PatientOf => {
                     format!("{bin_op}({},{})", self.string(*x), self.string(*y))
@@ -191,9 +199,13 @@ impl VariableBuffer {
         self.0[i] = Some(x);
     }
 
-    fn get(&self, v: Variable) -> Option<Entity> {
+    fn get(&self, v: Variable) -> Option<LanguageResult> {
         match self.0.get(v.id() as usize) {
-            Some(x) => *x,
+            Some(x) => match (v, x) {
+                (Variable::Actor(_), Some(Entity::Actor(a))) => Some(LanguageResult::Actor(*a)),
+                (Variable::Event(_), Some(Entity::Event(e))) => Some(LanguageResult::Event(*e)),
+                _ => None,
+            },
             None => None,
         }
     }
@@ -203,15 +215,19 @@ impl VariableBuffer {
 pub enum LanguageResult {
     PresuppositionError,
     Bool(bool),
-    Entity(Entity),
-    EntitySet(Vec<Entity>),
+    Actor(Actor),
+    Event(Event),
+    ActorSet(Vec<Actor>),
+    EventSet(Vec<Event>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LanguageResultType {
     Bool,
-    Entity,
-    EntitySet,
+    Actor,
+    ActorSet,
+    Event,
+    EventSet,
 }
 
 impl TryFrom<LanguageResult> for Event {
@@ -219,19 +235,8 @@ impl TryFrom<LanguageResult> for Event {
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
-            LanguageResult::Entity(Entity::Event(x)) => Ok(x),
+            LanguageResult::Event(x) => Ok(x),
             _ => bail!("Not an event!"),
-        }
-    }
-}
-
-impl TryFrom<LanguageResult> for Entity {
-    type Error = anyhow::Error;
-
-    fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
-        match value {
-            LanguageResult::Entity(x) => Ok(x),
-            _ => bail!("Not an entity!"),
         }
     }
 }
@@ -241,7 +246,7 @@ impl TryFrom<LanguageResult> for Actor {
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
-            LanguageResult::Entity(Entity::Actor(x)) => Ok(x),
+            LanguageResult::Actor(x) => Ok(x),
             _ => bail!("Not an actor!"),
         }
     }
@@ -258,12 +263,23 @@ impl TryFrom<LanguageResult> for bool {
     }
 }
 
-impl TryFrom<LanguageResult> for Vec<Entity> {
+impl TryFrom<LanguageResult> for Vec<Actor> {
     type Error = anyhow::Error;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
-            LanguageResult::EntitySet(vec) => Ok(vec),
+            LanguageResult::ActorSet(vec) => Ok(vec),
+            _ => bail!("Not vector of entities!"),
+        }
+    }
+}
+
+impl TryFrom<LanguageResult> for Vec<Event> {
+    type Error = anyhow::Error;
+
+    fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
+        match value {
+            LanguageResult::EventSet(vec) => Ok(vec),
             _ => bail!("Not vector of entities!"),
         }
     }
@@ -299,13 +315,18 @@ impl ExprPool {
     fn get_type(&self, expr: ExprRef) -> LanguageResultType {
         match self.get(expr) {
             Expr::Quantifier { .. } => LanguageResultType::Bool,
-            Expr::Variable(_) => LanguageResultType::Entity,
-            Expr::Entity(_) => LanguageResultType::Entity,
+            Expr::Variable(Variable::Event(_)) => LanguageResultType::Event,
+            Expr::Variable(Variable::Actor(_)) => LanguageResultType::Actor,
+            Expr::Actor(_) => LanguageResultType::Actor,
+            Expr::Event(_) => LanguageResultType::Event,
             Expr::Binary(..) => LanguageResultType::Bool,
             Expr::Unary(..) => LanguageResultType::Bool,
             Expr::Constant(constant) => match constant {
-                Constant::Everyone | Constant::EveryEvent | Constant::Property(_) => {
-                    LanguageResultType::EntitySet
+                Constant::Everyone | Constant::Property(_, ActorOrEvent::Actor) => {
+                    LanguageResultType::ActorSet
+                }
+                Constant::EveryEvent | Constant::Property(_, ActorOrEvent::Event) => {
+                    LanguageResultType::EventSet
                 }
                 Constant::Tautology | Constant::Contradiction => LanguageResultType::Bool,
             },
@@ -341,15 +362,30 @@ impl ExprPool {
                         }
                         domain
                     }
-                    LanguageResultType::Entity => {
-                        let e: Entity = self
+                    LanguageResultType::Actor => {
+                        let e: Actor = self
                             .interp(*restrictor, scenario, &mut variables)?
                             .try_into()?;
-                        vec![e]
+                        vec![Entity::Actor(e)]
                     }
-                    LanguageResultType::EntitySet => self
-                        .interp(*restrictor, scenario, &mut variables)?
-                        .try_into()?,
+                    LanguageResultType::ActorSet => {
+                        let a: Vec<Actor> = self
+                            .interp(*restrictor, scenario, &mut variables)?
+                            .try_into()?;
+                        a.into_iter().map(|x| Entity::Actor(x)).collect()
+                    }
+                    LanguageResultType::Event => {
+                        let e: Event = self
+                            .interp(*restrictor, scenario, &mut variables)?
+                            .try_into()?;
+                        vec![Entity::Event(e)]
+                    }
+                    LanguageResultType::EventSet => {
+                        let a: Vec<Event> = self
+                            .interp(*restrictor, scenario, &mut variables)?
+                            .try_into()?;
+                        a.into_iter().map(|x| Entity::Event(x)).collect()
+                    }
                 };
 
                 let mut result = match quantifier {
@@ -368,8 +404,9 @@ impl ExprPool {
                 }
                 LanguageResult::Bool(result)
             }
-            Expr::Variable(i) => LanguageResult::Entity(variables.get(*i).unwrap()),
-            Expr::Entity(a) => LanguageResult::Entity(*a),
+            Expr::Variable(i) => variables.get(*i).unwrap(),
+            Expr::Actor(a) => LanguageResult::Actor(*a),
+            Expr::Event(a) => LanguageResult::Event(*a),
             Expr::Binary(bin_op, lhs, rhs) => {
                 let lhs = self.interp(*lhs, scenario, variables)?;
                 let rhs = self.interp(*rhs, scenario, variables)?;
@@ -403,19 +440,37 @@ impl ExprPool {
                 }
             }
             Expr::Constant(constant) => match constant {
-                Constant::Everyone => LanguageResult::EntitySet(
-                    scenario.actors.iter().map(|x| Entity::Actor(*x)).collect(),
-                ),
-                Constant::EveryEvent => LanguageResult::EntitySet(
+                Constant::Everyone => LanguageResult::ActorSet(scenario.actors.clone()),
+                Constant::EveryEvent => LanguageResult::EventSet(
                     (0..scenario.thematic_relations.len())
-                        .map(|x| Entity::Event(x.try_into().unwrap()))
+                        .map(|x| x.try_into().unwrap())
                         .collect(),
                 ),
                 Constant::Tautology => LanguageResult::Bool(true),
                 Constant::Contradiction => LanguageResult::Bool(false),
-                Constant::Property(p) => match scenario.properties.get(p) {
-                    Some(property_members) => LanguageResult::EntitySet(property_members.clone()),
-                    None => LanguageResult::EntitySet(vec![]),
+                Constant::Property(p, ActorOrEvent::Actor) => match scenario.properties.get(p) {
+                    Some(property_members) => LanguageResult::ActorSet(
+                        property_members
+                            .iter()
+                            .filter_map(|x| match x {
+                                Entity::Actor(a) => Some(*a),
+                                Entity::Event(_) => None,
+                            })
+                            .collect(),
+                    ),
+                    None => LanguageResult::ActorSet(vec![]),
+                },
+                Constant::Property(p, ActorOrEvent::Event) => match scenario.properties.get(p) {
+                    Some(property_members) => LanguageResult::EventSet(
+                        property_members
+                            .iter()
+                            .filter_map(|x| match x {
+                                Entity::Actor(_) => None,
+                                Entity::Event(e) => Some(*e),
+                            })
+                            .collect(),
+                    ),
+                    None => LanguageResult::ActorSet(vec![]),
                 },
             },
             Expr::Unary(mon_op, arg) => {
@@ -424,11 +479,20 @@ impl ExprPool {
                     MonOp::Not => LanguageResult::Bool(!TryInto::<bool>::try_into(arg)?),
                     MonOp::Contradiction => LanguageResult::Bool(false),
                     MonOp::Tautology => LanguageResult::Bool(true),
-                    MonOp::Property(e) => {
-                        let arg: Entity = arg.try_into()?;
+                    MonOp::Property(e, ActorOrEvent::Actor) => {
+                        let arg: Actor = arg.try_into()?;
                         match scenario.properties.get(e) {
                             Some(property_members) => {
-                                LanguageResult::Bool(property_members.contains(&arg))
+                                LanguageResult::Bool(property_members.contains(&Entity::Actor(arg)))
+                            }
+                            None => LanguageResult::Bool(false),
+                        }
+                    }
+                    MonOp::Property(e, ActorOrEvent::Event) => {
+                        let arg: Event = arg.try_into()?;
+                        match scenario.properties.get(e) {
+                            Some(property_members) => {
+                                LanguageResult::Bool(property_members.contains(&Entity::Event(arg)))
                             }
                             None => LanguageResult::Bool(false),
                         }
@@ -467,8 +531,8 @@ mod tests {
         };
 
         let simple_expr = ExprPool(vec![
-            Expr::Entity(Entity::Actor(0)),
-            Expr::Entity(Entity::Event(0)),
+            Expr::Actor(0),
+            Expr::Event(0),
             Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
         ]);
 
@@ -478,8 +542,8 @@ mod tests {
         );
 
         let simple_expr = ExprPool(vec![
-            Expr::Entity(Entity::Actor(0)),
-            Expr::Entity(Entity::Event(0)),
+            Expr::Actor(0),
+            Expr::Event(0),
             Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
         ]);
         assert_eq!(
@@ -698,7 +762,7 @@ mod tests {
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
-            Expr::Unary(MonOp::Property(1), ExprRef(3)),
+            Expr::Unary(MonOp::Property(1, ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
         assert_eq!(
@@ -714,7 +778,7 @@ mod tests {
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
-            Expr::Unary(MonOp::Property(534), ExprRef(3)),
+            Expr::Unary(MonOp::Property(534, ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
         assert_eq!(
@@ -748,14 +812,14 @@ mod tests {
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
-            Expr::Constant(Constant::Property(534)),
+            Expr::Constant(Constant::Property(534, ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var: Variable::Event(1),
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
-            Expr::Constant(Constant::Property(235)),
+            Expr::Constant(Constant::Property(235, ActorOrEvent::Event)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
@@ -772,14 +836,14 @@ mod tests {
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
-            Expr::Constant(Constant::Property(2)),
+            Expr::Constant(Constant::Property(2, ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var: Variable::Event(1),
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
-            Expr::Constant(Constant::Property(235)),
+            Expr::Constant(Constant::Property(235, ActorOrEvent::Event)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
@@ -810,9 +874,9 @@ mod tests {
                 subformula: ExprRef(6),
             },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
-            Expr::Unary(MonOp::Property(2), ExprRef(3)),
+            Expr::Unary(MonOp::Property(2, ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
-            Expr::Unary(MonOp::Property(3), ExprRef(5)),
+            Expr::Unary(MonOp::Property(3, ActorOrEvent::Actor), ExprRef(5)),
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
@@ -838,9 +902,9 @@ mod tests {
                 subformula: ExprRef(6),
             },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
-            Expr::Unary(MonOp::Property(2), ExprRef(3)),
+            Expr::Unary(MonOp::Property(2, ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
-            Expr::Unary(MonOp::Property(3), ExprRef(5)),
+            Expr::Unary(MonOp::Property(3, ActorOrEvent::Actor), ExprRef(5)),
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
