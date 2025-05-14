@@ -56,8 +56,8 @@ pub enum LambdaExpr<T> {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RootedLambdaPool<T: LambdaLanguageOfThought> {
-    pool: LambdaPool<T>,
-    root: LambdaExprRef,
+    pub(crate) pool: LambdaPool<T>,
+    pub(crate) root: LambdaExprRef,
 }
 
 impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
@@ -67,6 +67,11 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
 
     pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
         self.pool.get(x)
+    }
+
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.pool.0.len()
     }
 
     pub fn get_type(&self) -> anyhow::Result<LambdaType> {
@@ -189,7 +194,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
-pub struct LambdaPool<T: LambdaLanguageOfThought>(Vec<LambdaExpr<T>>);
+pub struct LambdaPool<T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<T>>);
 
 impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
     fn extend_pool(
@@ -404,7 +409,7 @@ where
 
     ///Iterates through a pool and de-allocates dangling refs and updates ExprRefs to new
     ///addresses. Basically garbage collection.
-    fn cleanup(&mut self, root: LambdaExprRef) -> LambdaExprRef {
+    pub(crate) fn cleanup(&mut self, root: LambdaExprRef) -> LambdaExprRef {
         let findable: HashSet<_> = self.bfs_from(root).map(|(x, _)| x.0 as usize).collect();
         let mut remap = (0..self.0.len()).collect::<Vec<_>>();
         let mut adjustment = 0;
@@ -465,6 +470,66 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
             }
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
             LambdaExpr::LanguageOfThoughtExpr(x) => x.remap_refs(remap),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LambdaSummaryStats {
+    WellFormed {
+        lambda_type: LambdaType,
+        has_variable: bool,
+        is_lambda: bool,
+        n_nodes: usize,
+    },
+    Malformed,
+}
+
+impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
+    fn stats(&self) -> LambdaSummaryStats {
+        let lambda_type = self.get_type();
+        if lambda_type.is_err() {
+            return LambdaSummaryStats::Malformed;
+        }
+        let lambda_type = lambda_type.unwrap();
+        let mut has_variable = false;
+        let mut is_lambda = false;
+        let n_nodes = self.pool.0.len();
+
+        for x in self.pool.0.iter() {
+            match x {
+                LambdaExpr::Lambda(_, _) => {
+                    is_lambda = true;
+                }
+                LambdaExpr::BoundVariable(_, _) => {
+                    has_variable = true;
+                }
+                _ => (),
+            }
+        }
+
+        LambdaSummaryStats::WellFormed {
+            lambda_type,
+            has_variable,
+            is_lambda,
+            n_nodes,
+        }
+    }
+}
+
+impl<T: LambdaLanguageOfThought> From<LambdaPool<T>> for Vec<Option<LambdaExpr<T>>> {
+    fn from(value: LambdaPool<T>) -> Self {
+        value.0.into_iter().map(Some).collect()
+    }
+}
+
+impl<T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<T>>>> for LambdaPool<T> {
+    type Error = anyhow::Error;
+
+    fn try_from(value: Vec<Option<LambdaExpr<T>>>) -> Result<Self, Self::Error> {
+        match value.into_iter().collect::<Option<Vec<_>>>() {
+            Some(x) => Ok(LambdaPool(x)),
+            None => Err(anyhow::anyhow!("Vec is not only Some")),
         }
     }
 }

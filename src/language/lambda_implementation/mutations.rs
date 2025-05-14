@@ -1,0 +1,382 @@
+use std::collections::VecDeque;
+
+use super::*;
+
+impl RootedLambdaPool<Expr> {
+    pub fn resample_from_expr(
+        self,
+        available_actors: &[Entity],
+        config: Option<&RandomExprConfig>,
+        rng: &mut impl Rng,
+    ) -> Self {
+        let config = config.unwrap_or(&DEFAULT_CONFIG);
+        let position = LambdaExprRef(rng.random_range(0..self.len()) as u32);
+        let mut pos_context = None;
+
+        for (n, x) in self.context_bfs_iter(available_actors).enumerate() {
+            if n == position.0 as usize {
+                pos_context = Some(x);
+                break;
+            }
+        }
+
+        let (position, context) = pos_context.expect("Couldn't find the {position}th expression");
+        let (root, pool) = (self.root, self.pool);
+
+        let lambda_type = pool.get_type(position).unwrap();
+        let mut pool: Vec<Option<LambdaExpr<Expr>>> = pool.into();
+        pool[position.0 as usize] = None;
+
+        let mut pool = build_out_pool(pool, lambda_type, position.0, context, config, rng);
+        let root = pool.cleanup(root);
+
+        RootedLambdaPool { pool, root }
+    }
+
+    pub fn random_expr(
+        lambda_type: LambdaType,
+        available_actors: &[Entity],
+        config: Option<&RandomExprConfig>,
+        rng: &mut impl Rng,
+    ) -> Self {
+        let pool = vec![None];
+
+        let context = Context {
+            lambdas: vec![],
+            available_vars: vec![],
+            available_actors,
+        };
+        let config = config.unwrap_or(&DEFAULT_CONFIG);
+
+        let pool = build_out_pool(pool, lambda_type, 0, context, config, rng);
+        RootedLambdaPool::new(pool, LambdaExprRef(0))
+    }
+}
+
+fn build_out_pool(
+    mut pool: Vec<Option<LambdaExpr<Expr>>>,
+    lambda_type: LambdaType,
+    start_pos: u32,
+    context: Context,
+    config: &RandomExprConfig,
+    rng: &mut impl Rng,
+) -> LambdaPool<Expr> {
+    let mut fresher = Fresher::new(&pool);
+    let e = Expr::get_new_from_type(&lambda_type, &context, config, rng)
+        .unwrap_or(UnbuiltExpr::Lambda(lambda_type));
+
+    let mut stack = add_expr(e, start_pos, context, &mut fresher, &mut pool);
+
+    while let Some((pos, lambda_type, context)) = stack.pop() {
+        let e = Expr::get_new_from_type(&lambda_type, &context, config, rng)
+            .unwrap_or(UnbuiltExpr::Lambda(lambda_type));
+
+        stack.extend(add_expr(e, pos, context, &mut fresher, &mut pool));
+    }
+
+    pool.try_into().unwrap()
+}
+
+#[derive(Debug, Clone)]
+struct Context<'a> {
+    lambdas: Vec<LambdaType>,
+    available_vars: Vec<Variable>,
+    available_actors: &'a [Entity],
+}
+
+impl Context<'_> {
+    fn sample_actor(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
+        self.available_actors
+            .iter()
+            .map(|x| UnbuiltExpr::Entity(*x))
+            .chain(
+                self.available_vars
+                    .iter()
+                    .map(|x| UnbuiltExpr::Variable(*x)),
+            )
+            .choose(rng)
+    }
+
+    fn sample_variable(&self, lambda_type: &LambdaType, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
+        let n = self.lambdas.len();
+        self.lambdas
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| {
+                if t == lambda_type {
+                    Some(UnbuiltExpr::BoundVariable(n - i - 1, t.clone()))
+                } else {
+                    None
+                }
+            })
+            .choose(rng)
+    }
+}
+
+fn add_expr<'a>(
+    e: UnbuiltExpr,
+    pos: u32,
+    mut context: Context<'a>,
+    fresher: &mut Fresher,
+    pool: &mut Vec<Option<LambdaExpr<Expr>>>,
+) -> Vec<(u32, LambdaType, Context<'a>)> {
+    let cur_size = pool.len() as u32 - 1;
+    let mut children = vec![];
+    let expr = match e {
+        UnbuiltExpr::Quantifier(quantifier) => {
+            children.extend_from_slice(&[
+                (cur_size + 1, LambdaType::et()),
+                (cur_size + 2, LambdaType::T),
+            ]);
+            let var = fresher.fresh();
+            context.available_vars.push(var);
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                quantifier,
+                var,
+                restrictor: ExprRef(cur_size + 1),
+                subformula: ExprRef(cur_size + 2),
+            })
+        }
+        UnbuiltExpr::Variable(var) => LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(var)),
+        UnbuiltExpr::Entity(entity) => LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(entity)),
+        UnbuiltExpr::Binary(bin_op) => {
+            children.extend_from_slice(&match bin_op {
+                BinOp::AgentOf | BinOp::PatientOf => {
+                    [(cur_size + 1, LambdaType::E), (cur_size + 2, LambdaType::E)]
+                }
+                BinOp::And | BinOp::Or => {
+                    [(cur_size + 1, LambdaType::T), (cur_size + 2, LambdaType::T)]
+                }
+            });
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                bin_op,
+                ExprRef(cur_size + 1),
+                ExprRef(cur_size + 2),
+            ))
+        }
+        UnbuiltExpr::Unary(mon_op) => {
+            children.push(match mon_op {
+                MonOp::Property(_) => (cur_size + 1, LambdaType::E),
+                MonOp::Not | MonOp::Tautology | MonOp::Contradiction => {
+                    (cur_size + 1, LambdaType::T)
+                }
+            });
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(mon_op, ExprRef(cur_size + 1)))
+        }
+        UnbuiltExpr::Constant(constant) => {
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(constant))
+        }
+        UnbuiltExpr::Lambda(lambda_type) => {
+            let (lhs, rhs) = lambda_type.split().unwrap();
+            children.push((cur_size + 1, rhs));
+            context.lambdas.push(lhs.clone());
+            LambdaExpr::Lambda(LambdaExprRef(cur_size + 1), lhs)
+        }
+        UnbuiltExpr::BoundVariable(bvar, lambda_type) => {
+            LambdaExpr::BoundVariable(bvar, lambda_type)
+        }
+    };
+
+    pool[pos as usize] = Some(expr);
+    pool.resize(pool.len() + children.len(), None);
+    children
+        .into_iter()
+        .map(|(a, b)| (a, b, context.clone()))
+        .collect()
+}
+
+//We never do applications since they would be redundant. Bound variables are not yet implemented.
+#[derive(Debug, Clone)]
+enum UnbuiltExpr {
+    Quantifier(Quantifier),
+    Variable(Variable),
+    Entity(Entity),
+    Binary(BinOp),
+    Unary(MonOp),
+    Constant(Constant),
+    Lambda(LambdaType),
+    BoundVariable(Bvar, LambdaType),
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+struct Fresher(u32);
+
+impl Fresher {
+    fn fresh(&mut self) -> Variable {
+        self.0 += 1;
+        Variable(self.0)
+    }
+
+    fn new(pool: &[Option<LambdaExpr<Expr>>]) -> Self {
+        Fresher(
+            pool.iter()
+                .filter_map(|x| match x {
+                    Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v))) => Some(v.0),
+                    Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var, .. })) => {
+                        Some(var.0)
+                    }
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(0),
+        )
+    }
+}
+
+static DEFAULT_CONFIG: std::sync::LazyLock<RandomExprConfig> =
+    std::sync::LazyLock::new(RandomExprConfig::default);
+
+#[derive(Debug, Clone)]
+pub struct RandomExprConfig {
+    lambda_prob: f64,
+    variable_prob: f64,
+    weighted_t: WeightedIndex<usize>,
+}
+
+impl RandomExprConfig {
+    fn new(lambda_prob: f64, variable_prob: f64, weighted_t: [usize; 8]) -> Self {
+        Self {
+            lambda_prob,
+            variable_prob,
+            weighted_t: WeightedIndex::new(weighted_t).unwrap(),
+        }
+    }
+}
+
+impl Default for RandomExprConfig {
+    fn default() -> Self {
+        Self {
+            lambda_prob: 0.2,
+            variable_prob: 0.5,
+            weighted_t: WeightedIndex::new([8, 8, 4, 4, 2, 2, 1, 1]).unwrap(),
+        }
+    }
+}
+impl RandomExprConfig {
+    fn is_lambda(&self, lambda_type: &LambdaType, rng: &mut impl Rng) -> bool {
+        lambda_type != &LambdaType::E
+            && lambda_type != &LambdaType::T
+            && rng.random_bool(self.lambda_prob)
+    }
+
+    fn random_t(&self, rng: &mut impl Rng) -> usize {
+        self.weighted_t.sample(rng)
+    }
+
+    fn is_variable(&self, rng: &mut impl Rng) -> bool {
+        rng.random_bool(self.variable_prob)
+    }
+}
+
+impl Expr {
+    fn get_new_from_type(
+        lambda_type: &LambdaType,
+        context: &Context,
+        config: &RandomExprConfig,
+        rng: &mut impl Rng,
+    ) -> Option<UnbuiltExpr> {
+        if config.is_lambda(lambda_type, rng) {
+            return Some(UnbuiltExpr::Lambda(lambda_type.clone()));
+        }
+        if config.is_variable(rng) {
+            let x = context.sample_variable(lambda_type, rng);
+            if x.is_some() {
+                return x;
+            }
+        }
+
+        if lambda_type == &LambdaType::et() {
+            let mut options = [Constant::Everyone, Constant::EveryEvent]
+                .map(UnbuiltExpr::Constant)
+                .to_vec();
+
+            let choice = (0..options.len()).choose(rng).unwrap();
+            Some(options.remove(choice))
+        } else {
+            match lambda_type {
+                LambdaType::T => {
+                    let mut options: Vec<UnbuiltExpr> = vec![
+                        UnbuiltExpr::Unary(MonOp::Not),
+                        UnbuiltExpr::Unary(MonOp::Property(0)),
+                        UnbuiltExpr::Binary(BinOp::AgentOf),
+                        UnbuiltExpr::Binary(BinOp::PatientOf),
+                        UnbuiltExpr::Binary(BinOp::And),
+                        UnbuiltExpr::Binary(BinOp::Or),
+                        UnbuiltExpr::Quantifier(Quantifier::Existential),
+                        UnbuiltExpr::Quantifier(Quantifier::Universal),
+                    ];
+
+                    let choice = config.random_t(rng);
+                    Some(options.remove(choice))
+                }
+                LambdaType::E => context.sample_actor(rng),
+                _ => None,
+            }
+        }
+    }
+}
+
+struct ContextBFSIterator<'a, 'b> {
+    pool: &'a RootedLambdaPool<Expr>,
+    queue: VecDeque<(LambdaExprRef, Context<'b>)>,
+}
+
+impl<'b> Iterator for ContextBFSIterator<'_, 'b> {
+    type Item = (LambdaExprRef, Context<'b>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((x, context)) = self.queue.pop_front() {
+            match self.pool.get(x) {
+                LambdaExpr::Lambda(x, c) => {
+                    let mut context = context.clone();
+                    context.lambdas.push(c.clone());
+                    self.queue.push_back((*x, context))
+                }
+                LambdaExpr::Application {
+                    subformula,
+                    argument,
+                } => {
+                    self.queue.push_back((*subformula, context.clone()));
+                    self.queue.push_back((*argument, context.clone()));
+                }
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                    var,
+                    restrictor,
+                    subformula,
+                    ..
+                }) => {
+                    let mut context = context.clone();
+                    context.available_vars.push(*var);
+                    self.queue
+                        .push_back((LambdaExprRef(restrictor.0), context.clone()));
+                    self.queue.push_back((LambdaExprRef(subformula.0), context));
+                }
+                LambdaExpr::LanguageOfThoughtExpr(x) => x
+                    .get_children()
+                    .for_each(|x| self.queue.push_back((x, context.clone()))),
+                LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
+            }
+            Some((x, context))
+        } else {
+            None
+        }
+    }
+}
+
+impl RootedLambdaPool<Expr> {
+    fn context_bfs_iter<'a, 'b>(
+        &'a self,
+        available_actors: &'b [Entity],
+    ) -> ContextBFSIterator<'a, 'b> {
+        let mut queue = VecDeque::new();
+        queue.push_back((
+            self.root,
+            Context {
+                lambdas: vec![],
+                available_vars: vec![],
+                available_actors,
+            },
+        ));
+        ContextBFSIterator { pool: self, queue }
+    }
+}
