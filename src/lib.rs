@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub type Actor = u16;
 pub type Event = u8;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Entity {
     Actor(Actor),
     Event(Event),
