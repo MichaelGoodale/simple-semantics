@@ -175,8 +175,12 @@ impl RootedLambdaPool<Expr> {
                     restrictor,
                     subformula,
                 } => format!(
-                    "{}({},{},{})",
+                    "{}{}({},{},{})",
                     quantifier,
+                    match var {
+                        Variable::Actor(_) => "",
+                        Variable::Event(_) => "_e",
+                    },
                     var.to_var_string(),
                     self.string(LambdaExprRef(restrictor.0), lambda_depth),
                     self.string(LambdaExprRef(subformula.0), lambda_depth)
@@ -230,21 +234,21 @@ mod test {
         let labels = LabelledScenarios::default();
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
-        let john = parser.parse_with_state("a_j", &mut label_state).unwrap();
+        let john = parser.parse_with_state("a_j", &mut label_state).unwrap()?;
         let likes = parser
             .parse_with_state(
-                "lambda e x ((lambda e y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & p_likes(e)))))",
+                "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
                 &mut label_state,
             )
-            .unwrap();
+            .unwrap()?;
 
-        let mary = parser.parse_with_state("a_m", &mut label_state).unwrap();
+        let mary = parser.parse_with_state("a_m", &mut label_state).unwrap()?;
         let phi = mary.clone().merge(likes.clone()).unwrap();
         let mut phi = phi.merge(john.clone()).unwrap();
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & p0(x)))",
+            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))",
             pool.to_string()
         );
         let phi = likes.merge(mary).unwrap();
@@ -252,7 +256,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & p0(x)))",
+            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))",
             pool.to_string()
         );
         Ok(())
@@ -276,24 +280,24 @@ mod test {
         let parser = lot_parser().then_ignore(end());
         let pool = parser
             .parse_with_state(
-                "some(x0,all_e,((AgentOf(x0,a1) & PatientOf(x0,a0)) & p0(x0)))",
+                "some_e(x0,all_e,((AgentOf(x0,a1) & PatientOf(x0,a0)) & pe0(x0)))",
                 &mut label_state,
             )
-            .unwrap();
+            .unwrap()?;
         assert_eq!(
             pool.to_string(),
-            "some(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & p0(x)))"
+            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))"
         );
         let likes = parser
             .parse_with_state(
-                "lambda e x ((lambda e y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & p_likes(e)))))",
+                "lambda e x ((lambda e y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
                 &mut label_state,
             )
-            .unwrap();
+            .unwrap()?;
 
-        let s = "lambda e x_l (lambda e y_l (some(x,all_e,((AgentOf(x,x_l) & PatientOf(x,y_l)) & p0(x)))))";
+        let s = "lambda e x_l (lambda e y_l (some(x,all_e,((AgentOf(x,x_l) & PatientOf(x,y_l)) & pe0(x)))))";
         assert_eq!(likes.to_string(), s,);
-        let likes2 = parser.parse_with_state(s, &mut label_state).unwrap();
+        let likes2 = parser.parse_with_state(s, &mut label_state).unwrap()?;
         assert_eq!(likes, likes2);
 
         Ok(())

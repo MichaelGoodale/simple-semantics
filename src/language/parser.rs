@@ -8,7 +8,7 @@ use crate::{
     },
     language::{Constant, Expr, ExprRef, MonOp},
 };
-use anyhow::bail;
+use anyhow::Context;
 use chumsky::prelude::*;
 use chumsky::{
     extra::ParserExtra,
@@ -33,104 +33,15 @@ const RESERVED_KEYWORDS: [&str; 11] = [
     "PatientOf",
 ];
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-enum ParsingType {
-    A,
-    E,
-    T,
-    Composition(Option<Box<Self>>, Option<Box<Self>>),
-    Unknown,
-}
-
-impl TryFrom<&ParsingType> for LambdaType {
-    type Error = ();
-
-    fn try_from(value: &ParsingType) -> Result<Self, Self::Error> {
-        match value {
-            ParsingType::E => Ok(LambdaType::E),
-            ParsingType::A => Ok(LambdaType::A),
-            ParsingType::T => Ok(LambdaType::T),
-            ParsingType::Composition(Some(lhs), Some(rhs)) => Ok(LambdaType::Composition(
-                Box::new(LambdaType::try_from(lhs.as_ref())?),
-                Box::new(LambdaType::try_from(rhs.as_ref())?),
-            )),
-            _ => Err(()),
-        }
-    }
-}
-impl TryFrom<ParsingType> for LambdaType {
-    type Error = ();
-    fn try_from(value: ParsingType) -> Result<Self, Self::Error> {
-        (&value).try_into()
-    }
-}
-
-impl From<LambdaType> for ParsingType {
-    fn from(value: LambdaType) -> Self {
-        (&value).into()
-    }
-}
-
-impl From<&LambdaType> for ParsingType {
-    fn from(value: &LambdaType) -> Self {
-        match value {
-            LambdaType::E => ParsingType::E,
-            LambdaType::A => ParsingType::A,
-            LambdaType::T => ParsingType::T,
-            LambdaType::Composition(lhs, rhs) => ParsingType::Composition(
-                Some(Box::new(ParsingType::from(lhs.as_ref()))),
-                Some(Box::new(ParsingType::from(rhs.as_ref()))),
-            ),
-        }
-    }
-}
-
-impl ParsingType {
-    fn at() -> Self {
-        ParsingType::Composition(
-            Some(Box::new(ParsingType::A)),
-            Some(Box::new(ParsingType::T)),
-        )
-    }
-    fn et() -> Self {
-        ParsingType::Composition(
-            Some(Box::new(ParsingType::E)),
-            Some(Box::new(ParsingType::T)),
-        )
-    }
-    fn eet() -> Self {
-        ParsingType::Composition(
-            Some(Box::new(ParsingType::E)),
-            Some(Box::new(ParsingType::et())),
-        )
-    }
-
-    fn to_lambda_type(&self) -> anyhow::Result<LambdaType> {
-        Ok(match self {
-            ParsingType::E => LambdaType::E,
-            ParsingType::A => LambdaType::A,
-            ParsingType::T => LambdaType::T,
-            ParsingType::Composition(Some(a), Some(b)) => LambdaType::Composition(
-                Box::new(a.to_lambda_type()?),
-                Box::new(b.to_lambda_type()?),
-            ),
-            _ => bail!("Cannot convert unknown type"),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct TypedParseTree<'src>(ParseTree<'src>, ParsingType);
-
-impl<'src> TypedParseTree<'src> {
+impl<'src> ParseTree<'src> {
     fn add_to_pool(
         &'src self,
         pool: &mut LambdaPool<Expr>,
         labels: &mut LabelledScenarios,
         variable_names: &mut VariableContext<'src>,
         lambda_depth: usize,
-    ) -> LambdaExprRef {
-        let expr = match &self.0 {
+    ) -> anyhow::Result<LambdaExprRef> {
+        let expr = match &self {
             ParseTree::Constant(c) => LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(match c {
                 LabeledConstant::Constant(x) => *x,
                 LabeledConstant::LabeledProperty(p, a) => {
@@ -145,7 +56,7 @@ impl<'src> TypedParseTree<'src> {
                 LabeledEntity::LabeledActor(label) => Expr::Actor(labels.get_actor_label(label)),
             }),
             ParseTree::Unary(m, x) => {
-                let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth).0);
+                let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth)?.0);
                 let m = match m {
                     LabeledProperty::Property(mon_op) => *mon_op,
                     LabeledProperty::LabeledProperty(label, a) => {
@@ -155,8 +66,8 @@ impl<'src> TypedParseTree<'src> {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(m, x))
             }
             ParseTree::Binary(b, x, y) => {
-                let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth).0);
-                let y = ExprRef(y.add_to_pool(pool, labels, variable_names, lambda_depth).0);
+                let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth)?.0);
+                let y = ExprRef(y.add_to_pool(pool, labels, variable_names, lambda_depth)?.0);
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x, y))
             }
             ParseTree::Quantifier {
@@ -169,21 +80,19 @@ impl<'src> TypedParseTree<'src> {
                 let var = variable_names.bind_fresh_quantifier(variable, *lambda_type);
                 let restrictor = ExprRef(
                     restrictor
-                        .add_to_pool(pool, labels, variable_names, lambda_depth)
+                        .add_to_pool(pool, labels, variable_names, lambda_depth)?
                         .0,
                 );
 
-                dbg!(pool.get_type(LambdaExprRef(restrictor.0)).unwrap());
-
                 let subformula = ExprRef(
                     subformula
-                        .add_to_pool(pool, labels, variable_names, lambda_depth)
+                        .add_to_pool(pool, labels, variable_names, lambda_depth)?
                         .0,
                 );
                 variable_names.unbind(variable);
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: *quantifier,
-                    var: Variable::Actor(var),
+                    var,
                     restrictor,
                     subformula,
                 })
@@ -192,31 +101,38 @@ impl<'src> TypedParseTree<'src> {
                 subformula,
                 argument,
             } => {
-                let subformula = subformula.add_to_pool(pool, labels, variable_names, lambda_depth);
-                let argument = argument.add_to_pool(pool, labels, variable_names, lambda_depth);
+                let subformula =
+                    subformula.add_to_pool(pool, labels, variable_names, lambda_depth)?;
+                let argument = argument.add_to_pool(pool, labels, variable_names, lambda_depth)?;
                 LambdaExpr::Application {
                     subformula,
                     argument,
                 }
             }
-            ParseTree::Lambda { body, var } => {
-                let arg_type: LambdaType = (&self.1).try_into().unwrap();
-                variable_names.bind_lambda(var, lambda_depth + 1, arg_type.clone());
-                let body = body.add_to_pool(pool, labels, variable_names, lambda_depth + 1);
+            ParseTree::Lambda {
+                body,
+                var,
+                lambda_type,
+            } => {
+                variable_names.bind_lambda(var, lambda_depth + 1, lambda_type.clone());
+                let body = body.add_to_pool(pool, labels, variable_names, lambda_depth + 1)?;
                 variable_names.unbind(var);
-                LambdaExpr::Lambda(body, arg_type)
+                LambdaExpr::Lambda(body, lambda_type.clone())
             }
-            ParseTree::Variable(var) => variable_names.to_expr(var, labels, &self.1, lambda_depth),
+            ParseTree::Variable(var) => variable_names.to_expr(var, labels, None, lambda_depth)?,
+            ParseTree::FreeVariable(var, lambda_type) => {
+                variable_names.to_expr(var, labels, Some(lambda_type.clone()), lambda_depth)?
+            }
         };
-        pool.add(expr)
+        Ok(pool.add(expr))
     }
 
-    fn to_pool(&self, labels: &mut LabelledScenarios) -> RootedLambdaPool<Expr> {
+    fn to_pool(&self, labels: &mut LabelledScenarios) -> anyhow::Result<RootedLambdaPool<Expr>> {
         let mut pool = LambdaPool::new();
 
         let mut var_labels = VariableContext::default();
-        let root = self.add_to_pool(&mut pool, labels, &mut var_labels, 0);
-        RootedLambdaPool::new(pool, root)
+        let root = self.add_to_pool(&mut pool, labels, &mut var_labels, 0)?;
+        Ok(RootedLambdaPool::new(pool, root))
     }
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -233,10 +149,10 @@ impl<'src> VariableContext<'src> {
         &self,
         variable: &'src str,
         labels: &mut LabelledScenarios,
-        lambda_type: &ParsingType,
+        lambda_type: Option<LambdaType>,
         lambda_depth: usize,
-    ) -> LambdaExpr<Expr> {
-        match self.0.get(variable) {
+    ) -> anyhow::Result<LambdaExpr<Expr>> {
+        Ok(match self.0.get(variable) {
             Some(vars) => match vars
                 .last()
                 .expect("There should never be an empty vec in the VariableContext")
@@ -250,9 +166,9 @@ impl<'src> VariableContext<'src> {
             },
             None => LambdaExpr::FreeVariable(
                 labels.get_free_variable(variable),
-                lambda_type.to_lambda_type().unwrap(),
+                lambda_type.context(format!("You must provide a type for unbound free variable {variable} like so \"{variable}#<e,t>\""))?,
             ),
-        }
+        })
     }
 
     fn bind_lambda(&mut self, variable: &'src str, lambda_depth: usize, lambda_type: LambdaType) {
@@ -262,17 +178,21 @@ impl<'src> VariableContext<'src> {
             .push(ContextVar::LambdaVar(lambda_depth, lambda_type));
     }
 
-    fn bind_fresh_quantifier(&mut self, variable: &'src str, lambda_type: ActorOrEvent) -> u32 {
-        let n = self.1;
+    fn bind_fresh_quantifier(
+        &mut self,
+        variable: &'src str,
+        lambda_type: ActorOrEvent,
+    ) -> Variable {
+        let var = match lambda_type {
+            ActorOrEvent::Actor => Variable::Actor(self.1),
+            ActorOrEvent::Event => Variable::Event(self.1),
+        };
         self.0
             .entry(variable)
             .or_default()
-            .push(ContextVar::QuantifierVar(match lambda_type {
-                ActorOrEvent::Actor => Variable::Actor(n),
-                ActorOrEvent::Event => Variable::Event(n),
-            }));
+            .push(ContextVar::QuantifierVar(var));
         self.1 += 1;
-        n
+        var
     }
 
     fn unbind(&mut self, variable: &'src str) {
@@ -283,23 +203,25 @@ impl<'src> VariableContext<'src> {
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum ParseTree<'src> {
     Lambda {
-        body: Box<TypedParseTree<'src>>,
+        body: Box<ParseTree<'src>>,
+        lambda_type: LambdaType,
         var: String,
     },
     Variable(&'src str),
+    FreeVariable(&'src str, LambdaType),
     Application {
-        subformula: Box<TypedParseTree<'src>>,
-        argument: Box<TypedParseTree<'src>>,
+        subformula: Box<ParseTree<'src>>,
+        argument: Box<ParseTree<'src>>,
     },
     Constant(LabeledConstant<'src>),
-    Unary(LabeledProperty<'src>, Box<TypedParseTree<'src>>),
-    Binary(BinOp, Box<TypedParseTree<'src>>, Box<TypedParseTree<'src>>),
+    Unary(LabeledProperty<'src>, Box<ParseTree<'src>>),
+    Binary(BinOp, Box<ParseTree<'src>>, Box<ParseTree<'src>>),
     Quantifier {
         quantifier: Quantifier,
         lambda_type: ActorOrEvent,
         variable: &'src str,
-        restrictor: Box<TypedParseTree<'src>>,
-        subformula: Box<TypedParseTree<'src>>,
+        restrictor: Box<ParseTree<'src>>,
+        subformula: Box<ParseTree<'src>>,
     },
     Entity(LabeledEntity<'src>),
 }
@@ -310,7 +232,7 @@ enum LabeledEntity<'a> {
     LabeledActor(&'a str),
 }
 
-fn entity<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+fn entity<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -332,19 +254,11 @@ where
         .map(LabeledEntity::LabeledActor);
 
     choice((actor_or_event_keyword, actor_or_event_number))
-        .map(|x| {
-            TypedParseTree(
-                ParseTree::Entity(x),
-                match x {
-                    LabeledEntity::Unlabeled(Entity::Event(_)) => ParsingType::E,
-                    _ => ParsingType::A,
-                },
-            )
-        })
+        .map(ParseTree::Entity)
         .labelled("entity")
 }
 
-fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
@@ -353,12 +267,7 @@ where
         just("True").to(Constant::Tautology),
         just("False").to(Constant::Contradiction),
     ))
-    .map(|x| {
-        TypedParseTree(
-            ParseTree::Constant(LabeledConstant::Constant(x)),
-            ParsingType::T,
-        )
-    })
+    .map(|x| ParseTree::Constant(LabeledConstant::Constant(x)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -373,16 +282,14 @@ enum LabeledProperty<'a> {
     LabeledProperty(&'a str, ActorOrEvent),
 }
 
-fn properties<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+fn properties<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    let var_expr = variable().map(|x| (true, TypedParseTree(x.0, ParsingType::E)));
-    let entity_expr = entity().map(|x| (false, x));
-    let entity_or_var = choice((entity_expr, var_expr))
+    let entity_or_var = choice((entity(), variable()))
         .padded()
         .delimited_by(just('('), just(')'));
 
@@ -405,33 +312,18 @@ where
                 .then_ignore(just("_"))
                 .then(text::ident())
                 .map(|(a, p)| LabeledProperty::LabeledProperty(p, a)))
-            .then(entity_or_var)
-            .map(|(x, (arg_is_lambdavar, arg))| {
-                TypedParseTree(
-                    ParseTree::Unary(x, Box::new(arg)),
-                    if arg_is_lambdavar {
-                        ParsingType::et()
-                    } else {
-                        ParsingType::T
-                    },
-                )
-            }),
+            .then(entity_or_var.clone())
+            .map(|(x, arg)| ParseTree::Unary(x, Box::new(arg))),
         variable()
-            .map(|x| TypedParseTree(x.0, ParsingType::et()))
             .then(entity_or_var)
-            .map(|(x, (_arg_is_lambdavar, arg))| {
-                TypedParseTree(
-                    ParseTree::Application {
-                        subformula: Box::new(x),
-                        argument: Box::new(arg),
-                    },
-                    ParsingType::Unknown,
-                )
+            .map(|(x, arg)| ParseTree::Application {
+                subformula: Box::new(x),
+                argument: Box::new(arg),
             }),
     ))
 }
 
-fn sets<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+fn sets<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -459,7 +351,7 @@ where
         .then_ignore(just("_"))
         .then(text::ident())
         .map(|(a, p)| LabeledConstant::LabeledProperty(p, a)))
-    .map(|x| TypedParseTree(ParseTree::Constant(x), ParsingType::et()))
+    .map(ParseTree::Constant)
 }
 
 fn just_variable<'src, E>() -> impl Parser<'src, &'src str, &'src str, E> + Copy
@@ -479,55 +371,49 @@ where
                 .not(),
         )
         .and_is(just("a_").ignore_then(text::ident()).not())
-        .and_is(just("p_").ignore_then(text::ident()).not())
+        .and_is(just("pa_").ignore_then(text::ident()).not())
+        .and_is(just("pe_").ignore_then(text::ident()).not())
         .labelled("variable")
     //This is a stupid way to do it, but I can't get one_of to work for the life of me.
 }
 
-fn variable<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+fn variable<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    just_variable().map(|x| TypedParseTree(ParseTree::Variable(x), ParsingType::Unknown))
+    choice((
+        just_variable()
+            .then_ignore(just("#"))
+            .then(core_type_parser())
+            .map(|(s, lambda_type)| ParseTree::FreeVariable(s, lambda_type)),
+        just_variable().map(ParseTree::Variable),
+    ))
 }
 
-fn binary_operation<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
+fn binary_operation<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    let var_expr = variable().map(|x| (false, x));
-    let entity_expr = entity().map(|x| (false, x));
-    let entity_or_var = choice((entity_expr, var_expr)).padded();
+    let entity_or_var = choice((entity(), variable())).padded();
     choice((
         just("AgentOf").to(BinOp::AgentOf),
         just("PatientOf").to(BinOp::PatientOf),
     ))
     .then_ignore(just('('))
-    .then(entity_or_var)
+    .then(entity_or_var.clone())
     .then_ignore(just(','))
     .then(entity_or_var)
     .then_ignore(just(')'))
-    .map(
-        |((binop, (actor_is_lambda, actor)), (event_is_lambda, event))| {
-            TypedParseTree(
-                ParseTree::Binary(binop, Box::new(actor), Box::new(event)),
-                match (actor_is_lambda, event_is_lambda) {
-                    (true, true) => ParsingType::eet(),
-                    (false, true) | (true, false) => ParsingType::et(),
-                    (false, false) => ParsingType::T,
-                },
-            )
-        },
-    )
+    .map(|((binop, actor), event)| ParseTree::Binary(binop, Box::new(actor), Box::new(event)))
 }
 
-fn language_parser<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E>
+fn language_parser<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E>
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -548,11 +434,7 @@ where
             .or(expr.clone().delimited_by(just('('), just(')')));
 
         let neg = just("~").repeated().foldr(atom, |_, b| {
-            let new_type = b.1.clone();
-            TypedParseTree(
-                ParseTree::Unary(LabeledProperty::Property(MonOp::Not), Box::new(b)),
-                new_type,
-            )
+            ParseTree::Unary(LabeledProperty::Property(MonOp::Not), Box::new(b))
         });
 
         let non_quantified = neg.clone().foldl(
@@ -560,21 +442,7 @@ where
                 .padded()
                 .then(neg.clone())
                 .repeated(),
-            |lhs, (op, rhs)| {
-                let type1 = matches!(lhs.1, ParsingType::Composition(..));
-                let type2 = matches!(rhs.1, ParsingType::Composition(..));
-                let statement_type = match (type1, type2) {
-                    (true, true) => ParsingType::Composition(None, Some(Box::new(ParsingType::T))),
-                    (true, false) => lhs.1.clone(),
-                    (false, true) => rhs.1.clone(),
-                    (false, false) => ParsingType::T,
-                };
-
-                TypedParseTree(
-                    ParseTree::Binary(op, Box::new(lhs), Box::new(rhs)),
-                    statement_type,
-                )
-            },
+            |lhs, (op, rhs)| ParseTree::Binary(op, Box::new(lhs), Box::new(rhs)),
         );
 
         let quantified = choice((
@@ -595,16 +463,13 @@ where
         .then_ignore(just(')'))
         .map(
             |((((quantifier, lambda_type), variable), restrictor), subformula)| {
-                TypedParseTree(
-                    ParseTree::Quantifier {
-                        quantifier,
-                        variable,
-                        lambda_type,
-                        restrictor: Box::new(restrictor),
-                        subformula: Box::new(subformula),
-                    },
-                    ParsingType::T,
-                )
+                ParseTree::Quantifier {
+                    quantifier,
+                    variable,
+                    lambda_type,
+                    restrictor: Box::new(restrictor),
+                    subformula: Box::new(subformula),
+                }
             },
         );
 
@@ -614,14 +479,10 @@ where
             .then_ignore(inline_whitespace().at_least(1))
             .then(text::ident().padded().labelled("lambda variable"))
             .then(expr.clone().delimited_by(just('('), just(')')))
-            .map(|((lambda_type, var_name), body)| {
-                TypedParseTree(
-                    ParseTree::Lambda {
-                        body: Box::new(body),
-                        var: var_name.to_string(),
-                    },
-                    lambda_type.into(),
-                )
+            .map(|((lambda_type, var_name), body)| ParseTree::Lambda {
+                body: Box::new(body),
+                var: var_name.to_string(),
+                lambda_type,
             })
             .labelled("lambda expression");
 
@@ -629,20 +490,15 @@ where
             expr.clone()
                 .delimited_by(just('('), just(')'))
                 .then(expr.delimited_by(just('('), just(')')))
-                .map(|(a, b)| {
-                    TypedParseTree(
-                        ParseTree::Application {
-                            subformula: Box::new(a),
-                            argument: Box::new(b),
-                        },
-                        ParsingType::Unknown,
-                    )
+                .map(|(a, b)| ParseTree::Application {
+                    subformula: Box::new(a),
+                    argument: Box::new(b),
                 }),
             lambda,
             non_quantified,
             quantified,
-            entity_or_variable,
             possible_sets,
+            entity_or_variable,
         ))
     });
     truth_value
@@ -651,7 +507,8 @@ where
 type ExtraType<'a> = extra::Full<Rich<'a, char>, extra::SimpleState<LabelledScenarios>, ()>;
 
 ///A parsing function that can be used to incorpate LOT parsers into other parsers.
-pub fn lot_parser<'a>() -> impl Parser<'a, &'a str, RootedLambdaPool<Expr>, ExtraType<'a>> {
+pub fn lot_parser<'a>()
+-> impl Parser<'a, &'a str, anyhow::Result<RootedLambdaPool<Expr>>, ExtraType<'a>> {
     language_parser::<ExtraType>().map_with(|x, e| x.to_pool(e.state()))
 }
 
@@ -672,7 +529,7 @@ pub fn parse_executable(
                     .join("\n"),
             )
         })?
-        .to_pool(labels);
+        .to_pool(labels)?;
     pool.reduce()?;
     pool.into_pool()
 }
@@ -690,28 +547,19 @@ mod tests {
             let str = format!("a{n}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                TypedParseTree(
-                    ParseTree::Entity(LabeledEntity::Unlabeled(Entity::Actor(n.into()))),
-                    ParsingType::E
-                )
+                ParseTree::Entity(LabeledEntity::Unlabeled(Entity::Actor(n.into())))
             );
             let str = format!("e{n}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                TypedParseTree(
-                    ParseTree::Entity(LabeledEntity::Unlabeled(Entity::Event(n))),
-                    ParsingType::E
-                )
+                ParseTree::Entity(LabeledEntity::Unlabeled(Entity::Event(n)))
             );
         }
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("a_{keyword}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                TypedParseTree(
-                    ParseTree::Entity(LabeledEntity::LabeledActor(keyword)),
-                    ParsingType::A
-                )
+                ParseTree::Entity(LabeledEntity::LabeledActor(keyword))
             );
         }
     }
@@ -741,7 +589,7 @@ mod tests {
             let (pool, root) = binary_operation::<extra::Err<Simple<_>>>()
                 .parse(s)
                 .unwrap()
-                .to_pool(&mut labels)
+                .to_pool(&mut labels)?
                 .into();
             let pool = pool.into_pool(root)?;
             assert_eq!(pool.pool.0, result);
@@ -755,19 +603,13 @@ mod tests {
             bool_literal::<extra::Err<Simple<_>>>()
                 .parse("True")
                 .unwrap(),
-            TypedParseTree(
-                ParseTree::Constant(LabeledConstant::Constant(Constant::Tautology)),
-                ParsingType::T
-            )
+            ParseTree::Constant(LabeledConstant::Constant(Constant::Tautology))
         );
         assert_eq!(
             bool_literal::<extra::Err<Simple<_>>>()
                 .parse("False")
                 .unwrap(),
-            TypedParseTree(
-                ParseTree::Constant(LabeledConstant::Constant(Constant::Contradiction)),
-                ParsingType::T
-            )
+            ParseTree::Constant(LabeledConstant::Constant(Constant::Contradiction))
         );
     }
 
@@ -777,50 +619,36 @@ mod tests {
             let str = format!("pa{n}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                TypedParseTree(
-                    ParseTree::Constant(LabeledConstant::Constant(Constant::Property(
-                        n,
-                        ActorOrEvent::Actor
-                    ))),
-                    ParsingType::at()
-                )
+                ParseTree::Constant(LabeledConstant::Constant(Constant::Property(
+                    n,
+                    ActorOrEvent::Actor
+                )))
             );
+            let str = format!("pe{n}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                TypedParseTree(
-                    ParseTree::Constant(LabeledConstant::Constant(Constant::Property(
-                        n,
-                        ActorOrEvent::Event
-                    ))),
-                    ParsingType::et()
-                )
+                ParseTree::Constant(LabeledConstant::Constant(Constant::Property(
+                    n,
+                    ActorOrEvent::Event
+                ))),
             );
         }
         assert_eq!(
             sets::<extra::Err<Simple<_>>>().parse("all_e").unwrap(),
-            TypedParseTree(
-                ParseTree::Constant(LabeledConstant::Constant(Constant::EveryEvent)),
-                ParsingType::et()
-            )
+            ParseTree::Constant(LabeledConstant::Constant(Constant::EveryEvent)),
         );
         assert_eq!(
             sets::<extra::Err<Simple<_>>>().parse("all_a").unwrap(),
-            TypedParseTree(
-                ParseTree::Constant(LabeledConstant::Constant(Constant::Everyone)),
-                ParsingType::et()
-            )
+            ParseTree::Constant(LabeledConstant::Constant(Constant::Everyone)),
         );
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("pa_{keyword}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                TypedParseTree(
-                    ParseTree::Constant(LabeledConstant::LabeledProperty(
-                        keyword,
-                        ActorOrEvent::Actor
-                    )),
-                    ParsingType::at()
-                )
+                ParseTree::Constant(LabeledConstant::LabeledProperty(
+                    keyword,
+                    ActorOrEvent::Actor
+                )),
             );
         }
     }
@@ -831,6 +659,7 @@ mod tests {
             .parse(s)
             .unwrap()
             .to_pool(&mut labels)
+            .unwrap()
             .into();
         let LanguageExpression { pool, start } = parse.into_pool(root).unwrap();
         (pool, start)
@@ -892,7 +721,7 @@ mod tests {
                         .join("\n"),
                 )
             })?
-            .to_pool(&mut labels)
+            .to_pool(&mut labels)?
             .into();
 
         assert_eq!(pool.get_type(root)?, LambdaType::from_string(lambda_type)?);
@@ -911,7 +740,7 @@ mod tests {
                         .collect::<Vec<_>>()
                         .join("\n"),
                 )
-            })?
+            })??
             .into();
 
         assert_eq!(pool, gold_pool);
@@ -952,7 +781,7 @@ mod tests {
         )?;
         check_lambdas(
             "lambda <a,t> P (P(a0))",
-            "<<e,t>,t>",
+            "<<a,t>,t>",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::at()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(0)),
@@ -965,7 +794,7 @@ mod tests {
             3,
         )?;
         check_lambdas(
-            "~hey(lol)",
+            "~hey#<e,t>(lol#e)",
             "t",
             LambdaPool::from(vec![
                 LambdaExpr::FreeVariable(0, LambdaType::et()),
@@ -1053,7 +882,7 @@ mod tests {
             lemmas: vec![],
         };
         parse_executable(
-            "(lambda <e,t> P (P(a0)))(lambda e x (p_Red(x)))",
+            "(lambda <a,t> P (P(a0)))(lambda a x (pa_Red(x)))",
             &mut labels,
         )?;
         Ok(())
@@ -1103,9 +932,9 @@ mod tests {
             "every(x0, pa_Blue, pa_Blue(x0))",
             "every(x, pa1, pa4(x))",
             "every(x0, pa_Red, pa_Blue(x0))",
-            "every(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
-            "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
-            "every(x0, all_e, PatientOf(a_Mary, x0))",
+            "every_e(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
+            "every_e(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
+            "every_e(x0, all_e, PatientOf(a_Mary, x0))",
             "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), pa_Blue(x0))",
         ] {
             println!("{statement}");
@@ -1164,9 +993,9 @@ mod tests {
             "~(pa1(a1) & ~(True & pa1(a1)))",
             "every(x0, all_a, pa4(x0))",
             "every(x0, pa4, pa4(x0))",
-            "every(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
-            "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
-            "every(x0, all_e, PatientOf(a0, x0))",
+            "every_e(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
+            "every_e(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
+            "every_e(x0, all_e, PatientOf(a0, x0))",
             "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), pa4(x0))",
         ] {
             println!("{statement}");

@@ -806,27 +806,27 @@ mod test {
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let man = parser
-            .parse_with_state("lambda e x (p_man(x))", &mut label_state)
-            .unwrap();
+            .parse_with_state("lambda a x (pa_man(x))", &mut label_state)
+            .unwrap()?;
         let sleeps = parser
             .parse_with_state(
-                "lambda e x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))",
+                "lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
                 &mut label_state,
             )
-            .unwrap();
+            .unwrap()?;
         let every = parser
             .parse_with_state(
-                "lambda <e,t> p(lambda <e,t> q(every(x, p(x), q(x))))",
+                "lambda <a,t> p(lambda <a,t> q(every(x, p(x), q(x))))",
                 &mut label_state,
             )
-            .unwrap();
+            .unwrap()?;
 
         let phi = every.clone().merge(man.clone()).unwrap();
         let mut phi = phi.merge(sleeps.clone()).unwrap();
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "every(x,p0(x),some(y,all_e,(AgentOf(x,y) & p1(y))))",
+            "every(x,pa0(x),some_e(y,all_e,(AgentOf(x,y) & pe1(y))))",
             pool.to_string()
         );
         let phi = man.merge(every).unwrap();
@@ -834,7 +834,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "every(x,p0(x),some(y,all_e,(AgentOf(x,y) & p1(y))))",
+            "every(x,pa0(x),some_e(y,all_e,(AgentOf(x,y) & pe1(y))))",
             pool.to_string()
         );
         Ok(())
@@ -846,12 +846,14 @@ mod test {
         let mut label_state = extra::SimpleState(labels.clone());
         let parser = lot_parser().then_ignore(end());
         let mut pool = parser
-            .parse_with_state("phi_t & True", &mut label_state)
-            .unwrap();
+            .parse_with_state("phi_t#t & True", &mut label_state)
+            .unwrap()?;
 
         pool.bind_free_variable(
             0,
-            parser.parse_with_state("False", &mut label_state).unwrap(),
+            parser
+                .parse_with_state("False", &mut label_state)
+                .unwrap()?,
         )?;
         dbg!(&pool);
         assert_eq!("(False & True)", pool.into_pool()?.to_string());
@@ -868,7 +870,7 @@ mod test {
                 "lambda <e,t> P (lambda <e,t> Q (lambda e x (P(x) & Q(x))))",
                 &mut label_state,
             )
-            .unwrap();
+            .unwrap()?;
 
         pool.apply_new_free_variable(0)?;
 
@@ -903,10 +905,10 @@ mod test {
         let parser = lot_parser().then_ignore(end());
         let mut pool = parser
             .parse_with_state(
-                "lambda <e,t> P (lambda <e,t> Q (lambda e x (Z(x) & P(x) & Q(x))))",
+                "lambda <e,t> P (lambda <e,t> Q (lambda e x (Z#<e,t>(x) & P(x) & Q(x))))",
                 &mut label_state,
             )
-            .unwrap();
+            .unwrap()?;
 
         pool.lambda_abstract_free_variable(0, LambdaType::et(), false)?;
 
@@ -950,10 +952,10 @@ mod test {
         let mut state = extra::SimpleState(LabelledScenarios::default());
         let mut x = p
             .parse_with_state(
-                "(lambda e x_l (PatientOf(x_l,x_l)))((lambda e x_l (a1))(a0))",
+                "(lambda a x_l (PatientOf(x_l,x_l)))((lambda a x_l (a1))(a0))",
                 &mut state,
             )
-            .unwrap();
+            .unwrap()?;
 
         println!("{x}");
         x.reduce()?;

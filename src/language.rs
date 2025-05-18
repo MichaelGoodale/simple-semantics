@@ -39,7 +39,8 @@ impl Display for MonOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MonOp::Not => write!(f, "~"),
-            MonOp::Property(x, _) => write!(f, "p{x}"),
+            MonOp::Property(x, ActorOrEvent::Actor) => write!(f, "pa{x}"),
+            MonOp::Property(x, ActorOrEvent::Event) => write!(f, "pe{x}"),
             MonOp::Tautology => write!(f, "True"),
             MonOp::Contradiction => write!(f, "False"),
         }
@@ -163,8 +164,12 @@ impl LanguageExpression {
                 restrictor,
                 subformula,
             } => format!(
-                "{}({},{},{})",
+                "{}{}({},{},{})",
                 quantifier,
+                match var {
+                    Variable::Actor(_) => "",
+                    Variable::Event(_) => "_e",
+                },
                 var.to_var_string(),
                 self.string(*restrictor),
                 self.string(*subformula)
