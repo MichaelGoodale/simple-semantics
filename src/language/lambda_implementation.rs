@@ -2,18 +2,11 @@ use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Quantifier,
     Variable,
 };
-use crate::{
-    Actor, Entity,
-    lambda::{
-        Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-        types::LambdaType,
-    },
+use crate::lambda::{
+    Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
+    types::LambdaType,
 };
-use rand::{
-    Rng,
-    distr::{Distribution, weighted::WeightedIndex},
-    seq::IteratorRandom,
-};
+use rand::{Rng, seq::IteratorRandom};
 
 pub mod mutations;
 
@@ -307,11 +300,12 @@ mod test {
     fn randomness() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let actors = [0, 1];
-        let properties = [0, 1, 2, 3];
-        for _ in 0..100 {
-            let t = LambdaType::random(&mut rng);
+        let properties = [0, 1, 2, 3, 4, 5];
+        for _ in 0..2000 {
+            let t = LambdaType::random_no_e(&mut rng);
+            println!("{t}");
             let pool =
-                RootedLambdaPool::random_expr(t.clone(), &actors, &properties, None, &mut rng);
+                RootedLambdaPool::random_expr(t.clone(), &actors, &properties, None, &mut rng)?;
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
             let pool = pool.resample_from_expr(&actors, &properties, None, &mut rng);

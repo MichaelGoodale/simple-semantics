@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use anyhow::bail;
+
 use crate::{Actor, Event, PropertyLabel};
 
 use super::*;
@@ -33,6 +35,7 @@ impl RootedLambdaPool<Expr> {
         let mut pool: Vec<Option<LambdaExpr<Expr>>> = pool.into();
         pool[position.0 as usize] = None;
 
+        dbg!(&pool, &context, &lambda_type);
         let mut pool = build_out_pool(pool, lambda_type, position.0, context, config, rng);
         let root = pool.cleanup(root);
 
@@ -45,7 +48,10 @@ impl RootedLambdaPool<Expr> {
         available_properties: &[PropertyLabel],
         config: Option<&RandomExprConfig>,
         rng: &mut impl Rng,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
+        if lambda_type == LambdaType::E {
+            bail!("There is no way to make a function with type E")
+        }
         let pool = vec![None];
 
         let context = Context {
@@ -57,7 +63,7 @@ impl RootedLambdaPool<Expr> {
         let config = config.unwrap_or(&DEFAULT_CONFIG);
 
         let pool = build_out_pool(pool, lambda_type, 0, context, config, rng);
-        RootedLambdaPool::new(pool, LambdaExprRef(0))
+        Ok(RootedLambdaPool::new(pool, LambdaExprRef(0)))
     }
 }
 
@@ -70,14 +76,12 @@ fn build_out_pool(
     rng: &mut impl Rng,
 ) -> LambdaPool<Expr> {
     let mut fresher = Fresher::new(&pool);
-    let e = Expr::get_new_from_type(&lambda_type, &context, config, rng)
-        .unwrap_or(UnbuiltExpr::Lambda(lambda_type));
+    let e = Expr::get_new_from_type(lambda_type, &context, config, rng).unwrap();
 
     let mut stack = add_expr(e, start_pos, context, &mut fresher, &mut pool);
 
     while let Some((pos, lambda_type, context)) = stack.pop() {
-        let e = Expr::get_new_from_type(&lambda_type, &context, config, rng)
-            .unwrap_or(UnbuiltExpr::Lambda(lambda_type));
+        let e = Expr::get_new_from_type(lambda_type, &context, config, rng).unwrap();
 
         stack.extend(add_expr(e, pos, context, &mut fresher, &mut pool));
     }
@@ -94,6 +98,13 @@ struct Context<'a> {
 }
 
 impl Context<'_> {
+    fn can_sample_event(&self) -> bool {
+        self.available_vars
+            .iter()
+            .any(|x| matches!(x, Variable::Event(_)))
+            | self.lambdas.iter().any(|lam| *lam == LambdaType::E)
+    }
+
     fn sample_actor(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
         self.available_actors
             .iter()
@@ -149,7 +160,7 @@ fn add_expr<'a>(
     let expr = match e {
         UnbuiltExpr::Quantifier(quantifier) => {
             children.extend_from_slice(&[
-                (cur_size + 1, LambdaType::et()),
+                (cur_size + 1, LambdaType::at()),
                 (cur_size + 2, LambdaType::T),
             ]);
             let var = fresher.fresh();
@@ -253,19 +264,17 @@ impl Fresher {
 static DEFAULT_CONFIG: std::sync::LazyLock<RandomExprConfig> =
     std::sync::LazyLock::new(RandomExprConfig::default);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RandomExprConfig {
     lambda_prob: f64,
     variable_prob: f64,
-    weighted_t: WeightedIndex<usize>,
 }
 
 impl RandomExprConfig {
-    fn new(lambda_prob: f64, variable_prob: f64, weighted_t: [usize; 8]) -> Self {
+    fn new(lambda_prob: f64, variable_prob: f64) -> Self {
         Self {
             lambda_prob,
             variable_prob,
-            weighted_t: WeightedIndex::new(weighted_t).unwrap(),
         }
     }
 }
@@ -275,19 +284,12 @@ impl Default for RandomExprConfig {
         Self {
             lambda_prob: 0.2,
             variable_prob: 0.5,
-            weighted_t: WeightedIndex::new([8, 8, 4, 4, 2, 2, 1, 1]).unwrap(),
         }
     }
 }
 impl RandomExprConfig {
     fn is_lambda(&self, lambda_type: &LambdaType, rng: &mut impl Rng) -> bool {
-        lambda_type != &LambdaType::E
-            && lambda_type != &LambdaType::T
-            && rng.random_bool(self.lambda_prob)
-    }
-
-    fn random_t(&self, rng: &mut impl Rng) -> usize {
-        self.weighted_t.sample(rng)
+        lambda_type.is_function() && rng.random_bool(self.lambda_prob)
     }
 
     fn is_variable(&self, rng: &mut impl Rng) -> bool {
@@ -297,75 +299,85 @@ impl RandomExprConfig {
 
 impl Expr {
     fn get_new_from_type(
-        lambda_type: &LambdaType,
+        lambda_type: LambdaType,
         context: &Context,
         config: &RandomExprConfig,
         rng: &mut impl Rng,
-    ) -> Option<UnbuiltExpr> {
-        if config.is_lambda(lambda_type, rng) {
-            return Some(UnbuiltExpr::Lambda(lambda_type.clone()));
+    ) -> anyhow::Result<UnbuiltExpr> {
+        if config.is_lambda(&lambda_type, rng) {
+            return Ok(UnbuiltExpr::Lambda(lambda_type));
         }
         if config.is_variable(rng) {
-            let x = context.sample_variable(lambda_type, rng);
-            if x.is_some() {
-                return x;
+            let x = context.sample_variable(&lambda_type, rng);
+            if let Some(x) = x {
+                return Ok(x);
             }
         }
 
-        if lambda_type == &LambdaType::et() {
-            let mut options = [Constant::Everyone].map(UnbuiltExpr::Constant).to_vec();
+        let expr =
+            if lambda_type == LambdaType::at() {
+                let mut options = [Constant::Everyone].map(UnbuiltExpr::Constant).to_vec();
 
-            options.extend(
-                context
-                    .available_properties
-                    .iter()
-                    .map(|i| UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Actor))),
-            );
-            let choice = (0..options.len()).choose(rng).unwrap();
-            Some(options.remove(choice))
-        } else if lambda_type == &LambdaType::at() {
-            let mut options = [Constant::EveryEvent].map(UnbuiltExpr::Constant).to_vec();
+                options.extend(
+                    context.available_properties.iter().map(|i| {
+                        UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Actor))
+                    }),
+                );
+                let choice = (0..options.len()).choose(rng).unwrap();
+                Some(options.remove(choice))
+            } else if lambda_type == LambdaType::et() {
+                let mut options = [Constant::EveryEvent].map(UnbuiltExpr::Constant).to_vec();
 
-            options.extend(
-                context
-                    .available_properties
-                    .iter()
-                    .map(|i| UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Event))),
-            );
-            let choice = (0..options.len()).choose(rng).unwrap();
-            Some(options.remove(choice))
-        } else {
-            match lambda_type {
-                LambdaType::T => {
-                    let mut options: Vec<UnbuiltExpr> = vec![
-                        UnbuiltExpr::Unary(MonOp::Not),
-                        UnbuiltExpr::Binary(BinOp::AgentOf),
-                        UnbuiltExpr::Binary(BinOp::PatientOf),
-                        UnbuiltExpr::Binary(BinOp::And),
-                        UnbuiltExpr::Binary(BinOp::Or),
-                        UnbuiltExpr::Quantifier(Quantifier::Existential),
-                        UnbuiltExpr::Quantifier(Quantifier::Universal),
-                    ];
-                    options.extend(
-                        context
-                            .available_properties
-                            .iter()
-                            .map(|i| UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor))),
-                    );
+                options.extend(
+                    context.available_properties.iter().map(|i| {
+                        UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Event))
+                    }),
+                );
+                let choice = (0..options.len()).choose(rng).unwrap();
+                Some(options.remove(choice))
+            } else {
+                match lambda_type {
+                    LambdaType::T => {
+                        let mut options: Vec<UnbuiltExpr> = vec![
+                            UnbuiltExpr::Unary(MonOp::Not),
+                            UnbuiltExpr::Binary(BinOp::And),
+                            UnbuiltExpr::Binary(BinOp::Or),
+                            UnbuiltExpr::Quantifier(Quantifier::Existential),
+                            UnbuiltExpr::Quantifier(Quantifier::Universal),
+                        ];
+                        options.extend(
+                            context.available_properties.iter().map(|i| {
+                                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor))
+                            }),
+                        );
 
-                    options.extend(
-                        context
-                            .available_properties
-                            .iter()
-                            .map(|i| UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event))),
-                    );
+                        if context.can_sample_event() {
+                            options.push(UnbuiltExpr::Binary(BinOp::AgentOf));
+                            options.push(UnbuiltExpr::Binary(BinOp::PatientOf));
+                            options.extend(context.available_properties.iter().map(|i| {
+                                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event))
+                            }));
+                        }
 
-                    let choice = config.random_t(rng);
-                    Some(options.remove(choice))
+                        let choice = (0..options.len()).choose(rng).unwrap();
+                        Some(options.remove(choice))
+                    }
+                    LambdaType::A => context.sample_actor(rng),
+                    LambdaType::E => context.sample_event(rng),
+                    _ => None,
                 }
-                LambdaType::E => context.sample_actor(rng),
-                LambdaType::A => context.sample_event(rng),
-                _ => None,
+            };
+
+        match expr {
+            Some(expr) => Ok(expr),
+            None => {
+                if lambda_type.is_function() {
+                    Ok(UnbuiltExpr::Lambda(lambda_type))
+                } else if let Some(x) = context.sample_variable(&lambda_type, rng) {
+                    Ok(x)
+                } else {
+                    bail!("Could not find expr of type {lambda_type}");
+                }
             }
         }
     }

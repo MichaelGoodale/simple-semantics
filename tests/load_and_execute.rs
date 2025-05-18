@@ -77,7 +77,7 @@ fn lambda_stuff() -> anyhow::Result<()> {
     let mut parsed_data = LabelledScenarios::from_file(path)?;
 
     let executable = simple_semantics::parse_executable(
-        "every(x,p_man, some(y, all_e, AgentOf(x, y) & p_sleep(y)))",
+        "every(x,pa_man, some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
         &mut parsed_data,
     )?;
     assert_eq!(
@@ -90,10 +90,10 @@ fn lambda_stuff() -> anyhow::Result<()> {
             .to_vec()
     );
 
-    let man = "lambda e x (p_man(x))";
-    let woman = "lambda e x (p_woman(x))";
-    let sleeps = "lambda e x (some(y, all_e, AgentOf(x, y) & p_sleep(y)))";
-    let every = "lambda <e,t> p(lambda <e,t> q(every(x, p(x), q(x))))";
+    let man = "lambda a x (pa_man(x))";
+    let woman = "lambda a x (pa_woman(x))";
+    let sleeps = "lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))";
+    let every = "lambda <a,t> p(lambda <a,t> q(every(x, p(x), q(x))))";
     let and = "lambda t psi (lambda t phi (psi & phi))";
     let not = "lambda t phi (~phi)";
 

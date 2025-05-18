@@ -181,6 +181,21 @@ impl LambdaType {
             )
         }
     }
+
+    ///Returns a random type, except for ``LambdaType::E``
+    pub fn random_no_e(r: &mut impl Rng) -> Self {
+        let p: f64 = r.random();
+        if p < 0.4 {
+            LambdaType::A
+        } else if p < 0.8 {
+            LambdaType::T
+        } else {
+            LambdaType::Composition(
+                Box::new(LambdaType::random(r)),
+                Box::new(LambdaType::random_no_e(r)),
+            )
+        }
+    }
 }
 
 #[cfg(test)]

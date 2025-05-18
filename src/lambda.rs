@@ -539,7 +539,7 @@ mod test {
 
     use super::*;
     use crate::{
-        Actor, Entity, LabelledScenarios,
+        LabelledScenarios,
         language::{ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
     };
 
@@ -551,7 +551,6 @@ mod test {
         ])
     }
 
-    /*
     #[test]
     fn complicated_lambda_language_of_thought() -> anyhow::Result<()> {
         let mut pool = LambdaPool::<Expr>(vec![
@@ -560,18 +559,24 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(4),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(3))),
-            LambdaExpr::BoundVariable(0, LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3))),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                MonOp::Property(32, ActorOrEvent::Actor),
+                ExprRef(3),
+            )),
+            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3)),
         ]);
         pool.reduce(LambdaExprRef(0))?;
 
         assert_eq!(
             pool.clone(),
             LambdaPool(vec![
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(1))),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3)))
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                    MonOp::Property(32, ActorOrEvent::Actor),
+                    ExprRef(1)
+                )),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3))
             ]),
         );
 
@@ -580,23 +585,29 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(5),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<e, t>")?),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::from_string("<a, t>")?),
             LambdaExpr::Application {
                 subformula: LambdaExprRef(3),
                 argument: LambdaExprRef(4),
             },
             LambdaExpr::BoundVariable(0, LambdaType::et()),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
-            LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(7))),
-            LambdaExpr::BoundVariable(0, LambdaType::E),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
+            LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                MonOp::Property(36, ActorOrEvent::Actor),
+                ExprRef(7),
+            )),
+            LambdaExpr::BoundVariable(0, LambdaType::A),
         ]);
         pool.reduce(LambdaExprRef(0))?;
         assert_eq!(
             pool,
             LambdaPool(vec![
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(1))),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                    MonOp::Property(36, ActorOrEvent::Actor),
+                    ExprRef(1)
+                )),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
             ])
         );
 
@@ -615,10 +626,13 @@ mod test {
                 subformula: LambdaExprRef(7),
                 argument: LambdaExprRef(10),
             },
-            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(9))),
-            LambdaExpr::BoundVariable(0, LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                MonOp::Property(36, ActorOrEvent::Actor),
+                ExprRef(9),
+            )),
+            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
         ]);
         pool.reduce(LambdaExprRef(0))?;
 
@@ -627,9 +641,12 @@ mod test {
             LambdaPool(vec![
                 LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::T),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3))),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(4))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                    MonOp::Property(36, ActorOrEvent::Actor),
+                    ExprRef(4)
+                )),
                 LambdaExpr::BoundVariable(0, LambdaType::T),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
             ])
         );
 
@@ -644,10 +661,13 @@ mod test {
                 subformula: LambdaExprRef(2),
                 argument: LambdaExprRef(5),
             },
-            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(4))),
-            LambdaExpr::BoundVariable(0, LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3))),
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                MonOp::Property(32, ActorOrEvent::Actor),
+                ExprRef(4),
+            )),
+            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3)),
             // 6
             //\lambda x. Mary sings and
             LambdaExpr::Application {
@@ -664,20 +684,29 @@ mod test {
                 subformula: LambdaExprRef(13),
                 argument: LambdaExprRef(16),
             },
-            LambdaExpr::Lambda(LambdaExprRef(14), LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(15))),
-            LambdaExpr::BoundVariable(0, LambdaType::E),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2))),
+            LambdaExpr::Lambda(LambdaExprRef(14), LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                MonOp::Property(36, ActorOrEvent::Actor),
+                ExprRef(15),
+            )),
+            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
         ]);
         let root = pool.reduce(LambdaExprRef(0))?;
         assert_eq!(
             pool,
             LambdaPool(vec![
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3))),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(3))),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(36), ExprRef(4))),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Property(32), ExprRef(1))),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Entity(Entity::Actor(2)))
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3)),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                    MonOp::Property(36, ActorOrEvent::Actor),
+                    ExprRef(4)
+                )),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                    MonOp::Property(32, ActorOrEvent::Actor),
+                    ExprRef(1)
+                )),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2))
             ])
         );
 
@@ -704,13 +733,13 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(3),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::A),
             LambdaExpr::BoundVariable(0, LambdaType::T),
             LambdaExpr::FreeVariable(0, LambdaType::T),
         ]);
         assert_eq!(
             pool.reduce(LambdaExprRef(0)).unwrap_err().to_string(),
-            "Cannot apply t to <e,t>!"
+            "Cannot apply t to <a,t>!"
         );
 
         let mut pool = LambdaPool::<()>(vec![
@@ -718,9 +747,9 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(3),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::A),
             LambdaExpr::BoundVariable(0, LambdaType::T),
-            LambdaExpr::FreeVariable(0, LambdaType::E),
+            LambdaExpr::FreeVariable(0, LambdaType::A),
         ]);
         assert!(pool.reduce(LambdaExprRef(0)).is_ok());
         Ok(())
@@ -767,7 +796,6 @@ mod test {
         );
         Ok(())
     }
-    */
 
     #[test]
     fn test_lambda_calculus() -> anyhow::Result<()> {
