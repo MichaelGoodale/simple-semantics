@@ -231,6 +231,7 @@ impl<'src> VariableContext<'src> {
         lambda_type: &ParsingType,
         lambda_depth: usize,
     ) -> LambdaExpr<Expr> {
+        dbg!(self);
         match self.0.get(variable) {
             Some(vars) => match vars
                 .last()
@@ -462,7 +463,13 @@ where
 {
     text::ident::<&'src str, E>()
         .and_is(choice(RESERVED_KEYWORDS.map(|x| just(x))).not())
-        .and_is(one_of("ape").ignore_then(text::int(10)).not())
+        .and_is(one_of("ae").ignore_then(text::int(10)).not())
+        .and_is(
+            just("p")
+                .ignore_then(one_of("ae"))
+                .ignore_then(text::int(10))
+                .not(),
+        )
         .and_is(just("a_").ignore_then(text::ident()).not())
         .and_is(just("p_").ignore_then(text::ident()).not())
         .labelled("variable")
@@ -1142,7 +1149,7 @@ mod tests {
             "pa1(a1) & ~pa1(a0) & pa1(a1)",
             "~(pa1(a1) & ~(True & pa1(a1)))",
             "every(x0, all_a, pa4(x0))",
-            "every(x0, p4, p4(x0))",
+            "every(x0, pa4, pa4(x0))",
             "every(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
             "every(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
             "every(x0, all_e, PatientOf(a0, x0))",
