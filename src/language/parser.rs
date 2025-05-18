@@ -19,10 +19,12 @@ use chumsky::{
 
 use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier, Variable};
 
-const RESERVED_KEYWORDS: [&str; 9] = [
+const RESERVED_KEYWORDS: [&str; 11] = [
     "lambda",
     "some",
     "every",
+    "some_e",
+    "every_e",
     "True",
     "False",
     "all_e",
@@ -159,16 +161,19 @@ impl<'src> TypedParseTree<'src> {
             }
             ParseTree::Quantifier {
                 quantifier,
+                lambda_type,
                 variable,
                 restrictor,
                 subformula,
             } => {
-                let var = variable_names.bind_fresh_quantifier(variable);
+                let var = variable_names.bind_fresh_quantifier(variable, *lambda_type);
                 let restrictor = ExprRef(
                     restrictor
                         .add_to_pool(pool, labels, variable_names, lambda_depth)
                         .0,
                 );
+
+                dbg!(pool.get_type(LambdaExprRef(restrictor.0)).unwrap());
 
                 let subformula = ExprRef(
                     subformula
@@ -231,7 +236,6 @@ impl<'src> VariableContext<'src> {
         lambda_type: &ParsingType,
         lambda_depth: usize,
     ) -> LambdaExpr<Expr> {
-        dbg!(self);
         match self.0.get(variable) {
             Some(vars) => match vars
                 .last()
@@ -258,12 +262,15 @@ impl<'src> VariableContext<'src> {
             .push(ContextVar::LambdaVar(lambda_depth, lambda_type));
     }
 
-    fn bind_fresh_quantifier(&mut self, variable: &'src str) -> u32 {
+    fn bind_fresh_quantifier(&mut self, variable: &'src str, lambda_type: ActorOrEvent) -> u32 {
         let n = self.1;
         self.0
             .entry(variable)
             .or_default()
-            .push(ContextVar::QuantifierVar(Variable::Actor(n)));
+            .push(ContextVar::QuantifierVar(match lambda_type {
+                ActorOrEvent::Actor => Variable::Actor(n),
+                ActorOrEvent::Event => Variable::Event(n),
+            }));
         self.1 += 1;
         n
     }
@@ -289,6 +296,7 @@ enum ParseTree<'src> {
     Binary(BinOp, Box<TypedParseTree<'src>>, Box<TypedParseTree<'src>>),
     Quantifier {
         quantifier: Quantifier,
+        lambda_type: ActorOrEvent,
         variable: &'src str,
         restrictor: Box<TypedParseTree<'src>>,
         subformula: Box<TypedParseTree<'src>>,
@@ -483,7 +491,7 @@ where
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    just_variable().map(|x| TypedParseTree(ParseTree::Variable(x), ParsingType::E))
+    just_variable().map(|x| TypedParseTree(ParseTree::Variable(x), ParsingType::Unknown))
 }
 
 fn binary_operation<'src, E>() -> impl Parser<'src, &'src str, TypedParseTree<'src>, E> + Copy
@@ -574,6 +582,10 @@ where
             just("some").to(Quantifier::Existential),
         ))
         .labelled("quantifier")
+        .then(just("_e").or_not().map(|s| match s {
+            Some(_) => ActorOrEvent::Event,
+            None => ActorOrEvent::Actor,
+        }))
         .then_ignore(just('('))
         .then(just_variable())
         .then_ignore(just(','))
@@ -581,17 +593,20 @@ where
         .then_ignore(just(','))
         .then(expr.clone().padded())
         .then_ignore(just(')'))
-        .map(|(((quantifier, variable), restrictor), subformula)| {
-            TypedParseTree(
-                ParseTree::Quantifier {
-                    quantifier,
-                    variable,
-                    restrictor: Box::new(restrictor),
-                    subformula: Box::new(subformula),
-                },
-                ParsingType::T,
-            )
-        });
+        .map(
+            |((((quantifier, lambda_type), variable), restrictor), subformula)| {
+                TypedParseTree(
+                    ParseTree::Quantifier {
+                        quantifier,
+                        variable,
+                        lambda_type,
+                        restrictor: Box::new(restrictor),
+                        subformula: Box::new(subformula),
+                    },
+                    ParsingType::T,
+                )
+            },
+        );
 
         let lambda = just("lambda")
             .then(inline_whitespace().at_least(1))
@@ -770,7 +785,6 @@ mod tests {
                     ParsingType::at()
                 )
             );
-            let str = format!("pe{n}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
                 TypedParseTree(
