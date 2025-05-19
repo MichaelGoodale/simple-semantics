@@ -151,6 +151,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         lambda_type: LambdaType,
         always_abstract: bool,
     ) -> anyhow::Result<()> {
+        self.reduce()?;
         let vars = self
             .pool
             .bfs_from(self.root)
@@ -988,6 +989,24 @@ mod test {
         println!("{x}");
         x.reduce()?;
         println!("{x}");
+        Ok(())
+    }
+
+    #[test]
+    fn lambda_abstraction_reduction() -> anyhow::Result<()> {
+        let p = lot_parser();
+        let mut state = extra::SimpleState(LabelledScenarios::default());
+        let mut a = p.parse_with_state("a1", &mut state).unwrap()?;
+        let mut b = p
+            .parse_with_state("(lambda t x_l (a1))(pa0(free_var#a))", &mut state)
+            .unwrap()?;
+
+        a.lambda_abstract_free_variable(0, LambdaType::A, false)?;
+        b.lambda_abstract_free_variable(0, LambdaType::A, false)?;
+        println!("A:\t{a}");
+        println!("B:\t{b}");
+
+        assert_eq!(a, b);
         Ok(())
     }
 }
