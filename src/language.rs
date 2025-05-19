@@ -78,7 +78,8 @@ impl Display for Constant {
             Constant::EveryEvent => write!(f, "all_e"),
             Constant::Tautology => write!(f, "True"),
             Constant::Contradiction => write!(f, "False"),
-            Constant::Property(x, _) => write!(f, "p{x}"),
+            Constant::Property(x, ActorOrEvent::Actor) => write!(f, "pa{x}"),
+            Constant::Property(x, ActorOrEvent::Event) => write!(f, "pe{x}"),
         }
     }
 }
