@@ -181,12 +181,9 @@ impl<'src> VariableContext<'src> {
     fn bind_fresh_quantifier(
         &mut self,
         variable: &'src str,
-        lambda_type: ActorOrEvent,
+        actor_or_event: ActorOrEvent,
     ) -> Variable {
-        let var = match lambda_type {
-            ActorOrEvent::Actor => Variable::Actor(self.1),
-            ActorOrEvent::Event => Variable::Event(self.1),
-        };
+        let var = actor_or_event.to_variable(self.1);
         self.0
             .entry(variable)
             .or_default()

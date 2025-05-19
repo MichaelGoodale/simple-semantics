@@ -53,6 +53,15 @@ pub enum ActorOrEvent {
     Event,
 }
 
+impl ActorOrEvent {
+    fn to_variable(self, n: u32) -> Variable {
+        match self {
+            ActorOrEvent::Actor => Variable::Actor(n),
+            ActorOrEvent::Event => Variable::Event(n),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Constant {
     Everyone,
@@ -74,8 +83,6 @@ impl Display for Constant {
     }
 }
 
-//TODO: Currently the interpretator and parser treat actors and events as the same type whereas the
-//mutation code treats them as distinct types. This should be fixed!
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Variable {
     Actor(u32),
@@ -83,9 +90,9 @@ pub enum Variable {
 }
 
 impl Variable {
-    fn to_var_string(&self) -> String {
+    fn to_var_string(self) -> String {
         match self {
-            Variable::Actor(a) | Variable::Event(a) => to_var(*a as usize),
+            Variable::Actor(a) | Variable::Event(a) => to_var(a as usize),
         }
     }
 
@@ -377,7 +384,7 @@ impl ExprPool {
                         let a: Vec<Actor> = self
                             .interp(*restrictor, scenario, &mut variables)?
                             .try_into()?;
-                        a.into_iter().map(|x| Entity::Actor(x)).collect()
+                        a.into_iter().map(Entity::Actor).collect()
                     }
                     LanguageResultType::Event => {
                         let e: Event = self
@@ -389,7 +396,7 @@ impl ExprPool {
                         let a: Vec<Event> = self
                             .interp(*restrictor, scenario, &mut variables)?
                             .try_into()?;
-                        a.into_iter().map(|x| Entity::Event(x)).collect()
+                        a.into_iter().map(Entity::Event).collect()
                     }
                 };
 

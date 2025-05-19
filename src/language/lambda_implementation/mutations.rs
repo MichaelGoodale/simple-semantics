@@ -247,10 +247,7 @@ struct Fresher(u32);
 impl Fresher {
     fn fresh(&mut self, actor_or_event: ActorOrEvent) -> Variable {
         self.0 += 1;
-        match actor_or_event {
-            ActorOrEvent::Actor => Variable::Actor(self.0),
-            ActorOrEvent::Event => Variable::Event(self.0),
-        }
+        actor_or_event.to_variable(self.0)
     }
 
     fn new(pool: &[Option<LambdaExpr<Expr>>]) -> Self {
