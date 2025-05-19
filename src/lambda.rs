@@ -380,7 +380,9 @@ where
                 inner_term,
                 self.get(*argument).clone(),
                 self.bfs_from(inner_term)
-                    .filter(|(x, _)| matches!(self.get(*x), LambdaExpr::BoundVariable(..)))
+                    .filter(
+                        |(x, n)| matches!(self.get(*x), LambdaExpr::BoundVariable(i, _) if n == i),
+                    )
                     .collect::<Vec<_>>(),
             )
         } else {
@@ -1007,6 +1009,21 @@ mod test {
         println!("B:\t{b}");
 
         assert_eq!(a, b);
+        Ok(())
+    }
+
+    #[test]
+    fn reduction_test() -> anyhow::Result<()> {
+        let p = lot_parser();
+        let mut state = extra::SimpleState(LabelledScenarios::default());
+        let mut a = p
+            .parse_with_state(
+                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a0)))",
+                &mut state,
+            )
+            .unwrap()?;
+        a.reduce()?;
+
         Ok(())
     }
 }

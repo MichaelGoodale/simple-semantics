@@ -390,22 +390,24 @@ where
     ))
 }
 
-fn binary_operation<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
+fn binary_operation<'src, E>(
+    a: impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone,
+    b: impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone,
+) -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    let entity_or_var = choice((entity(), variable())).padded();
     choice((
         just("AgentOf").to(BinOp::AgentOf),
         just("PatientOf").to(BinOp::PatientOf),
     ))
     .then_ignore(just('('))
-    .then(entity_or_var.clone())
+    .then(a.padded())
     .then_ignore(just(','))
-    .then(entity_or_var)
+    .then(b.padded())
     .then_ignore(just(')'))
     .map(|((binop, actor), event)| ParseTree::Binary(binop, Box::new(actor), Box::new(event)))
 }
@@ -425,7 +427,7 @@ where
     let possible_sets = sets();
     let truth_value = recursive(|expr| {
         let atom = true_or_false
-            .or(binary_operation())
+            .or(binary_operation(expr.clone(), expr.clone()))
             .or(properties())
             .or(variable())
             .or(expr.clone().delimited_by(just('('), just(')')));
@@ -583,7 +585,7 @@ mod tests {
                 ],
             ),
         ] {
-            let (pool, root) = binary_operation::<extra::Err<Simple<_>>>()
+            let (pool, root) = binary_operation::<extra::Err<Simple<_>>>(entity(), entity())
                 .parse(s)
                 .unwrap()
                 .to_pool(&mut labels)?
