@@ -35,7 +35,6 @@ impl RootedLambdaPool<Expr> {
         let mut pool: Vec<Option<LambdaExpr<Expr>>> = pool.into();
         pool[position.0 as usize] = None;
 
-        dbg!(&pool, &context, &lambda_type);
         let mut pool = build_out_pool(pool, lambda_type, position.0, context, config, rng);
         let root = pool.cleanup(root);
 
@@ -158,12 +157,18 @@ fn add_expr<'a>(
     let cur_size = pool.len() as u32 - 1;
     let mut children = vec![];
     let expr = match e {
-        UnbuiltExpr::Quantifier(quantifier) => {
+        UnbuiltExpr::Quantifier(quantifier, actor_or_event) => {
             children.extend_from_slice(&[
-                (cur_size + 1, LambdaType::at()),
+                (
+                    cur_size + 1,
+                    match actor_or_event {
+                        ActorOrEvent::Actor => LambdaType::at(),
+                        ActorOrEvent::Event => LambdaType::et(),
+                    },
+                ),
                 (cur_size + 2, LambdaType::T),
             ]);
-            let var = fresher.fresh();
+            let var = fresher.fresh(actor_or_event);
             context.available_vars.push(var);
             LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                 quantifier,
@@ -225,7 +230,7 @@ fn add_expr<'a>(
 //We never do applications since they would be redundant. Bound variables are not yet implemented.
 #[derive(Debug, Clone)]
 enum UnbuiltExpr {
-    Quantifier(Quantifier),
+    Quantifier(Quantifier, ActorOrEvent),
     Variable(Variable),
     Actor(Actor),
     Event(Event),
@@ -240,9 +245,12 @@ enum UnbuiltExpr {
 struct Fresher(u32);
 
 impl Fresher {
-    fn fresh(&mut self) -> Variable {
+    fn fresh(&mut self, actor_or_event: ActorOrEvent) -> Variable {
         self.0 += 1;
-        Variable::Actor(self.0)
+        match actor_or_event {
+            ActorOrEvent::Actor => Variable::Actor(self.0),
+            ActorOrEvent::Event => Variable::Event(self.0),
+        }
     }
 
     fn new(pool: &[Option<LambdaExpr<Expr>>]) -> Self {
@@ -342,8 +350,10 @@ impl Expr {
                             UnbuiltExpr::Unary(MonOp::Not),
                             UnbuiltExpr::Binary(BinOp::And),
                             UnbuiltExpr::Binary(BinOp::Or),
-                            UnbuiltExpr::Quantifier(Quantifier::Existential),
-                            UnbuiltExpr::Quantifier(Quantifier::Universal),
+                            UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Actor),
+                            UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Actor),
+                            UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Event),
+                            UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Event),
                         ];
                         options.extend(
                             context.available_properties.iter().map(|i| {
