@@ -334,7 +334,7 @@ impl TryFrom<LanguageResult> for Actor {
             LanguageResult::Actor(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
                 input: value,
-                output: LanguageResultType::Event,
+                output: LanguageResultType::Actor,
             }),
         }
     }
@@ -348,7 +348,7 @@ impl TryFrom<LanguageResult> for bool {
             LanguageResult::Bool(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
                 input: value,
-                output: LanguageResultType::Event,
+                output: LanguageResultType::Bool,
             }),
         }
     }
@@ -362,7 +362,7 @@ impl TryFrom<LanguageResult> for Vec<Actor> {
             LanguageResult::ActorSet(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
                 input: value,
-                output: LanguageResultType::Event,
+                output: LanguageResultType::ActorSet,
             }),
         }
     }
@@ -376,7 +376,7 @@ impl TryFrom<LanguageResult> for Vec<Event> {
             LanguageResult::EventSet(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
                 input: value,
-                output: LanguageResultType::Event,
+                output: LanguageResultType::EventSet,
             }),
         }
     }
