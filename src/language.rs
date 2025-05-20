@@ -483,7 +483,7 @@ impl ExprPool {
                             })
                             .collect(),
                     ),
-                    None => LanguageResult::ActorSet(vec![]),
+                    None => LanguageResult::EventSet(vec![]),
                 },
             },
             Expr::Unary(mon_op, arg) => {
