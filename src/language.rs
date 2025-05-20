@@ -1,8 +1,9 @@
 use std::fmt::Display;
 
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
-use anyhow::bail;
 use lambda_implementation::to_var;
+
+use thiserror;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BinOp {
@@ -155,7 +156,7 @@ impl Display for LanguageExpression {
 }
 
 impl LanguageExpression {
-    pub fn run(&self, scenario: &Scenario) -> anyhow::Result<LanguageResult> {
+    pub fn run(&self, scenario: &Scenario) -> Result<LanguageResult, LanguageTypeError> {
         let mut variables = VariableBuffer::default();
         self.pool.interp(self.start, scenario, &mut variables)
     }
@@ -226,7 +227,6 @@ impl VariableBuffer {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LanguageResult {
-    PresuppositionError,
     Bool(bool),
     Actor(Actor),
     Event(Event),
@@ -234,8 +234,50 @@ pub enum LanguageResult {
     EventSet(Vec<Event>),
 }
 
+impl LanguageResult {
+    fn to_language_result_type(&self) -> Option<LanguageResultType> {
+        match self {
+            LanguageResult::Bool(_) => Some(LanguageResultType::Bool),
+            LanguageResult::Actor(_) => Some(LanguageResultType::Actor),
+            LanguageResult::Event(_) => Some(LanguageResultType::Event),
+            LanguageResult::ActorSet(_) => Some(LanguageResultType::ActorSet),
+            LanguageResult::EventSet(_) => Some(LanguageResultType::EventSet),
+        }
+    }
+}
+
+impl Display for LanguageResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LanguageResult::Bool(b) => write!(f, "{b}"),
+            LanguageResult::Actor(a) => write!(f, "a{a}"),
+            LanguageResult::Event(e) => write!(f, "e{e}"),
+            LanguageResult::ActorSet(items) => {
+                write!(
+                    f,
+                    "{{{}}}",
+                    items
+                        .iter()
+                        .map(|x| format!("a{x}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            LanguageResult::EventSet(items) => write!(
+                f,
+                "{{{}}}",
+                items
+                    .iter()
+                    .map(|x| format!("e{x}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum LanguageResultType {
+pub enum LanguageResultType {
     Bool,
     Actor,
     ActorSet,
@@ -243,57 +285,99 @@ enum LanguageResultType {
     EventSet,
 }
 
+impl Display for LanguageResultType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                LanguageResultType::Bool => "t",
+                LanguageResultType::Actor => "a",
+                LanguageResultType::ActorSet => "<a,t>",
+                LanguageResultType::Event => "e",
+                LanguageResultType::EventSet => "<e,t>",
+            }
+        )
+    }
+}
+
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum LanguageTypeError {
+    #[error("The referenced object  does not exist in the current scenario")]
+    PresuppositionError,
+    #[error("Can't convert from {} to {output}", input.to_language_result_type().unwrap())]
+    WrongType {
+        input: LanguageResult,
+        output: LanguageResultType,
+    },
+}
+
 impl TryFrom<LanguageResult> for Event {
-    type Error = anyhow::Error;
+    type Error = LanguageTypeError;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Event(x) => Ok(x),
-            _ => bail!("Not an event!"),
+            _ => Err(LanguageTypeError::WrongType {
+                input: value,
+                output: LanguageResultType::Event,
+            }),
         }
     }
 }
 
 impl TryFrom<LanguageResult> for Actor {
-    type Error = anyhow::Error;
+    type Error = LanguageTypeError;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Actor(x) => Ok(x),
-            _ => bail!("Not an actor!"),
+            _ => Err(LanguageTypeError::WrongType {
+                input: value,
+                output: LanguageResultType::Event,
+            }),
         }
     }
 }
 
 impl TryFrom<LanguageResult> for bool {
-    type Error = anyhow::Error;
+    type Error = LanguageTypeError;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
-            LanguageResult::Bool(vec) => Ok(vec),
-            _ => bail!("Not a boolean!"),
+            LanguageResult::Bool(x) => Ok(x),
+            _ => Err(LanguageTypeError::WrongType {
+                input: value,
+                output: LanguageResultType::Event,
+            }),
         }
     }
 }
 
 impl TryFrom<LanguageResult> for Vec<Actor> {
-    type Error = anyhow::Error;
+    type Error = LanguageTypeError;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
-            LanguageResult::ActorSet(vec) => Ok(vec),
-            _ => bail!("Not vector of entities!"),
+            LanguageResult::ActorSet(x) => Ok(x),
+            _ => Err(LanguageTypeError::WrongType {
+                input: value,
+                output: LanguageResultType::Event,
+            }),
         }
     }
 }
 
 impl TryFrom<LanguageResult> for Vec<Event> {
-    type Error = anyhow::Error;
+    type Error = LanguageTypeError;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
-            LanguageResult::EventSet(vec) => Ok(vec),
-            _ => bail!("Not vector of entities!"),
+            LanguageResult::EventSet(x) => Ok(x),
+            _ => Err(LanguageTypeError::WrongType {
+                input: value,
+                output: LanguageResultType::Event,
+            }),
         }
     }
 }
@@ -346,77 +430,94 @@ impl ExprPool {
         }
     }
 
+    fn quantification(
+        &self,
+        quantifier: &Quantifier,
+        var: &Variable,
+        restrictor: ExprRef,
+        subformula: ExprRef,
+        scenario: &Scenario,
+        variables: &mut VariableBuffer,
+    ) -> Result<LanguageResult, LanguageTypeError> {
+        let mut variables = variables.clone();
+        let domain: Vec<Entity> = match self.get_type(restrictor) {
+            LanguageResultType::Bool => {
+                //TODO: Check if the quantification is over actors or events somehow!
+                let mut domain = vec![];
+                for e in scenario.actors.iter() {
+                    variables.set(*var, Entity::Actor(*e));
+                    let truth_value_for_e: bool = self
+                        .interp(restrictor, scenario, &mut variables)?
+                        .try_into()?;
+                    if truth_value_for_e {
+                        domain.push(Entity::Actor(*e))
+                    }
+                }
+                domain
+            }
+            LanguageResultType::Actor => {
+                let e: Actor = self
+                    .interp(restrictor, scenario, &mut variables)?
+                    .try_into()?;
+                vec![Entity::Actor(e)]
+            }
+            LanguageResultType::ActorSet => {
+                let a: Vec<Actor> = self
+                    .interp(restrictor, scenario, &mut variables)?
+                    .try_into()?;
+                a.into_iter().map(Entity::Actor).collect()
+            }
+            LanguageResultType::Event => {
+                let e: Event = self
+                    .interp(restrictor, scenario, &mut variables)?
+                    .try_into()?;
+                vec![Entity::Event(e)]
+            }
+            LanguageResultType::EventSet => {
+                let a: Vec<Event> = self
+                    .interp(restrictor, scenario, &mut variables)?
+                    .try_into()?;
+                a.into_iter().map(Entity::Event).collect()
+            }
+        };
+
+        let mut result = match quantifier {
+            Quantifier::Universal => true,
+            Quantifier::Existential => false,
+        };
+        for e in domain {
+            variables.set(*var, e);
+            let subformula_value: bool = self
+                .interp(subformula, scenario, &mut variables)?
+                .try_into()?;
+            result = match quantifier {
+                Quantifier::Universal => subformula_value && result,
+                Quantifier::Existential => subformula_value || result,
+            };
+        }
+        Ok(LanguageResult::Bool(result))
+    }
+
     pub fn interp(
         &self,
         expr: ExprRef,
         scenario: &Scenario,
         variables: &mut VariableBuffer,
-    ) -> anyhow::Result<LanguageResult> {
+    ) -> Result<LanguageResult, LanguageTypeError> {
         Ok(match self.get(expr) {
             Expr::Quantifier {
                 quantifier,
                 var,
                 restrictor,
                 subformula,
-            } => {
-                let mut variables = variables.clone();
-                let domain: Vec<Entity> = match self.get_type(*restrictor) {
-                    LanguageResultType::Bool => {
-                        //TODO: Check if the quantification is over actors or events somehow!
-                        let mut domain = vec![];
-                        for e in scenario.actors.iter() {
-                            variables.set(*var, Entity::Actor(*e));
-                            let truth_value_for_e: bool = self
-                                .interp(*restrictor, scenario, &mut variables)?
-                                .try_into()?;
-                            if truth_value_for_e {
-                                domain.push(Entity::Actor(*e))
-                            }
-                        }
-                        domain
-                    }
-                    LanguageResultType::Actor => {
-                        let e: Actor = self
-                            .interp(*restrictor, scenario, &mut variables)?
-                            .try_into()?;
-                        vec![Entity::Actor(e)]
-                    }
-                    LanguageResultType::ActorSet => {
-                        let a: Vec<Actor> = self
-                            .interp(*restrictor, scenario, &mut variables)?
-                            .try_into()?;
-                        a.into_iter().map(Entity::Actor).collect()
-                    }
-                    LanguageResultType::Event => {
-                        let e: Event = self
-                            .interp(*restrictor, scenario, &mut variables)?
-                            .try_into()?;
-                        vec![Entity::Event(e)]
-                    }
-                    LanguageResultType::EventSet => {
-                        let a: Vec<Event> = self
-                            .interp(*restrictor, scenario, &mut variables)?
-                            .try_into()?;
-                        a.into_iter().map(Entity::Event).collect()
-                    }
-                };
-
-                let mut result = match quantifier {
-                    Quantifier::Universal => true,
-                    Quantifier::Existential => false,
-                };
-                for e in domain {
-                    variables.set(*var, e);
-                    let subformula_value: bool = self
-                        .interp(*subformula, scenario, &mut variables)?
-                        .try_into()?;
-                    result = match quantifier {
-                        Quantifier::Universal => subformula_value && result,
-                        Quantifier::Existential => subformula_value || result,
-                    };
-                }
-                LanguageResult::Bool(result)
-            }
+            } => self.quantification(
+                quantifier,
+                var,
+                *restrictor,
+                *subformula,
+                scenario,
+                variables,
+            )?,
             Expr::Variable(i) => variables.get(*i).unwrap(),
             Expr::Actor(a) => LanguageResult::Actor(*a),
             Expr::Event(a) => LanguageResult::Event(*a),
@@ -430,12 +531,12 @@ impl ExprPool {
                         match bin_op {
                             BinOp::AgentOf => match scenario.thematic_relations[e as usize].agent {
                                 Some(x) => LanguageResult::Bool(x == a),
-                                None => LanguageResult::PresuppositionError,
+                                None => return Err(LanguageTypeError::PresuppositionError),
                             },
                             BinOp::PatientOf => {
                                 match scenario.thematic_relations[e as usize].patient {
                                     Some(x) => LanguageResult::Bool(x == a),
-                                    None => LanguageResult::PresuppositionError,
+                                    None => return Err(LanguageTypeError::PresuppositionError),
                                 }
                             }
                             _ => panic!("impossible because of previous check"),
@@ -519,6 +620,7 @@ impl ExprPool {
 mod parser;
 pub use parser::lot_parser;
 pub use parser::parse_executable;
+use thiserror::Error;
 
 mod lambda_implementation;
 
@@ -560,8 +662,10 @@ mod tests {
             Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
         ]);
         assert_eq!(
-            simple_expr.interp(ExprRef(2), &simple_scenario, &mut variables)?,
-            LanguageResult::PresuppositionError
+            simple_expr
+                .interp(ExprRef(2), &simple_scenario, &mut variables)
+                .unwrap_err(),
+            LanguageTypeError::PresuppositionError
         );
         Ok(())
     }
