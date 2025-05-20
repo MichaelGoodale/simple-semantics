@@ -629,6 +629,7 @@ mod tests {
     use std::collections::HashMap;
 
     use ahash::RandomState;
+    use chumsky::{Parser, extra};
 
     use super::*;
     use crate::ThetaRoles;
@@ -1038,6 +1039,46 @@ mod tests {
             simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
             LanguageResult::Bool(false)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn error_handling() -> anyhow::Result<()> {
+        let p = lot_parser();
+        let mut state = extra::SimpleState(crate::LabelledScenarios {
+            scenarios: vec![],
+            sentences: vec![],
+            lemmas: vec![],
+            property_labels: HashMap::default(),
+            actor_labels: HashMap::default(),
+            free_variables: HashMap::default(),
+        });
+        let expr = p
+            .parse_with_state("some_e(y,pe1,PatientOf(a1,y))", &mut state)
+            .unwrap()?
+            .into_pool()?;
+
+        let a = Scenario {
+            actors: vec![1, 0],
+            thematic_relations: vec![ThetaRoles {
+                agent: Some(0),
+                patient: Some(1),
+            }],
+            properties: vec![(1, vec![Entity::Event(0)])].into_iter().collect(),
+        };
+
+        let b = Scenario {
+            actors: vec![1],
+            thematic_relations: vec![ThetaRoles {
+                agent: Some(1),
+                patient: None,
+            }],
+            properties: vec![(0, vec![Entity::Event(0)])].into_iter().collect(),
+        };
+        expr.run(&b)?;
+        println!("B works!");
+        expr.run(&a)?;
+
         Ok(())
     }
 }

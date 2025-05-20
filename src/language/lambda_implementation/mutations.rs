@@ -183,7 +183,7 @@ fn add_expr<'a>(
         UnbuiltExpr::Binary(bin_op) => {
             children.extend_from_slice(&match bin_op {
                 BinOp::AgentOf | BinOp::PatientOf => {
-                    [(cur_size + 1, LambdaType::E), (cur_size + 2, LambdaType::A)]
+                    [(cur_size + 1, LambdaType::A), (cur_size + 2, LambdaType::E)]
                 }
                 BinOp::And | BinOp::Or => {
                     [(cur_size + 1, LambdaType::T), (cur_size + 2, LambdaType::T)]
