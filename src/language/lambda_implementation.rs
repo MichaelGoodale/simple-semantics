@@ -300,15 +300,28 @@ mod test {
     fn randomness() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let actors = [0, 1];
-        let properties = [0, 1, 2, 3, 4, 5];
+        let available_actor_properties = [0, 1, 2];
+        let available_event_properties = [2, 3, 4];
         for _ in 0..2000 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
-            let pool =
-                RootedLambdaPool::random_expr(t.clone(), &actors, &properties, None, &mut rng)?;
+            let pool = RootedLambdaPool::random_expr(
+                t.clone(),
+                &actors,
+                &available_actor_properties,
+                &available_event_properties,
+                None,
+                &mut rng,
+            )?;
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
-            let pool = pool.resample_from_expr(&actors, &properties, None, &mut rng);
+            let pool = pool.resample_from_expr(
+                &actors,
+                &available_actor_properties,
+                &available_event_properties,
+                None,
+                &mut rng,
+            );
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
         }

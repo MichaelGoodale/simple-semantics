@@ -10,7 +10,8 @@ impl RootedLambdaPool<Expr> {
     pub fn resample_from_expr(
         self,
         available_actors: &[Actor],
-        available_properties: &[PropertyLabel],
+        available_actor_properties: &[PropertyLabel],
+        available_event_properties: &[PropertyLabel],
         config: Option<&RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> Self {
@@ -19,7 +20,11 @@ impl RootedLambdaPool<Expr> {
         let mut pos_context = None;
 
         for (n, x) in self
-            .context_bfs_iter(available_actors, available_properties)
+            .context_bfs_iter(
+                available_actors,
+                available_actor_properties,
+                available_event_properties,
+            )
             .enumerate()
         {
             if n == position.0 as usize {
@@ -44,7 +49,8 @@ impl RootedLambdaPool<Expr> {
     pub fn random_expr(
         lambda_type: LambdaType,
         available_actors: &[Actor],
-        available_properties: &[PropertyLabel],
+        available_actor_properties: &[PropertyLabel],
+        available_event_properties: &[PropertyLabel],
         config: Option<&RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> anyhow::Result<Self> {
@@ -57,7 +63,8 @@ impl RootedLambdaPool<Expr> {
             lambdas: vec![],
             available_vars: vec![],
             available_actors,
-            available_properties,
+            available_actor_properties,
+            available_event_properties,
         };
         let config = config.unwrap_or(&DEFAULT_CONFIG);
 
@@ -93,7 +100,8 @@ struct Context<'a> {
     lambdas: Vec<LambdaType>,
     available_vars: Vec<Variable>,
     available_actors: &'a [Actor],
-    available_properties: &'a [PropertyLabel],
+    available_actor_properties: &'a [PropertyLabel],
+    available_event_properties: &'a [PropertyLabel],
 }
 
 impl Context<'_> {
@@ -324,7 +332,7 @@ impl Expr {
                 let mut options = [Constant::Everyone].map(UnbuiltExpr::Constant).to_vec();
 
                 options.extend(
-                    context.available_properties.iter().map(|i| {
+                    context.available_actor_properties.iter().map(|i| {
                         UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Actor))
                     }),
                 );
@@ -334,7 +342,7 @@ impl Expr {
                 let mut options = [Constant::EveryEvent].map(UnbuiltExpr::Constant).to_vec();
 
                 options.extend(
-                    context.available_properties.iter().map(|i| {
+                    context.available_event_properties.iter().map(|i| {
                         UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Event))
                     }),
                 );
@@ -353,7 +361,7 @@ impl Expr {
                             UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Event),
                         ];
                         options.extend(
-                            context.available_properties.iter().map(|i| {
+                            context.available_actor_properties.iter().map(|i| {
                                 UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor))
                             }),
                         );
@@ -361,7 +369,7 @@ impl Expr {
                         if context.can_sample_event() {
                             options.push(UnbuiltExpr::Binary(BinOp::AgentOf));
                             options.push(UnbuiltExpr::Binary(BinOp::PatientOf));
-                            options.extend(context.available_properties.iter().map(|i| {
+                            options.extend(context.available_event_properties.iter().map(|i| {
                                 UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event))
                             }));
                         }
@@ -441,7 +449,8 @@ impl RootedLambdaPool<Expr> {
     fn context_bfs_iter<'a, 'b>(
         &'a self,
         available_actors: &'b [Actor],
-        available_properties: &'b [PropertyLabel],
+        available_actor_properties: &'b [PropertyLabel],
+        available_event_properties: &'b [PropertyLabel],
     ) -> ContextBFSIterator<'a, 'b> {
         let mut queue = VecDeque::new();
         queue.push_back((
@@ -450,7 +459,8 @@ impl RootedLambdaPool<Expr> {
                 lambdas: vec![],
                 available_vars: vec![],
                 available_actors,
-                available_properties,
+                available_actor_properties,
+                available_event_properties,
             },
         ));
         ContextBFSIterator { pool: self, queue }
