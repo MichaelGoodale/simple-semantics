@@ -216,7 +216,7 @@ mod test {
     use crate::{
         LabelledScenarios,
         lambda::{RootedLambdaPool, types::LambdaType},
-        lot_parser,
+        language::lot_parser,
     };
     use chumsky::prelude::*;
     use rand::SeedableRng;
@@ -224,18 +224,16 @@ mod test {
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {
-        let labels = LabelledScenarios::default();
-        let mut label_state = extra::SimpleState(labels.clone());
-        let parser = lot_parser().then_ignore(end());
-        let john = parser.parse_with_state("a_j", &mut label_state).unwrap()?;
+        let mut labels = LabelledScenarios::default();
+        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
+        let john = parser.parse("a_j").unwrap().to_pool(&mut labels)?;
         let likes = parser
-            .parse_with_state(
+            .parse(
                 "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
-                &mut label_state,
             )
-            .unwrap()?;
+            .unwrap().to_pool(&mut labels)?;
 
-        let mary = parser.parse_with_state("a_m", &mut label_state).unwrap()?;
+        let mary = parser.parse("a_m").unwrap().to_pool(&mut labels)?;
         let phi = mary.clone().merge(likes.clone()).unwrap();
         let mut phi = phi.merge(john.clone()).unwrap();
         phi.reduce()?;
@@ -268,29 +266,25 @@ mod test {
 
     #[test]
     fn printing() -> anyhow::Result<()> {
-        let labels = LabelledScenarios::default();
-        let mut label_state = extra::SimpleState(labels.clone());
-        let parser = lot_parser().then_ignore(end());
+        let mut labels = LabelledScenarios::default();
+        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let pool = parser
-            .parse_with_state(
-                "some_e(x0,all_e,((AgentOf(x0,a1) & PatientOf(x0,a0)) & pe0(x0)))",
-                &mut label_state,
-            )
-            .unwrap()?;
+            .parse("some_e(x0,all_e,((AgentOf(x0,a1) & PatientOf(x0,a0)) & pe0(x0)))")
+            .unwrap()
+            .to_pool(&mut labels)?;
         assert_eq!(
             pool.to_string(),
             "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))"
         );
         let likes = parser
-            .parse_with_state(
+            .parse(
                 "lambda e x ((lambda e y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
-                &mut label_state,
             )
-            .unwrap()?;
+            .unwrap().to_pool(&mut labels)?;
 
         let s = "lambda e x_l (lambda e y_l (some(x,all_e,((AgentOf(x,x_l) & PatientOf(x,y_l)) & pe0(x)))))";
         assert_eq!(likes.to_string(), s,);
-        let likes2 = parser.parse_with_state(s, &mut label_state).unwrap()?;
+        let likes2 = parser.parse(s).unwrap().to_pool(&mut labels)?;
         assert_eq!(likes, likes2);
 
         Ok(())

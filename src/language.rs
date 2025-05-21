@@ -618,6 +618,7 @@ impl ExprPool {
 }
 
 mod parser;
+pub use parser::UnprocessedParseTree;
 pub use parser::lot_parser;
 pub use parser::parse_executable;
 use thiserror::Error;
@@ -629,7 +630,7 @@ mod tests {
     use std::collections::HashMap;
 
     use ahash::RandomState;
-    use chumsky::{Parser, extra};
+    use chumsky::{Parser, error::Rich, extra};
 
     use super::*;
     use crate::ThetaRoles;
@@ -638,6 +639,7 @@ mod tests {
     fn agent_of_and_patient_of() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![ThetaRoles {
                 agent: Some(0),
@@ -675,6 +677,7 @@ mod tests {
     fn quantification() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {
@@ -745,6 +748,7 @@ mod tests {
     fn logic() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {
@@ -857,6 +861,7 @@ mod tests {
         properties.insert(1, vec![Entity::Actor(0), Entity::Actor(1)]);
         properties.insert(534, vec![Entity::Actor(1)]);
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {
@@ -914,6 +919,7 @@ mod tests {
         properties.insert(235, vec![Entity::Event(0)]);
         properties.insert(2, vec![Entity::Actor(0)]);
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![ThetaRoles {
                 agent: Some(1),
@@ -976,6 +982,7 @@ mod tests {
         properties.insert(2, vec![Entity::Actor(1), Entity::Actor(3)]);
         properties.insert(4, vec![Entity::Event(0)]);
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1, 2, 3, 4],
             thematic_relations: vec![ThetaRoles {
                 agent: Some(1),
@@ -1044,21 +1051,24 @@ mod tests {
 
     #[test]
     fn error_handling() -> anyhow::Result<()> {
-        let p = lot_parser();
-        let mut state = extra::SimpleState(crate::LabelledScenarios {
+        let p = lot_parser::<extra::Err<Rich<_>>>();
+        let mut labels = crate::LabelledScenarios {
             scenarios: vec![],
             sentences: vec![],
             lemmas: vec![],
             property_labels: HashMap::default(),
             actor_labels: HashMap::default(),
             free_variables: HashMap::default(),
-        });
+        };
+
         let expr = p
-            .parse_with_state("some_e(y,pe1,PatientOf(a1,y))", &mut state)
-            .unwrap()?
+            .parse("some_e(y,pe1,PatientOf(a1,y))")
+            .unwrap()
+            .to_pool(&mut labels)?
             .into_pool()?;
 
         let a = Scenario {
+            question: None,
             actors: vec![1, 0],
             thematic_relations: vec![ThetaRoles {
                 agent: Some(0),
@@ -1068,6 +1078,7 @@ mod tests {
         };
 
         let b = Scenario {
+            question: None,
             actors: vec![1],
             thematic_relations: vec![ThetaRoles {
                 agent: Some(1),

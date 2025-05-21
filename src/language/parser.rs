@@ -412,7 +412,7 @@ where
     .map(|((binop, actor), event)| ParseTree::Binary(binop, Box::new(actor), Box::new(event)))
 }
 
-fn language_parser<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E>
+fn language_parser<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -505,10 +505,26 @@ where
 
 type ExtraType<'a> = extra::Full<Rich<'a, char>, extra::SimpleState<LabelledScenarios>, ()>;
 
+pub struct UnprocessedParseTree<'a>(ParseTree<'a>);
+
+impl UnprocessedParseTree<'_> {
+    pub fn to_pool(
+        &self,
+        labels: &mut LabelledScenarios,
+    ) -> anyhow::Result<RootedLambdaPool<Expr>> {
+        self.0.to_pool(labels)
+    }
+}
+
 ///A parsing function that can be used to incorpate LOT parsers into other parsers.
-pub fn lot_parser<'a>()
--> impl Parser<'a, &'a str, anyhow::Result<RootedLambdaPool<Expr>>, ExtraType<'a>> {
-    language_parser::<ExtraType>().map_with(|x, e| x.to_pool(e.state()))
+pub fn lot_parser<'src, E>() -> impl Parser<'src, &'src str, UnprocessedParseTree<'src>, E> + Clone
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>
+        + LabelError<'src, &'src str, &'static str>,
+{
+    language_parser().map(UnprocessedParseTree)
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
@@ -683,6 +699,7 @@ mod tests {
         properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
 
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {
@@ -728,9 +745,9 @@ mod tests {
         assert_eq!(root, LambdaExprRef(gold_root));
 
         //try again with the context-sensitive parser
-        let mut label_state = extra::SimpleState(labels.clone());
-        let (pool, root) = lot_parser()
-            .parse_with_state(statement, &mut label_state)
+        let mut label_state = labels.clone();
+        let (pool, root) = lot_parser::<extra::Err<Rich<_>>>()
+            .parse(statement)
             .into_result()
             .map_err(|x| {
                 anyhow::Error::msg(
@@ -739,7 +756,8 @@ mod tests {
                         .collect::<Vec<_>>()
                         .join("\n"),
                 )
-            })??
+            })?
+            .to_pool(&mut label_state)?
             .into();
 
         assert_eq!(pool, gold_pool);
@@ -854,6 +872,7 @@ mod tests {
         properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
 
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {
@@ -895,6 +914,7 @@ mod tests {
         properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
 
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {
@@ -965,6 +985,7 @@ mod tests {
         properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
 
         let simple_scenario = Scenario {
+            question: None,
             actors: vec![0, 1],
             thematic_relations: vec![
                 ThetaRoles {

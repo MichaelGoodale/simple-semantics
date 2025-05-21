@@ -1,15 +1,14 @@
 #![allow(dead_code)]
 use ahash::{HashSet, RandomState};
 use chumsky::prelude::*;
-use lambda::Fvar;
+use lambda::{Fvar, RootedLambdaPool};
+use language::Expr;
 use std::{collections::HashMap, fmt::Display, path::Path};
-
-use serde::{Deserialize, Serialize};
 
 pub type Actor = u16;
 pub type Event = u8;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Entity {
     Actor(Actor),
     Event(Event),
@@ -24,7 +23,7 @@ impl Display for Entity {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThetaRoles {
     pub agent: Option<Actor>,
     pub patient: Option<Actor>,
@@ -32,11 +31,12 @@ pub struct ThetaRoles {
 
 pub type PropertyLabel = u32;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Scenario {
     actors: Vec<Actor>,
     thematic_relations: Vec<ThetaRoles>,
     properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
+    question: Option<RootedLambdaPool<Expr>>,
 }
 
 impl Scenario {
@@ -49,6 +49,7 @@ impl Scenario {
             actors,
             thematic_relations,
             properties,
+            question: None,
         }
     }
     pub fn thematic_relations(&self) -> &[ThetaRoles] {
@@ -61,6 +62,10 @@ impl Scenario {
 
     pub fn actors(&self) -> &[Actor] {
         &self.actors
+    }
+
+    pub fn question(&self) -> Option<&RootedLambdaPool<Expr>> {
+        self.question.as_ref()
     }
 }
 
@@ -118,7 +123,7 @@ impl LabelledScenarios {
                     .collect::<Vec<_>>()
                     .join("\n"),
             )
-        })
+        })?
     }
 
     pub fn parse(s: &str) -> anyhow::Result<Self> {
@@ -131,11 +136,11 @@ impl LabelledScenarios {
                     .collect::<Vec<_>>()
                     .join("\n"),
             )
-        })
+        })?
     }
 }
 
 pub mod lambda;
 pub mod language;
-pub use language::{LanguageExpression, LanguageResult, lot_parser, parse_executable};
+pub use language::{LanguageExpression, LanguageResult, parse_executable};
 mod scenario;
