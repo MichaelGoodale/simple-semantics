@@ -529,6 +529,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         mut previous_lambdas: Vec<bool>,
     ) -> anyhow::Result<(bool, Vec<bool>)> {
         let expr = self.get(i);
+
         match expr {
             LambdaExpr::Lambda(..) => {
                 previous_lambdas.push(false);
@@ -568,7 +569,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
                 previous_lambdas,
             ))
         } else {
-            Ok((true, previous_lambdas))
+            Ok((has_variable, previous_lambdas))
         }
     }
 }
@@ -610,6 +611,10 @@ mod test {
             (
                 "lambda a x (((lambda a y (pa_woman(y)))(a_m)) & pa_man(x))",
                 false,
+            ),
+            (
+                "lambda a x (((lambda a y (pa_woman(a_m)))(a_m)) & pa_man(x))",
+                true,
             ),
             ("lambda a y (pa_woman(a_m))", true),
             ("lambda a y (lambda a x (y))", true),
