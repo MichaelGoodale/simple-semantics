@@ -541,7 +541,6 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
                         "BoundVariable with DeBruijn of {lambda} is too high for a lambda depth of {n_lambdas}"
                     );
                 }
-                println!("{n_lambdas}-1-{lambda} = {}", n_lambdas - 1 - lambda);
                 *previous_lambdas.get_mut(n_lambdas - 1 - lambda).unwrap() = true;
             }
             _ => (),
@@ -553,7 +552,6 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         let mut has_variable = true;
         for child in expr.get_children() {
             let (is_lambda, v) = self.lambda_has_variable(child, previous_lambdas.clone())?;
-            println!("{is_lambda}");
             has_variable &= is_lambda;
 
             previous_lambdas
@@ -562,7 +560,6 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
                 .for_each(|(a, b)| *a |= b);
         }
 
-        println!("{expr:?} {previous_lambdas:?}");
         if let LambdaExpr::Lambda(..) = expr {
             Ok((
                 has_variable && previous_lambdas.pop().unwrap(),
