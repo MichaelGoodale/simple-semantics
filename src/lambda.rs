@@ -259,6 +259,22 @@ struct LambdaPoolBFSIterator<'a, T: LambdaLanguageOfThought> {
     queue: VecDeque<(LambdaExprRef, Bvar)>,
 }
 
+impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
+    fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaExprRef> + 'a> {
+        match self {
+            LambdaExpr::Lambda(x, _) => Box::new([x].into_iter().copied()),
+            LambdaExpr::Application {
+                subformula,
+                argument,
+            } => Box::new([subformula, argument].into_iter().copied()),
+            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => {
+                Box::new(std::iter::empty())
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x) => Box::new(x.get_children()),
+        }
+    }
+}
+
 impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, T> {
     type Item = (LambdaExprRef, Bvar);
 
@@ -481,8 +497,7 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
 pub enum LambdaSummaryStats {
     WellFormed {
         lambda_type: LambdaType,
-        has_variable: bool,
-        is_lambda: bool,
+        constant_function: bool,
         n_nodes: usize,
     },
     Malformed,
@@ -495,27 +510,65 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
             return LambdaSummaryStats::Malformed;
         }
         let lambda_type = lambda_type.unwrap();
-        let mut has_variable = false;
-        let mut is_lambda = false;
         let n_nodes = self.pool.0.len();
 
-        for x in self.pool.0.iter() {
-            match x {
-                LambdaExpr::Lambda(_, _) => {
-                    is_lambda = true;
-                }
-                LambdaExpr::BoundVariable(_, _) => {
-                    has_variable = true;
-                }
-                _ => (),
+        match self.lambda_has_variable(self.root, vec![]) {
+            Ok((has_variable, _)) => LambdaSummaryStats::WellFormed {
+                lambda_type,
+                constant_function: !has_variable,
+                n_nodes,
+            },
+
+            Err(_) => LambdaSummaryStats::Malformed,
+        }
+    }
+
+    fn lambda_has_variable(
+        &self,
+        i: LambdaExprRef,
+        mut previous_lambdas: Vec<bool>,
+    ) -> anyhow::Result<(bool, Vec<bool>)> {
+        let expr = self.get(i);
+        match expr {
+            LambdaExpr::Lambda(..) => {
+                previous_lambdas.push(false);
             }
+            LambdaExpr::BoundVariable(lambda, _) => {
+                let n_lambdas = previous_lambdas.len();
+                if *lambda >= previous_lambdas.len() {
+                    bail!(
+                        "BoundVariable with DeBruijn of {lambda} is too high for a lambda depth of {n_lambdas}"
+                    );
+                }
+                println!("{n_lambdas}-1-{lambda} = {}", n_lambdas - 1 - lambda);
+                *previous_lambdas.get_mut(n_lambdas - 1 - lambda).unwrap() = true;
+            }
+            _ => (),
         }
 
-        LambdaSummaryStats::WellFormed {
-            lambda_type,
-            has_variable,
-            is_lambda,
-            n_nodes,
+        let n_lambdas = previous_lambdas.len();
+
+        // Use to check if any child has a constant lambda
+        let mut has_variable = true;
+        for child in expr.get_children() {
+            let (is_lambda, v) = self.lambda_has_variable(child, previous_lambdas.clone())?;
+            println!("{is_lambda}");
+            has_variable &= is_lambda;
+
+            previous_lambdas
+                .iter_mut()
+                .zip(v[0..n_lambdas].iter())
+                .for_each(|(a, b)| *a |= b);
+        }
+
+        println!("{expr:?} {previous_lambdas:?}");
+        if let LambdaExpr::Lambda(..) = expr {
+            Ok((
+                has_variable && previous_lambdas.pop().unwrap(),
+                previous_lambdas,
+            ))
+        } else {
+            Ok((true, previous_lambdas))
         }
     }
 }
@@ -545,6 +598,32 @@ mod test {
         LabelledScenarios,
         language::{ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
     };
+
+    #[test]
+    fn stats() -> anyhow::Result<()> {
+        let p = lot_parser::<extra::Err<Rich<_>>>();
+        let mut labels = LabelledScenarios::default();
+        for (expr, constant_lambda) in [
+            ("a0", false),
+            ("lambda a x (pa_man(x))", false),
+            ("lambda a x (pa_man(a_m))", true),
+            (
+                "lambda a x (((lambda a y (pa_woman(y)))(a_m)) & pa_man(x))",
+                false,
+            ),
+            ("lambda a y (pa_woman(a_m))", true),
+            ("lambda a y (lambda a x (y))", true),
+        ] {
+            let expr = p.parse(expr).unwrap().to_pool(&mut labels)?;
+            match expr.stats() {
+                LambdaSummaryStats::WellFormed {
+                    constant_function, ..
+                } => assert_eq!(constant_function, constant_lambda),
+                LambdaSummaryStats::Malformed => panic!("{expr} should be well-formed!"),
+            }
+        }
+        Ok(())
+    }
 
     fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
         Ok([
