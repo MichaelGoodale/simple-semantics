@@ -1,4 +1,7 @@
-use std::{fmt::Display, sync::LazyLock};
+use std::{
+    fmt::Display,
+    sync::{Arc, LazyLock},
+};
 
 use anyhow::bail;
 use chumsky::{
@@ -10,13 +13,16 @@ use chumsky::{
 use rand::Rng;
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub enum LambdaType {
+pub enum InnerLambdaType {
     #[default]
     A,
     E,
     T,
-    Composition(Box<Self>, Box<Self>),
+    Composition(LambdaType, LambdaType),
 }
+
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct LambdaType(Arc<InnerLambdaType>);
 
 /*
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -60,21 +66,21 @@ impl LambdaType {
     }
 
     pub fn a() -> &'static Self {
-        static A: LazyLock<LambdaType> = LazyLock::new(|| LambdaType::A);
+        static A: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Arc::new(InnerLambdaType::A)));
         &A
     }
     pub fn e() -> &'static Self {
-        static E: LazyLock<LambdaType> = LazyLock::new(|| LambdaType::E);
+        static E: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Arc::new(InnerLambdaType::E)));
         &E
     }
 
     pub fn t() -> &'static Self {
-        static T: LazyLock<LambdaType> = LazyLock::new(|| LambdaType::T);
+        static T: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Arc::new(InnerLambdaType::T)));
         &T
     }
 
     pub fn compose(a: Self, b: Self) -> Self {
-        LambdaType::Composition(Box::new(a), Box::new(b))
+        LambdaType(Arc::new(InnerLambdaType::Composition(a, b)))
     }
 
     pub fn at() -> &'static Self {
@@ -108,12 +114,12 @@ impl LambdaType {
     }
 
     pub fn can_apply(&self, other: &Self) -> bool {
-        matches!(self, LambdaType::Composition(a, _) if a.as_ref() == other)
+        matches!(self.0.as_ref(), InnerLambdaType::Composition(a, _) if a == other)
     }
 
     pub fn split(&self) -> anyhow::Result<(&LambdaType, &LambdaType)> {
-        match self {
-            Self::Composition(a, b) => Ok((a, b)),
+        match self.0.as_ref() {
+            InnerLambdaType::Composition(a, b) => Ok((a, b)),
             _ => bail!("Can't split a primitive!"),
         }
     }
@@ -126,19 +132,19 @@ impl LambdaType {
     }
 
     pub fn is_function(&self) -> bool {
-        matches!(self, LambdaType::Composition(_, _))
+        matches!(self.0.as_ref(), InnerLambdaType::Composition(_, _))
     }
 
     pub fn lhs(&self) -> anyhow::Result<&Self> {
-        match self {
-            LambdaType::Composition(a, _) => Ok(a),
+        match self.0.as_ref() {
+            InnerLambdaType::Composition(a, _) => Ok(a),
             _ => bail!("Can't split a primitive!"),
         }
     }
 
     pub fn rhs(&self) -> anyhow::Result<&Self> {
-        match self {
-            LambdaType::Composition(_a, b) => Ok(b),
+        match self.0.as_ref() {
+            InnerLambdaType::Composition(_a, b) => Ok(b),
             _ => bail!("Can't split a primitive!"),
         }
     }
@@ -146,11 +152,11 @@ impl LambdaType {
 
 impl Display for LambdaType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LambdaType::E => write!(f, "e"),
-            LambdaType::T => write!(f, "t"),
-            LambdaType::A => write!(f, "a"),
-            LambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
+        match self.0.as_ref() {
+            InnerLambdaType::E => write!(f, "e"),
+            InnerLambdaType::T => write!(f, "t"),
+            InnerLambdaType::A => write!(f, "a"),
+            InnerLambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
         }
     }
 }
