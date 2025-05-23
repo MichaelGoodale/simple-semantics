@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, sync::LazyLock};
 
 use anyhow::bail;
 use chumsky::{
@@ -10,13 +10,16 @@ use chumsky::{
 use rand::Rng;
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub enum LambdaType {
+pub enum InnerLambdaType {
     #[default]
     A,
     E,
     T,
-    Composition(Box<Self>, Box<Self>),
+    Composition,
 }
+
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct LambdaType(Vec<Option<InnerLambdaType>>);
 
 pub(crate) fn core_type_parser<'src, E>() -> impl Parser<'src, &'src str, LambdaType, E> + Clone
 where
@@ -24,13 +27,13 @@ where
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
 {
     let atom = choice((
-        just('e').to(LambdaType::E),
-        just('t').to(LambdaType::T),
-        just('a').to(LambdaType::A),
+        just('e').to(LambdaType::e().clone()),
+        just('t').to(LambdaType::t().clone()),
+        just('a').to(LambdaType::a().clone()),
     ));
     recursive(|expr| {
         atom.or((expr.clone().then_ignore(just(',').padded()).then(expr))
-            .map(|(x, y)| LambdaType::Composition(Box::new(x), Box::new(y)))
+            .map(|(x, y)| LambdaType::compose(x, y))
             .delimited_by(
                 just('<').then(inline_whitespace()),
                 inline_whitespace().then(just('>')),
@@ -53,29 +56,54 @@ impl LambdaType {
             )
         })
     }
-    pub fn at() -> Self {
-        LambdaType::Composition(Box::new(LambdaType::A), Box::new(LambdaType::T))
+
+    pub fn a() -> &'static Self {
+        static A: LazyLock<LambdaType> =
+            LazyLock::new(|| LambdaType(vec![Some(InnerLambdaType::A)]));
+        &*A
+    }
+    pub fn e() -> &'static Self {
+        static E: LazyLock<LambdaType> =
+            LazyLock::new(|| LambdaType(vec![Some(InnerLambdaType::E)]));
+        &*E
     }
 
-    pub fn et() -> Self {
-        LambdaType::Composition(Box::new(LambdaType::E), Box::new(LambdaType::T))
+    pub fn t() -> &'static Self {
+        static T: LazyLock<LambdaType> =
+            LazyLock::new(|| LambdaType(vec![Some(InnerLambdaType::T)]));
+        &*T
+    }
+
+    pub fn compose(a: Self, b: Self) -> Self {
+        todo!();
+    }
+
+    pub fn at() -> &'static Self {
+        static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
+            LambdaType(vec![
+                Some(InnerLambdaType::Composition),
+                Some(InnerLambdaType::A),
+                Some(InnerLambdaType::T),
+            ])
+        });
+        &VAL
+    }
+
+    pub fn et() -> &'static Self {
+        static VAL: LazyLock<LambdaType> =
+            LazyLock::new(|| LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()));
+        &VAL
     }
     pub fn eet() -> Self {
-        LambdaType::Composition(
-            Box::new(LambdaType::E),
-            Box::new(LambdaType::Composition(
-                Box::new(LambdaType::E),
-                Box::new(LambdaType::T),
-            )),
+        LambdaType::compose(
+            LambdaType::e().clone(),
+            LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()),
         )
     }
     pub fn ett() -> Self {
-        LambdaType::Composition(
-            Box::new(LambdaType::Composition(
-                Box::new(LambdaType::E),
-                Box::new(LambdaType::T),
-            )),
-            Box::new(LambdaType::T),
+        LambdaType::compose(
+            LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()),
+            LambdaType::t().clone(),
         )
     }
 
@@ -169,16 +197,13 @@ impl LambdaType {
     pub fn random(r: &mut impl Rng) -> Self {
         let p: f64 = r.random();
         if p < 0.25 {
-            LambdaType::E
+            LambdaType::e().clone()
         } else if p < 0.55 {
-            LambdaType::A
+            LambdaType::a().clone()
         } else if p < 0.8 {
-            LambdaType::T
+            LambdaType::t().clone()
         } else {
-            LambdaType::Composition(
-                Box::new(LambdaType::random(r)),
-                Box::new(LambdaType::random(r)),
-            )
+            LambdaType::compose(LambdaType::random(r), LambdaType::random(r))
         }
     }
 
@@ -186,14 +211,11 @@ impl LambdaType {
     pub fn random_no_e(r: &mut impl Rng) -> Self {
         let p: f64 = r.random();
         if p < 0.4 {
-            LambdaType::A
+            LambdaType::e().clone()
         } else if p < 0.8 {
-            LambdaType::T
+            LambdaType::t().clone()
         } else {
-            LambdaType::Composition(
-                Box::new(LambdaType::random(r)),
-                Box::new(LambdaType::random_no_e(r)),
-            )
+            LambdaType::compose(LambdaType::random(r), LambdaType::random_no_e(r))
         }
     }
 }
