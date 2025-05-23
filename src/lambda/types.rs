@@ -22,7 +22,7 @@ pub enum InnerLambdaType {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct LambdaType(Arc<InnerLambdaType>);
+pub struct LambdaType(Box<InnerLambdaType>);
 
 /*
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -66,21 +66,21 @@ impl LambdaType {
     }
 
     pub fn a() -> &'static Self {
-        static A: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Arc::new(InnerLambdaType::A)));
+        static A: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Box::new(InnerLambdaType::A)));
         &A
     }
     pub fn e() -> &'static Self {
-        static E: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Arc::new(InnerLambdaType::E)));
+        static E: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Box::new(InnerLambdaType::E)));
         &E
     }
 
     pub fn t() -> &'static Self {
-        static T: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Arc::new(InnerLambdaType::T)));
+        static T: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(Box::new(InnerLambdaType::T)));
         &T
     }
 
     pub fn compose(a: Self, b: Self) -> Self {
-        LambdaType(Arc::new(InnerLambdaType::Composition(a, b)))
+        LambdaType(Box::new(InnerLambdaType::Composition(a, b)))
     }
 
     pub fn at() -> &'static Self {
