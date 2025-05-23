@@ -41,6 +41,13 @@ fn complicated_application(args: (&str, &str)) -> LambdaType {
 
     beta.apply(&alpha).unwrap()
 }
+#[divan::bench]
+fn random_types() {
+    let mut rng = divan::black_box(ChaCha8Rng::seed_from_u64(32));
+    for _ in 0..100 {
+        LambdaType::random(&mut rng);
+    }
+}
 
 #[divan::bench]
 fn random_exprs() {
