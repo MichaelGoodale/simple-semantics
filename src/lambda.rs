@@ -65,7 +65,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         self.root
     }
 
-    pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
+    pub fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
         self.pool.get(x)
     }
 
@@ -235,7 +235,7 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
         self.0.get(expr.0 as usize)
     }
 
-    fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<T> {
+    pub(crate) fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<T> {
         &self.0[expr.0 as usize]
     }
 
@@ -254,7 +254,7 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
     }
 }
 
-struct LambdaPoolBFSIterator<'a, T: LambdaLanguageOfThought> {
+pub struct LambdaPoolBFSIterator<'a, T: LambdaLanguageOfThought> {
     pool: &'a LambdaPool<T>,
     queue: VecDeque<(LambdaExprRef, Bvar)>,
 }
@@ -305,7 +305,7 @@ impl<T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<T>
 where
     T: Clone,
 {
-    fn bfs_from(&self, x: LambdaExprRef) -> LambdaPoolBFSIterator<T> {
+    pub(crate) fn bfs_from(&self, x: LambdaExprRef) -> LambdaPoolBFSIterator<T> {
         LambdaPoolBFSIterator {
             pool: self,
             queue: VecDeque::from([(x, 0)]),
@@ -568,6 +568,10 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         } else {
             Ok((has_variable, previous_lambdas))
         }
+    }
+
+    fn has_variable(&self, i: LambdaExprRef) -> bool {
+        self.pool.bfs_from(i).any(|(x, lambda_depth)| matches!(*self.pool.get(x), LambdaExpr::BoundVariable(z,_) if z == lambda_depth-1))
     }
 }
 
