@@ -190,7 +190,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
             argument,
         });
         self.reduce()?;
-        Ok(var_type)
+        Ok(var_type.clone())
     }
 }
 
@@ -322,7 +322,7 @@ where
         {
             let argument_type = self.get_type(*argument)?;
             let subformula_type = self.get_type(*subformula)?;
-            subformula_type.apply(&argument_type)
+            Ok(subformula_type.apply(&argument_type)?.clone())
         } else {
             bail!("Can't apply when its not an application!")
         }
@@ -337,7 +337,7 @@ where
             }
             LambdaExpr::Application { subformula, .. } => {
                 let subformula_type = self.get_type(*subformula)?;
-                subformula_type.rhs()
+                Ok(subformula_type.rhs()?.clone())
             }
             LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type().clone()),
         }
@@ -631,7 +631,7 @@ mod test {
     fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
         Ok([
             LambdaExpr::Lambda(LambdaExprRef(pos + 1), LambdaType::e().clone()),
-            LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::et().clone()),
+            LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::e().clone()),
             LambdaExpr::BoundVariable(1, LambdaType::e().clone()),
         ])
     }
@@ -834,7 +834,7 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
             LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
-            LambdaExpr::FreeVariable(0, LambdaType::t().clone()),
+            LambdaExpr::FreeVariable(0, LambdaType::a().clone()),
         ]);
         assert!(pool.reduce(LambdaExprRef(0)).is_ok());
         Ok(())

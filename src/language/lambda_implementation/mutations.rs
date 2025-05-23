@@ -409,7 +409,7 @@ impl Expr {
             None => {
                 if lambda_type.is_function() {
                     Ok(UnbuiltExpr::Lambda(lambda_type))
-                } else if let Some(x) = context.sample_variable(&lambda_type, rng) {
+                } else if let Some(x) = context.sample_variable(lambda_type, rng) {
                     Ok(x)
                 } else {
                     bail!("Could not find expr of type {lambda_type}");
