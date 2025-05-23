@@ -1,10 +1,7 @@
 use divan::AllocProfiler;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use simple_semantics::{
-    lambda::{RootedLambdaPool, types::LambdaType},
-    language::Expr,
-};
+use simple_semantics::lambda::{RootedLambdaPool, types::LambdaType};
 
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
