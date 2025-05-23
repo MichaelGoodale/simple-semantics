@@ -20,7 +20,7 @@ pub trait LambdaLanguageOfThought {
     fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>)
     where
         Self: Sized;
-    fn get_type(&self) -> LambdaType;
+    fn get_type(&self) -> &LambdaType;
     fn to_pool(pool: Vec<Self>, root: LambdaExprRef) -> Self::Pool
     where
         Self: Sized;
@@ -33,7 +33,7 @@ impl LambdaLanguageOfThought for () {
     }
     fn remap_refs(&mut self, _: &[usize]) {}
 
-    fn get_type(&self) -> LambdaType {
+    fn get_type(&self) -> &LambdaType {
         unimplemented!()
     }
 
@@ -333,16 +333,13 @@ where
             LambdaExpr::BoundVariable(_, x) | LambdaExpr::FreeVariable(_, x) => Ok(x.clone()),
             LambdaExpr::Lambda(s, x) => {
                 let result = self.get_type(*s);
-                Ok(LambdaType::Composition(
-                    Box::new(x.clone()),
-                    Box::new(result?),
-                ))
+                Ok(LambdaType::compose(x.clone(), result?))
             }
             LambdaExpr::Application { subformula, .. } => {
                 let subformula_type = self.get_type(*subformula)?;
                 subformula_type.rhs()
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type()),
+            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type().clone()),
         }
     }
 
@@ -633,9 +630,9 @@ mod test {
 
     fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
         Ok([
-            LambdaExpr::Lambda(LambdaExprRef(pos + 1), LambdaType::E),
-            LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::E),
-            LambdaExpr::BoundVariable(1, LambdaType::E),
+            LambdaExpr::Lambda(LambdaExprRef(pos + 1), LambdaType::e().clone()),
+            LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::et().clone()),
+            LambdaExpr::BoundVariable(1, LambdaType::e().clone()),
         ])
     }
 
@@ -647,12 +644,12 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(4),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::A),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property(32, ActorOrEvent::Actor),
                 ExprRef(3),
             )),
-            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3)),
         ]);
         pool.reduce(LambdaExprRef(0))?;
@@ -678,14 +675,14 @@ mod test {
                 subformula: LambdaExprRef(3),
                 argument: LambdaExprRef(4),
             },
-            LambdaExpr::BoundVariable(0, LambdaType::et()),
+            LambdaExpr::BoundVariable(0, LambdaType::et().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
-            LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::A),
+            LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property(36, ActorOrEvent::Actor),
                 ExprRef(7),
             )),
-            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
         ]);
         pool.reduce(LambdaExprRef(0))?;
         assert_eq!(
@@ -704,22 +701,22 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(6),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::T),
-            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::T),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::t().clone()),
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::t().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(4), ExprRef(5))), //10
-            LambdaExpr::BoundVariable(1, LambdaType::T),
-            LambdaExpr::BoundVariable(0, LambdaType::T),
+            LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
+            LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
             LambdaExpr::Application {
                 //6
                 subformula: LambdaExprRef(7),
                 argument: LambdaExprRef(10),
             },
-            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::A),
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property(36, ActorOrEvent::Actor),
                 ExprRef(9),
             )),
-            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
         ]);
         pool.reduce(LambdaExprRef(0))?;
@@ -727,13 +724,13 @@ mod test {
         assert_eq!(
             pool,
             LambdaPool(vec![
-                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::T),
+                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::t().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3))),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property(36, ActorOrEvent::Actor),
                     ExprRef(4)
                 )),
-                LambdaExpr::BoundVariable(0, LambdaType::T),
+                LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
             ])
         );
@@ -749,12 +746,12 @@ mod test {
                 subformula: LambdaExprRef(2),
                 argument: LambdaExprRef(5),
             },
-            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::A),
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property(32, ActorOrEvent::Actor),
                 ExprRef(4),
             )),
-            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3)),
             // 6
             //\lambda x. Mary sings and
@@ -762,22 +759,22 @@ mod test {
                 subformula: LambdaExprRef(7),
                 argument: LambdaExprRef(12),
             },
-            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::T),
-            LambdaExpr::Lambda(LambdaExprRef(9), LambdaType::T),
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::t().clone()),
+            LambdaExpr::Lambda(LambdaExprRef(9), LambdaType::t().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(10), ExprRef(11))), //10
-            LambdaExpr::BoundVariable(1, LambdaType::T),
-            LambdaExpr::BoundVariable(0, LambdaType::T),
+            LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
+            LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
             LambdaExpr::Application {
                 //13
                 subformula: LambdaExprRef(13),
                 argument: LambdaExprRef(16),
             },
-            LambdaExpr::Lambda(LambdaExprRef(14), LambdaType::A),
+            LambdaExpr::Lambda(LambdaExprRef(14), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property(36, ActorOrEvent::Actor),
                 ExprRef(15),
             )),
-            LambdaExpr::BoundVariable(0, LambdaType::A),
+            LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
         ]);
         let root = pool.reduce(LambdaExprRef(0))?;
@@ -821,9 +818,9 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(3),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::A),
-            LambdaExpr::BoundVariable(0, LambdaType::T),
-            LambdaExpr::FreeVariable(0, LambdaType::T),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
+            LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
+            LambdaExpr::FreeVariable(0, LambdaType::t().clone()),
         ]);
         assert_eq!(
             pool.reduce(LambdaExprRef(0)).unwrap_err().to_string(),
@@ -835,9 +832,9 @@ mod test {
                 subformula: LambdaExprRef(1),
                 argument: LambdaExprRef(3),
             },
-            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::A),
-            LambdaExpr::BoundVariable(0, LambdaType::T),
-            LambdaExpr::FreeVariable(0, LambdaType::A),
+            LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
+            LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
+            LambdaExpr::FreeVariable(0, LambdaType::t().clone()),
         ]);
         assert!(pool.reduce(LambdaExprRef(0)).is_ok());
         Ok(())
@@ -856,31 +853,34 @@ mod test {
                 subformula: LambdaExprRef(2),
                 argument: LambdaExprRef(4),
             },
-            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::E),
-            LambdaExpr::FreeVariable(0, LambdaType::T),
-            LambdaExpr::FreeVariable(2, LambdaType::E),
+            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::e().clone()),
+            LambdaExpr::FreeVariable(0, LambdaType::t().clone()),
+            LambdaExpr::FreeVariable(2, LambdaType::t().clone()),
             // 5
             //\lambda x. Mary sings and
             LambdaExpr::Application {
                 subformula: LambdaExprRef(6),
                 argument: LambdaExprRef(9),
             },
-            LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::T),
-            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::T),
-            LambdaExpr::BoundVariable(1, LambdaType::T),
+            LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::t().clone()),
+            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::t().clone()),
+            LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
             LambdaExpr::Application {
                 //10
                 subformula: LambdaExprRef(10),
                 argument: LambdaExprRef(12),
             },
-            LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::E),
-            LambdaExpr::FreeVariable(1337, LambdaType::T),
-            LambdaExpr::FreeVariable(5, LambdaType::E),
+            LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::e().clone()),
+            LambdaExpr::FreeVariable(1337, LambdaType::t().clone()),
+            LambdaExpr::FreeVariable(5, LambdaType::e().clone()),
         ]);
         pool.reduce(LambdaExprRef(0))?;
         assert_eq!(
             pool,
-            LambdaPool(vec![LambdaExpr::FreeVariable(1337, LambdaType::T)])
+            LambdaPool(vec![LambdaExpr::FreeVariable(
+                1337,
+                LambdaType::t().clone()
+            )])
         );
         Ok(())
     }
@@ -891,7 +891,7 @@ mod test {
             k(0)?
                 .into_iter()
                 .chain([
-                    LambdaExpr::FreeVariable(32, LambdaType::E),
+                    LambdaExpr::FreeVariable(32, LambdaType::e().clone()),
                     LambdaExpr::Application {
                         subformula: LambdaExprRef(0),
                         argument: LambdaExprRef(3),
@@ -906,8 +906,8 @@ mod test {
         assert_eq!(
             pool,
             LambdaPool(vec![
-                LambdaExpr::FreeVariable(32, LambdaType::E),
-                LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::E)
+                LambdaExpr::FreeVariable(32, LambdaType::e().clone()),
+                LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::e().clone())
             ])
         );
         Ok(())
@@ -982,21 +982,21 @@ mod test {
 
         let gold_pool = RootedLambdaPool {
             pool: LambdaPool(vec![
-                LambdaExpr::FreeVariable(0, LambdaType::et()),
-                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::FreeVariable(0, LambdaType::et().clone()),
+                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::BoundVariable(1, LambdaType::et()),
-                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
+                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(4),
                 },
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(5))),
-                LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::E),
-                LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::e().clone()),
+                LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::et().clone()),
             ]),
             root: LambdaExprRef(8),
         };
@@ -1013,34 +1013,34 @@ mod test {
             .unwrap()
             .to_pool(&mut labels)?;
 
-        pool.lambda_abstract_free_variable(0, LambdaType::et(), false)?;
+        pool.lambda_abstract_free_variable(0, LambdaType::et().clone(), false)?;
 
         let gold_pool = RootedLambdaPool {
             pool: LambdaPool(vec![
-                LambdaExpr::BoundVariable(3, LambdaType::et()),
-                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::BoundVariable(3, LambdaType::et().clone()),
+                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::BoundVariable(2, LambdaType::et()),
-                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::BoundVariable(2, LambdaType::et().clone()),
+                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(4),
                 },
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(5))),
-                LambdaExpr::BoundVariable(1, LambdaType::et()),
-                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
+                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(7),
                     argument: LambdaExprRef(8),
                 },
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(6), ExprRef(9))),
-                LambdaExpr::Lambda(LambdaExprRef(10), LambdaType::E),
-                LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::et()),
-                LambdaExpr::Lambda(LambdaExprRef(12), LambdaType::et()),
-                LambdaExpr::Lambda(LambdaExprRef(13), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(10), LambdaType::e().clone()),
+                LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::et().clone()),
+                LambdaExpr::Lambda(LambdaExprRef(12), LambdaType::et().clone()),
+                LambdaExpr::Lambda(LambdaExprRef(13), LambdaType::et().clone()),
             ]),
             root: LambdaExprRef(14),
         };
@@ -1074,8 +1074,8 @@ mod test {
             .unwrap()
             .to_pool(&mut labels)?;
 
-        a.lambda_abstract_free_variable(0, LambdaType::A, false)?;
-        b.lambda_abstract_free_variable(0, LambdaType::A, false)?;
+        a.lambda_abstract_free_variable(0, LambdaType::a().clone(), false)?;
+        b.lambda_abstract_free_variable(0, LambdaType::a().clone(), false)?;
         println!("A:\t{a}");
         println!("B:\t{b}");
 

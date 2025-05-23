@@ -108,10 +108,7 @@ impl LambdaType {
     }
 
     pub fn can_apply(&self, other: &Self) -> bool {
-        match self {
-            LambdaType::T | LambdaType::E | LambdaType::A => false,
-            LambdaType::Composition(lhs, _) => **lhs == *other,
-        }
+        todo!();
     }
 
     pub fn apply_clone(self, other: &Self) -> anyhow::Result<Self> {
@@ -119,19 +116,11 @@ impl LambdaType {
             bail!("Cannot apply {other} to {self}!")
         }
 
-        match self {
-            LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::A | LambdaType::T | LambdaType::E => {
-                bail!("Cannot apply to a primitive type")
-            }
-        }
+        todo!();
     }
 
-    pub fn split(self) -> anyhow::Result<(LambdaType, LambdaType)> {
-        match self {
-            LambdaType::Composition(a, b) => Ok((*a, *b)),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Cannot split an atomic type"),
-        }
+    pub fn split(&self) -> anyhow::Result<(&LambdaType, &LambdaType)> {
+        todo!();
     }
 
     pub fn apply(self, other: &Self) -> anyhow::Result<Self> {
@@ -139,57 +128,39 @@ impl LambdaType {
             bail!("Cannot apply {other} to {self}!")
         }
 
-        match self {
-            LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::A | LambdaType::T | LambdaType::E => {
-                bail!("Cannot apply to a primitive type")
-            }
-        }
+        todo!();
     }
 
     pub fn is_function(&self) -> bool {
-        match self {
-            LambdaType::Composition(..) => true,
-            LambdaType::A | LambdaType::E | LambdaType::T => false,
-        }
+        self.0.len() > 1
     }
 
     pub fn rhs_clone(&self) -> anyhow::Result<Self> {
-        match self {
-            LambdaType::Composition(_, rhs) => Ok(*rhs.clone()),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
-        }
+        todo!();
     }
 
     pub fn lhs_clone(&self) -> anyhow::Result<Self> {
-        match self {
-            LambdaType::Composition(lhs, ..) => Ok(*lhs.clone()),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
-        }
+        todo!();
     }
     pub fn lhs(self) -> anyhow::Result<Self> {
-        match self {
-            LambdaType::Composition(lhs, ..) => Ok(*lhs.clone()),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
-        }
+        todo!();
     }
 
     pub fn rhs(self) -> anyhow::Result<Self> {
-        match self {
-            LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
-        }
+        todo!();
     }
 }
 
 impl Display for LambdaType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!();
+        /*
         match self {
             LambdaType::E => write!(f, "e"),
             LambdaType::T => write!(f, "t"),
             LambdaType::A => write!(f, "a"),
             LambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
-        }
+        }*/
     }
 }
 
@@ -240,46 +211,44 @@ mod test {
     #[test]
     fn check_application() -> anyhow::Result<()> {
         let et = LambdaType::et();
-        let et_to_et = LambdaType::Composition(Box::new(et.clone()), Box::new(et.clone()));
-        let et_squared_to_et_squared =
-            LambdaType::Composition(Box::new(et_to_et.clone()), Box::new(et_to_et.clone()));
-        assert!(et.can_apply(&LambdaType::E));
+        let et_to_et = LambdaType::compose(et.clone(), et.clone());
+        let et_squared_to_et_squared = LambdaType::compose(et_to_et.clone(), et_to_et.clone());
+        assert!(et.can_apply(LambdaType::e()));
         assert!(et_to_et.can_apply(&et));
         assert!(et_squared_to_et_squared.can_apply(&et_to_et));
-        assert!(!et.can_apply(&LambdaType::T));
+        assert!(!et.can_apply(LambdaType::t()));
         assert!(!et_to_et.can_apply(&et_squared_to_et_squared));
         assert!(!et_squared_to_et_squared.can_apply(&et_squared_to_et_squared));
 
         assert_eq!(et_to_et, et_squared_to_et_squared.clone().rhs()?);
         assert_eq!(et_to_et, et_squared_to_et_squared.rhs_clone()?);
 
-        assert_eq!(et, et_to_et.clone().rhs()?);
-        assert_eq!(et, et_to_et.rhs_clone()?);
+        assert_eq!(et, &et_to_et.clone().rhs()?);
+        assert_eq!(et, &et_to_et.rhs_clone()?);
 
-        assert_eq!(LambdaType::T, et.clone().rhs()?);
-        assert_eq!(LambdaType::T, et.rhs_clone()?);
+        assert_eq!(LambdaType::t(), &et.clone().rhs()?);
+        assert_eq!(LambdaType::t(), &et.rhs_clone()?);
         Ok(())
     }
 
     #[test]
     fn parse_types() {
         let parser = type_parser();
-        assert_eq!(parser.parse("e").unwrap(), LambdaType::E);
-        assert_eq!(parser.parse(" e ").unwrap(), LambdaType::E);
-        assert_eq!(parser.parse("e  ").unwrap(), LambdaType::E);
+        assert_eq!(&parser.parse("e").unwrap(), LambdaType::e());
+        assert_eq!(&parser.parse(" e ").unwrap(), LambdaType::e());
+        assert_eq!(&parser.parse("e  ").unwrap(), LambdaType::e());
         assert!(parser.parse("e  z").has_errors());
 
-        assert_eq!(parser.parse("t").unwrap(), LambdaType::T);
+        assert_eq!(&parser.parse("t").unwrap(), LambdaType::t());
 
         let et = LambdaType::et();
-        assert_eq!(parser.parse("<e, t>").unwrap(), et);
+        assert_eq!(&parser.parse("<e, t>").unwrap(), et);
 
-        let et_to_et = LambdaType::Composition(Box::new(et.clone()), Box::new(et));
+        let et_to_et = LambdaType::compose(et.clone(), et.clone());
 
         assert_eq!(parser.parse("<<e, t>, <e,t>>").unwrap(), et_to_et);
 
-        let et_squared_to_et_squared =
-            LambdaType::Composition(Box::new(et_to_et.clone()), Box::new(et_to_et));
+        let et_squared_to_et_squared = LambdaType::compose(et_to_et.clone(), et_to_et);
         assert_eq!(
             parser.parse("<< <e, t>, <e,t>>, <<e,t>, <e,t>>>").unwrap(),
             et_squared_to_et_squared

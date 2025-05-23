@@ -34,27 +34,39 @@ impl RootedLambdaPool<Expr> {
         }
 
         let (position, context) = pos_context.expect("Couldn't find the {position}th expression");
+
+        //Here we extract the lambdas and reborrow them to avoid borrowing crap.
+        let available_vars = context.available_vars;
+        let lambdas = context.lambdas.into_iter().cloned().collect::<Vec<_>>();
+        let context = Context {
+            lambdas: lambdas.iter().collect(),
+            available_vars,
+            available_actors,
+            available_actor_properties,
+            available_event_properties,
+        };
+
         let (root, pool) = (self.root, self.pool);
 
         let lambda_type = pool.get_type(position).unwrap();
         let mut pool: Vec<Option<LambdaExpr<Expr>>> = pool.into();
         pool[position.0 as usize] = None;
 
-        let mut pool = build_out_pool(pool, lambda_type, position.0, context, config, rng);
+        let mut pool = build_out_pool(pool, &lambda_type, position.0, context, config, rng);
         let root = pool.cleanup(root);
 
         RootedLambdaPool { pool, root }
     }
 
     pub fn random_expr(
-        lambda_type: LambdaType,
+        lambda_type: &LambdaType,
         available_actors: &[Actor],
         available_actor_properties: &[PropertyLabel],
         available_event_properties: &[PropertyLabel],
         config: Option<&RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> anyhow::Result<Self> {
-        if lambda_type == LambdaType::E {
+        if lambda_type == LambdaType::e() {
             bail!("There is no way to make a function with type E")
         }
         let pool = vec![None];
@@ -73,11 +85,11 @@ impl RootedLambdaPool<Expr> {
     }
 }
 
-fn build_out_pool(
+fn build_out_pool<'typ>(
     mut pool: Vec<Option<LambdaExpr<Expr>>>,
-    lambda_type: LambdaType,
+    lambda_type: &'typ LambdaType,
     start_pos: u32,
-    context: Context,
+    context: Context<'_, 'typ>,
     config: &RandomExprConfig,
     rng: &mut impl Rng,
 ) -> LambdaPool<Expr> {
@@ -96,23 +108,23 @@ fn build_out_pool(
 }
 
 #[derive(Debug, Clone)]
-struct Context<'a> {
-    lambdas: Vec<LambdaType>,
+struct Context<'a, 't> {
+    lambdas: Vec<&'t LambdaType>,
     available_vars: Vec<Variable>,
     available_actors: &'a [Actor],
     available_actor_properties: &'a [PropertyLabel],
     available_event_properties: &'a [PropertyLabel],
 }
 
-impl Context<'_> {
+impl<'t> Context<'_, 't> {
     fn can_sample_event(&self) -> bool {
         self.available_vars
             .iter()
             .any(|x| matches!(x, Variable::Event(_)))
-            | self.lambdas.iter().any(|lam| *lam == LambdaType::E)
+            | self.lambdas.iter().any(|lam| *lam == LambdaType::e())
     }
 
-    fn sample_actor(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
+    fn sample_actor(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr<'t>> {
         self.available_actors
             .iter()
             .map(|x| UnbuiltExpr::Actor(*x))
@@ -126,7 +138,7 @@ impl Context<'_> {
             .choose(rng)
     }
 
-    fn sample_event(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
+    fn sample_event(&self, rng: &mut impl Rng) -> Option<UnbuiltExpr<'t>> {
         self.available_vars
             .iter()
             .filter_map(|x| {
@@ -139,14 +151,18 @@ impl Context<'_> {
             .choose(rng)
     }
 
-    fn sample_variable(&self, lambda_type: &LambdaType, rng: &mut impl Rng) -> Option<UnbuiltExpr> {
+    fn sample_variable(
+        &self,
+        lambda_type: &LambdaType,
+        rng: &mut impl Rng,
+    ) -> Option<UnbuiltExpr<'t>> {
         let n = self.lambdas.len();
         self.lambdas
             .iter()
             .enumerate()
             .filter_map(|(i, t)| {
-                if t == lambda_type {
-                    Some(UnbuiltExpr::BoundVariable(n - i - 1, t.clone()))
+                if *t == lambda_type {
+                    Some(UnbuiltExpr::BoundVariable(n - i - 1, t))
                 } else {
                     None
                 }
@@ -155,13 +171,13 @@ impl Context<'_> {
     }
 }
 
-fn add_expr<'a>(
-    e: UnbuiltExpr,
+fn add_expr<'props, 'pool>(
+    e: UnbuiltExpr<'pool>,
     pos: u32,
-    mut context: Context<'a>,
+    mut context: Context<'props, 'pool>,
     fresher: &mut Fresher,
     pool: &mut Vec<Option<LambdaExpr<Expr>>>,
-) -> Vec<(u32, LambdaType, Context<'a>)> {
+) -> Vec<(u32, &'pool LambdaType, Context<'props, 'pool>)> {
     let cur_size = pool.len() as u32 - 1;
     let mut children = vec![];
     let expr = match e {
@@ -174,7 +190,7 @@ fn add_expr<'a>(
                         ActorOrEvent::Event => LambdaType::et(),
                     },
                 ),
-                (cur_size + 2, LambdaType::T),
+                (cur_size + 2, LambdaType::t()),
             ]);
             let var = fresher.fresh(actor_or_event);
             context.available_vars.push(var);
@@ -190,12 +206,14 @@ fn add_expr<'a>(
         UnbuiltExpr::Actor(actor) => LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(actor)),
         UnbuiltExpr::Binary(bin_op) => {
             children.extend_from_slice(&match bin_op {
-                BinOp::AgentOf | BinOp::PatientOf => {
-                    [(cur_size + 1, LambdaType::A), (cur_size + 2, LambdaType::E)]
-                }
-                BinOp::And | BinOp::Or => {
-                    [(cur_size + 1, LambdaType::T), (cur_size + 2, LambdaType::T)]
-                }
+                BinOp::AgentOf | BinOp::PatientOf => [
+                    (cur_size + 1, LambdaType::a()),
+                    (cur_size + 2, LambdaType::e()),
+                ],
+                BinOp::And | BinOp::Or => [
+                    (cur_size + 1, LambdaType::t()),
+                    (cur_size + 2, LambdaType::t()),
+                ],
             });
             LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
                 bin_op,
@@ -205,10 +223,10 @@ fn add_expr<'a>(
         }
         UnbuiltExpr::Unary(mon_op) => {
             children.push(match mon_op {
-                MonOp::Property(_, ActorOrEvent::Actor) => (cur_size + 1, LambdaType::A),
-                MonOp::Property(_, ActorOrEvent::Event) => (cur_size + 1, LambdaType::E),
+                MonOp::Property(_, ActorOrEvent::Actor) => (cur_size + 1, LambdaType::a()),
+                MonOp::Property(_, ActorOrEvent::Event) => (cur_size + 1, LambdaType::e()),
                 MonOp::Not | MonOp::Tautology | MonOp::Contradiction => {
-                    (cur_size + 1, LambdaType::T)
+                    (cur_size + 1, LambdaType::t())
                 }
             });
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(mon_op, ExprRef(cur_size + 1)))
@@ -219,11 +237,11 @@ fn add_expr<'a>(
         UnbuiltExpr::Lambda(lambda_type) => {
             let (lhs, rhs) = lambda_type.split().unwrap();
             children.push((cur_size + 1, rhs));
-            context.lambdas.push(lhs.clone());
-            LambdaExpr::Lambda(LambdaExprRef(cur_size + 1), lhs)
+            context.lambdas.push(lhs);
+            LambdaExpr::Lambda(LambdaExprRef(cur_size + 1), lhs.clone())
         }
         UnbuiltExpr::BoundVariable(bvar, lambda_type) => {
-            LambdaExpr::BoundVariable(bvar, lambda_type)
+            LambdaExpr::BoundVariable(bvar, lambda_type.clone())
         }
     };
 
@@ -237,7 +255,7 @@ fn add_expr<'a>(
 
 //We never do applications since they would be redundant. Bound variables are not yet implemented.
 #[derive(Debug, Clone)]
-enum UnbuiltExpr {
+enum UnbuiltExpr<'t> {
     Quantifier(Quantifier, ActorOrEvent),
     Variable(Variable),
     Actor(Actor),
@@ -245,8 +263,8 @@ enum UnbuiltExpr {
     Binary(BinOp),
     Unary(MonOp),
     Constant(Constant),
-    Lambda(LambdaType),
-    BoundVariable(Bvar, LambdaType),
+    Lambda(&'t LambdaType),
+    BoundVariable(Bvar, &'t LambdaType),
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -311,13 +329,13 @@ impl RandomExprConfig {
 }
 
 impl Expr {
-    fn get_new_from_type(
-        lambda_type: LambdaType,
-        context: &Context,
+    fn get_new_from_type<'pool, 'props>(
+        lambda_type: &'pool LambdaType,
+        context: &Context<'props, 'pool>,
         config: &RandomExprConfig,
         rng: &mut impl Rng,
-    ) -> anyhow::Result<UnbuiltExpr> {
-        if config.is_lambda(&lambda_type, rng) {
+    ) -> anyhow::Result<UnbuiltExpr<'pool>> {
+        if config.is_lambda(lambda_type, rng) {
             return Ok(UnbuiltExpr::Lambda(lambda_type));
         }
         if config.is_variable(rng) {
@@ -348,39 +366,42 @@ impl Expr {
                 );
                 let choice = (0..options.len()).choose(rng).unwrap();
                 Some(options.remove(choice))
-            } else {
-                match lambda_type {
-                    LambdaType::T => {
-                        let mut options: Vec<UnbuiltExpr> = vec![
-                            UnbuiltExpr::Unary(MonOp::Not),
-                            UnbuiltExpr::Binary(BinOp::And),
-                            UnbuiltExpr::Binary(BinOp::Or),
-                            UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Actor),
-                            UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Actor),
-                            UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Event),
-                            UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Event),
-                        ];
-                        options.extend(
-                            context.available_actor_properties.iter().map(|i| {
-                                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor))
-                            }),
-                        );
+            } else if lambda_type == LambdaType::t() {
+                let mut options: Vec<UnbuiltExpr> = vec![
+                    UnbuiltExpr::Unary(MonOp::Not),
+                    UnbuiltExpr::Binary(BinOp::And),
+                    UnbuiltExpr::Binary(BinOp::Or),
+                    UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Actor),
+                    UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Actor),
+                    UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Event),
+                    UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Event),
+                ];
+                options.extend(
+                    context
+                        .available_actor_properties
+                        .iter()
+                        .map(|i| UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor))),
+                );
 
-                        if context.can_sample_event() {
-                            options.push(UnbuiltExpr::Binary(BinOp::AgentOf));
-                            options.push(UnbuiltExpr::Binary(BinOp::PatientOf));
-                            options.extend(context.available_event_properties.iter().map(|i| {
-                                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event))
-                            }));
-                        }
-
-                        let choice = (0..options.len()).choose(rng).unwrap();
-                        Some(options.remove(choice))
-                    }
-                    LambdaType::A => context.sample_actor(rng),
-                    LambdaType::E => context.sample_event(rng),
-                    _ => None,
+                if context.can_sample_event() {
+                    options.push(UnbuiltExpr::Binary(BinOp::AgentOf));
+                    options.push(UnbuiltExpr::Binary(BinOp::PatientOf));
+                    options.extend(
+                        context
+                            .available_event_properties
+                            .iter()
+                            .map(|i| UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event))),
+                    );
                 }
+
+                let choice = (0..options.len()).choose(rng).unwrap();
+                Some(options.remove(choice))
+            } else if lambda_type == LambdaType::a() {
+                context.sample_actor(rng)
+            } else if lambda_type == LambdaType::e() {
+                context.sample_event(rng)
+            } else {
+                None
             };
 
         match expr {
@@ -400,18 +421,18 @@ impl Expr {
 
 struct ContextBFSIterator<'a, 'b> {
     pool: &'a RootedLambdaPool<Expr>,
-    queue: VecDeque<(LambdaExprRef, Context<'b>)>,
+    queue: VecDeque<(LambdaExprRef, Context<'b, 'a>)>,
 }
 
-impl<'b> Iterator for ContextBFSIterator<'_, 'b> {
-    type Item = (LambdaExprRef, Context<'b>);
+impl<'a, 'b> Iterator for ContextBFSIterator<'a, 'b> {
+    type Item = (LambdaExprRef, Context<'b, 'a>);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((x, context)) = self.queue.pop_front() {
             match self.pool.get(x) {
                 LambdaExpr::Lambda(x, c) => {
                     let mut context = context.clone();
-                    context.lambdas.push(c.clone());
+                    context.lambdas.push(c);
                     self.queue.push_back((*x, context))
                 }
                 LambdaExpr::Application {
@@ -446,7 +467,7 @@ impl<'b> Iterator for ContextBFSIterator<'_, 'b> {
 }
 
 impl RootedLambdaPool<Expr> {
-    fn context_bfs_iter<'a, 'b>(
+    fn context_bfs_iter<'a, 'b: 'a>(
         &'a self,
         available_actors: &'b [Actor],
         available_actor_properties: &'b [PropertyLabel],

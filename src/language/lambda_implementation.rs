@@ -48,19 +48,19 @@ impl LambdaLanguageOfThought for Expr {
         }
     }
 
-    fn get_type(&self) -> LambdaType {
+    fn get_type(&self) -> &LambdaType {
         match self {
-            Expr::Quantifier { .. } => LambdaType::T,
-            Expr::Variable(Variable::Event(_)) => LambdaType::E,
-            Expr::Variable(Variable::Actor(_)) => LambdaType::A,
-            Expr::Actor(_) => LambdaType::A,
-            Expr::Event(_) => LambdaType::E,
+            Expr::Quantifier { .. } => LambdaType::t(),
+            Expr::Variable(Variable::Event(_)) => LambdaType::e(),
+            Expr::Variable(Variable::Actor(_)) => LambdaType::a(),
+            Expr::Actor(_) => LambdaType::a(),
+            Expr::Event(_) => LambdaType::e(),
             Expr::Binary(bin, ..) => match bin {
-                BinOp::AgentOf | BinOp::PatientOf | BinOp::And | BinOp::Or => LambdaType::T,
+                BinOp::AgentOf | BinOp::PatientOf | BinOp::And | BinOp::Or => LambdaType::t(),
             },
             Expr::Unary(mon_op, _) => match mon_op {
                 MonOp::Property(_, _) | MonOp::Tautology | MonOp::Contradiction | MonOp::Not => {
-                    LambdaType::T
+                    LambdaType::t()
                 }
             },
             Expr::Constant(constant) => match constant {
@@ -68,7 +68,7 @@ impl LambdaLanguageOfThought for Expr {
                 Constant::EveryEvent | Constant::Property(_, ActorOrEvent::Event) => {
                     LambdaType::et()
                 }
-                Constant::Contradiction | Constant::Tautology => LambdaType::T,
+                Constant::Contradiction | Constant::Tautology => LambdaType::t(),
             },
         }
     }
@@ -300,7 +300,7 @@ mod test {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
             let pool = RootedLambdaPool::random_expr(
-                t.clone(),
+                &t,
                 &actors,
                 &available_actor_properties,
                 &available_event_properties,

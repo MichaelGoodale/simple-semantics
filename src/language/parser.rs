@@ -772,12 +772,12 @@ mod tests {
             "lambda e x (pe_Red(x))",
             "<e,t>",
             LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property(1, ActorOrEvent::Event),
                     ExprRef(0),
                 )),
-                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::E),
+                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::e().clone()),
             ]),
             2,
         )?;
@@ -785,14 +785,14 @@ mod tests {
             "lambda  <e,t> P  (lambda e x (P(x)))",
             "<<e,t>, <e,t>>",
             LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(1, LambdaType::et()),
-                LambdaExpr::BoundVariable(0, LambdaType::E),
+                LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
+                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::E),
-                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et()),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::e().clone()),
+                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et().clone()),
             ]),
             4,
         )?;
@@ -800,13 +800,13 @@ mod tests {
             "lambda <a,t> P (P(a0))",
             "<<a,t>,t>",
             LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(0, LambdaType::at()),
+                LambdaExpr::BoundVariable(0, LambdaType::at().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(0)),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at()),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at().clone()),
             ]),
             3,
         )?;
@@ -814,8 +814,8 @@ mod tests {
             "~hey#<e,t>(lol#e)",
             "t",
             LambdaPool::from(vec![
-                LambdaExpr::FreeVariable(0, LambdaType::et()),
-                LambdaExpr::FreeVariable(1, LambdaType::E),
+                LambdaExpr::FreeVariable(0, LambdaType::et().clone()),
+                LambdaExpr::FreeVariable(1, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
@@ -829,19 +829,19 @@ mod tests {
             "(lambda <a,t> P (P(a0)))(lambda a x (pa_Red(x)))",
             "t",
             LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(0, LambdaType::at()),
+                LambdaExpr::BoundVariable(0, LambdaType::at().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(0)),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
                 },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at()),
-                LambdaExpr::BoundVariable(0, LambdaType::A),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at().clone()),
+                LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property(1, ActorOrEvent::Actor),
                     ExprRef(4),
                 )),
-                LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::A),
+                LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::a().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(6),
@@ -853,11 +853,11 @@ mod tests {
             "lambda t phi (lambda t psi (phi & psi))",
             "<t,<t,t>>",
             LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(1, LambdaType::T),
-                LambdaExpr::BoundVariable(0, LambdaType::T),
+                LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
+                LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(0), ExprRef(1))),
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::T),
-                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::T),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::t().clone()),
+                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::t().clone()),
             ]),
             4,
         )?;
