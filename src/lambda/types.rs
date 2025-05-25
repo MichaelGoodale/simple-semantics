@@ -1,4 +1,7 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    sync::{Arc, LazyLock},
+};
 
 use anyhow::bail;
 use chumsky::{
@@ -10,13 +13,21 @@ use chumsky::{
 use rand::Rng;
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub enum LambdaType {
+pub enum InnerLambdaType {
     #[default]
     A,
     E,
     T,
-    Composition(Box<Self>, Box<Self>),
+    Composition(Box<LambdaType>, Box<LambdaType>),
 }
+
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct LambdaType(InnerLambdaType);
+
+/*
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct LambdaType(Vec<Option<InnerLambdaType>>);
+*/
 
 pub(crate) fn core_type_parser<'src, E>() -> impl Parser<'src, &'src str, LambdaType, E> + Clone
 where
@@ -24,13 +35,13 @@ where
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
 {
     let atom = choice((
-        just('e').to(LambdaType::E),
-        just('t').to(LambdaType::T),
-        just('a').to(LambdaType::A),
+        just('e').to(LambdaType::e().clone()),
+        just('t').to(LambdaType::t().clone()),
+        just('a').to(LambdaType::a().clone()),
     ));
     recursive(|expr| {
         atom.or((expr.clone().then_ignore(just(',').padded()).then(expr))
-            .map(|(x, y)| LambdaType::Composition(Box::new(x), Box::new(y)))
+            .map(|(x, y)| LambdaType::compose(x, y))
             .delimited_by(
                 just('<').then(inline_whitespace()),
                 inline_whitespace().then(just('>')),
@@ -53,114 +64,99 @@ impl LambdaType {
             )
         })
     }
-    pub fn at() -> Self {
-        LambdaType::Composition(Box::new(LambdaType::A), Box::new(LambdaType::T))
+
+    pub fn a() -> &'static Self {
+        static A: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(InnerLambdaType::A));
+        &A
+    }
+    pub fn e() -> &'static Self {
+        static E: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(InnerLambdaType::E));
+        &E
     }
 
-    pub fn et() -> Self {
-        LambdaType::Composition(Box::new(LambdaType::E), Box::new(LambdaType::T))
+    pub fn t() -> &'static Self {
+        static T: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(InnerLambdaType::T));
+        &T
     }
-    pub fn eet() -> Self {
-        LambdaType::Composition(
-            Box::new(LambdaType::E),
-            Box::new(LambdaType::Composition(
-                Box::new(LambdaType::E),
-                Box::new(LambdaType::T),
-            )),
-        )
+
+    pub fn compose(a: Self, b: Self) -> Self {
+        LambdaType(InnerLambdaType::Composition(Box::new(a), Box::new(b)))
     }
-    pub fn ett() -> Self {
-        LambdaType::Composition(
-            Box::new(LambdaType::Composition(
-                Box::new(LambdaType::E),
-                Box::new(LambdaType::T),
-            )),
-            Box::new(LambdaType::T),
-        )
+
+    pub fn at() -> &'static Self {
+        static VAL: LazyLock<LambdaType> =
+            LazyLock::new(|| LambdaType::compose(LambdaType::a().clone(), LambdaType::t().clone()));
+        &VAL
+    }
+
+    pub fn et() -> &'static Self {
+        static VAL: LazyLock<LambdaType> =
+            LazyLock::new(|| LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()));
+        &VAL
+    }
+    pub fn eet() -> &'static Self {
+        static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
+            LambdaType::compose(
+                LambdaType::e().clone(),
+                LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()),
+            )
+        });
+        &VAL
+    }
+    pub fn ett() -> &'static Self {
+        static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
+            LambdaType::compose(
+                LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()),
+                LambdaType::t().clone(),
+            )
+        });
+        &VAL
     }
 
     pub fn can_apply(&self, other: &Self) -> bool {
-        match self {
-            LambdaType::T | LambdaType::E | LambdaType::A => false,
-            LambdaType::Composition(lhs, _) => **lhs == *other,
+        matches!(&self.0, InnerLambdaType::Composition(a, _) if a.as_ref() == other)
+    }
+
+    pub fn split(&self) -> anyhow::Result<(&LambdaType, &LambdaType)> {
+        match &self.0 {
+            InnerLambdaType::Composition(a, b) => Ok((a, b)),
+            _ => bail!("Can't split a primitive!"),
         }
     }
 
-    pub fn apply_clone(self, other: &Self) -> anyhow::Result<Self> {
+    pub fn apply(&self, other: &Self) -> anyhow::Result<&Self> {
         if !self.can_apply(other) {
             bail!("Cannot apply {other} to {self}!")
         }
-
-        match self {
-            LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::A | LambdaType::T | LambdaType::E => {
-                bail!("Cannot apply to a primitive type")
-            }
-        }
-    }
-
-    pub fn split(self) -> anyhow::Result<(LambdaType, LambdaType)> {
-        match self {
-            LambdaType::Composition(a, b) => Ok((*a, *b)),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Cannot split an atomic type"),
-        }
-    }
-
-    pub fn apply(self, other: &Self) -> anyhow::Result<Self> {
-        if !self.can_apply(other) {
-            bail!("Cannot apply {other} to {self}!")
-        }
-
-        match self {
-            LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::A | LambdaType::T | LambdaType::E => {
-                bail!("Cannot apply to a primitive type")
-            }
-        }
+        self.rhs()
     }
 
     pub fn is_function(&self) -> bool {
-        match self {
-            LambdaType::Composition(..) => true,
-            LambdaType::A | LambdaType::E | LambdaType::T => false,
+        matches!(&self.0, InnerLambdaType::Composition(_, _))
+    }
+
+    pub fn lhs(&self) -> anyhow::Result<&Self> {
+        match &self.0 {
+            InnerLambdaType::Composition(a, _) => Ok(a),
+            _ => bail!("Can't split a primitive!"),
         }
     }
 
-    pub fn rhs_clone(&self) -> anyhow::Result<Self> {
-        match self {
-            LambdaType::Composition(_, rhs) => Ok(*rhs.clone()),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
-        }
-    }
-
-    pub fn lhs_clone(&self) -> anyhow::Result<Self> {
-        match self {
-            LambdaType::Composition(lhs, ..) => Ok(*lhs.clone()),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
-        }
-    }
-    pub fn lhs(self) -> anyhow::Result<Self> {
-        match self {
-            LambdaType::Composition(lhs, ..) => Ok(*lhs.clone()),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
-        }
-    }
-
-    pub fn rhs(self) -> anyhow::Result<Self> {
-        match self {
-            LambdaType::Composition(_, rhs) => Ok(*rhs),
-            LambdaType::A | LambdaType::E | LambdaType::T => bail!("Type clash!"),
+    pub fn rhs(&self) -> anyhow::Result<&Self> {
+        match &self.0 {
+            InnerLambdaType::Composition(_a, b) => Ok(b.as_ref()),
+            _ => bail!("Can't split a primitive!"),
         }
     }
 }
 
 impl Display for LambdaType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LambdaType::E => write!(f, "e"),
-            LambdaType::T => write!(f, "t"),
-            LambdaType::A => write!(f, "a"),
-            LambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
+        match &self.0 {
+            InnerLambdaType::E => write!(f, "e"),
+            InnerLambdaType::T => write!(f, "t"),
+            InnerLambdaType::A => write!(f, "a"),
+            InnerLambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
         }
     }
 }
@@ -169,16 +165,13 @@ impl LambdaType {
     pub fn random(r: &mut impl Rng) -> Self {
         let p: f64 = r.random();
         if p < 0.25 {
-            LambdaType::E
+            LambdaType::e().clone()
         } else if p < 0.55 {
-            LambdaType::A
+            LambdaType::a().clone()
         } else if p < 0.8 {
-            LambdaType::T
+            LambdaType::t().clone()
         } else {
-            LambdaType::Composition(
-                Box::new(LambdaType::random(r)),
-                Box::new(LambdaType::random(r)),
-            )
+            LambdaType::compose(LambdaType::random(r), LambdaType::random(r))
         }
     }
 
@@ -186,14 +179,11 @@ impl LambdaType {
     pub fn random_no_e(r: &mut impl Rng) -> Self {
         let p: f64 = r.random();
         if p < 0.4 {
-            LambdaType::A
+            LambdaType::a().clone()
         } else if p < 0.8 {
-            LambdaType::T
+            LambdaType::t().clone()
         } else {
-            LambdaType::Composition(
-                Box::new(LambdaType::random(r)),
-                Box::new(LambdaType::random_no_e(r)),
-            )
+            LambdaType::compose(LambdaType::random(r), LambdaType::random_no_e(r))
         }
     }
 }
@@ -218,46 +208,41 @@ mod test {
     #[test]
     fn check_application() -> anyhow::Result<()> {
         let et = LambdaType::et();
-        let et_to_et = LambdaType::Composition(Box::new(et.clone()), Box::new(et.clone()));
-        let et_squared_to_et_squared =
-            LambdaType::Composition(Box::new(et_to_et.clone()), Box::new(et_to_et.clone()));
-        assert!(et.can_apply(&LambdaType::E));
-        assert!(et_to_et.can_apply(&et));
+        let et_to_et = LambdaType::compose(et.clone(), et.clone());
+        let et_squared_to_et_squared = LambdaType::compose(et_to_et.clone(), et_to_et.clone());
+        assert!(et.can_apply(LambdaType::e()));
+        assert!(et_to_et.can_apply(et));
         assert!(et_squared_to_et_squared.can_apply(&et_to_et));
-        assert!(!et.can_apply(&LambdaType::T));
+        assert!(!et.can_apply(LambdaType::t()));
         assert!(!et_to_et.can_apply(&et_squared_to_et_squared));
         assert!(!et_squared_to_et_squared.can_apply(&et_squared_to_et_squared));
 
-        assert_eq!(et_to_et, et_squared_to_et_squared.clone().rhs()?);
-        assert_eq!(et_to_et, et_squared_to_et_squared.rhs_clone()?);
+        assert_eq!(&et_to_et, et_squared_to_et_squared.rhs()?);
 
-        assert_eq!(et, et_to_et.clone().rhs()?);
-        assert_eq!(et, et_to_et.rhs_clone()?);
+        assert_eq!(et, et_to_et.rhs()?);
 
-        assert_eq!(LambdaType::T, et.clone().rhs()?);
-        assert_eq!(LambdaType::T, et.rhs_clone()?);
+        assert_eq!(LambdaType::t(), et.rhs()?);
         Ok(())
     }
 
     #[test]
     fn parse_types() {
         let parser = type_parser();
-        assert_eq!(parser.parse("e").unwrap(), LambdaType::E);
-        assert_eq!(parser.parse(" e ").unwrap(), LambdaType::E);
-        assert_eq!(parser.parse("e  ").unwrap(), LambdaType::E);
+        assert_eq!(&parser.parse("e").unwrap(), LambdaType::e());
+        assert_eq!(&parser.parse(" e ").unwrap(), LambdaType::e());
+        assert_eq!(&parser.parse("e  ").unwrap(), LambdaType::e());
         assert!(parser.parse("e  z").has_errors());
 
-        assert_eq!(parser.parse("t").unwrap(), LambdaType::T);
+        assert_eq!(&parser.parse("t").unwrap(), LambdaType::t());
 
         let et = LambdaType::et();
-        assert_eq!(parser.parse("<e, t>").unwrap(), et);
+        assert_eq!(&parser.parse("<e, t>").unwrap(), et);
 
-        let et_to_et = LambdaType::Composition(Box::new(et.clone()), Box::new(et));
+        let et_to_et = LambdaType::compose(et.clone(), et.clone());
 
         assert_eq!(parser.parse("<<e, t>, <e,t>>").unwrap(), et_to_et);
 
-        let et_squared_to_et_squared =
-            LambdaType::Composition(Box::new(et_to_et.clone()), Box::new(et_to_et));
+        let et_squared_to_et_squared = LambdaType::compose(et_to_et.clone(), et_to_et);
         assert_eq!(
             parser.parse("<< <e, t>, <e,t>>, <<e,t>, <e,t>>>").unwrap(),
             et_squared_to_et_squared

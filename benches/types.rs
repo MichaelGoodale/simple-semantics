@@ -18,11 +18,11 @@ fn parsing(s: &str) -> anyhow::Result<LambdaType> {
 }
 
 #[divan::bench]
-fn constant_types() -> [LambdaType; 6] {
+fn constant_types() -> [&'static LambdaType; 6] {
     [
-        LambdaType::A,
-        LambdaType::T,
-        LambdaType::E,
+        LambdaType::a(),
+        LambdaType::t(),
+        LambdaType::e(),
         LambdaType::et(),
         LambdaType::eet(),
         LambdaType::at(),
@@ -36,7 +36,7 @@ fn complicated_application(args: (&str, &str)) -> LambdaType {
         LambdaType::from_string(args.1).unwrap(),
     ));
 
-    beta.apply(&alpha).unwrap()
+    beta.apply(&alpha).unwrap().clone()
 }
 #[divan::bench]
 fn random_types() {
