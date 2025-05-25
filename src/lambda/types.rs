@@ -1,7 +1,4 @@
-use std::{
-    fmt::Display,
-    sync::{Arc, LazyLock},
-};
+use std::{fmt::Display, sync::LazyLock};
 
 use anyhow::bail;
 use chumsky::{

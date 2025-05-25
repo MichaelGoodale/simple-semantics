@@ -329,9 +329,9 @@ impl RandomExprConfig {
 }
 
 impl Expr {
-    fn get_new_from_type<'pool, 'props>(
+    fn get_new_from_type<'pool>(
         lambda_type: &'pool LambdaType,
-        context: &Context<'props, 'pool>,
+        context: &Context<'_, 'pool>,
         config: &RandomExprConfig,
         rng: &mut impl Rng,
     ) -> anyhow::Result<UnbuiltExpr<'pool>> {
@@ -339,7 +339,7 @@ impl Expr {
             return Ok(UnbuiltExpr::Lambda(lambda_type));
         }
         if config.is_variable(rng) {
-            let x = context.sample_variable(&lambda_type, rng);
+            let x = context.sample_variable(lambda_type, rng);
             if let Some(x) = x {
                 return Ok(x);
             }
