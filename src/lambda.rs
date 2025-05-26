@@ -21,6 +21,7 @@ pub trait LambdaLanguageOfThought {
     where
         Self: Sized;
     fn get_type(&self) -> &LambdaType;
+    fn get_arguments(&self) -> &[LambdaType];
     fn to_pool(pool: Vec<Self>, root: LambdaExprRef) -> Self::Pool
     where
         Self: Sized;
@@ -35,6 +36,10 @@ impl LambdaLanguageOfThought for () {
 
     fn get_type(&self) -> &LambdaType {
         unimplemented!()
+    }
+
+    fn get_arguments(&self) -> &[LambdaType] {
+        &[]
     }
 
     fn alpha_reduce(_a: &mut LambdaPool<Self>, _b: &mut LambdaPool<Self>) {}
@@ -72,6 +77,10 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.pool.0.len()
+    }
+
+    pub fn get_mut(&mut self, x: LambdaExprRef) -> &mut LambdaExpr<T> {
+        self.pool.get_mut(x)
     }
 
     pub fn get_type(&self) -> anyhow::Result<LambdaType> {

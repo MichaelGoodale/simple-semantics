@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Quantifier,
     Variable,
@@ -112,6 +114,60 @@ impl LambdaLanguageOfThought for Expr {
                     _ => (),
                 }
             }
+        }
+    }
+
+    fn get_arguments(&self) -> &[LambdaType] {
+        match self {
+            Expr::Quantifier {
+                var: Variable::Actor(_),
+                ..
+            } => {
+                static Q: LazyLock<Vec<LambdaType>> =
+                    LazyLock::new(|| vec![LambdaType::at().clone(), LambdaType::t().clone()]);
+                &Q
+            }
+            Expr::Quantifier {
+                var: Variable::Event(_),
+                ..
+            } => {
+                static Q: LazyLock<Vec<LambdaType>> =
+                    LazyLock::new(|| vec![LambdaType::et().clone(), LambdaType::t().clone()]);
+                &Q
+            }
+            Expr::Variable(Variable::Event(_))
+            | Expr::Variable(Variable::Actor(_))
+            | Expr::Actor(_)
+            | Expr::Event(_)
+            | Expr::Constant(_) => &[],
+            Expr::Binary(BinOp::AgentOf, ..) | Expr::Binary(BinOp::PatientOf, ..) => {
+                static Q: LazyLock<Vec<LambdaType>> =
+                    LazyLock::new(|| vec![LambdaType::a().clone(), LambdaType::e().clone()]);
+                &Q
+            }
+            Expr::Binary(BinOp::Or, ..) | Expr::Binary(BinOp::And, ..) => {
+                static Q: LazyLock<Vec<LambdaType>> =
+                    LazyLock::new(|| vec![LambdaType::t().clone(), LambdaType::t().clone()]);
+                &Q
+            }
+            Expr::Unary(mon_op, _) => match mon_op {
+                MonOp::Property(_, ActorOrEvent::Actor) => {
+                    static Q: LazyLock<Vec<LambdaType>> =
+                        LazyLock::new(|| vec![LambdaType::a().clone()]);
+                    &Q
+                }
+                MonOp::Property(_, ActorOrEvent::Event) => {
+                    static Q: LazyLock<Vec<LambdaType>> =
+                        LazyLock::new(|| vec![LambdaType::a().clone()]);
+                    &Q
+                }
+
+                MonOp::Tautology | MonOp::Contradiction | MonOp::Not => {
+                    static Q: LazyLock<Vec<LambdaType>> =
+                        LazyLock::new(|| vec![LambdaType::t().clone()]);
+                    &Q
+                }
+            },
         }
     }
 }

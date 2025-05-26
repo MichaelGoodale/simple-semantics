@@ -7,6 +7,28 @@ use crate::{Actor, Event, PropertyLabel};
 use super::*;
 
 impl RootedLambdaPool<Expr> {
+    fn get_context_for_expr<'pool, 'props: 'pool>(
+        &'pool self,
+        position: LambdaExprRef,
+        available_actors: &'props [Actor],
+        available_actor_properties: &'props [PropertyLabel],
+        available_event_properties: &'props [PropertyLabel],
+    ) -> Option<Context<'props, 'pool>> {
+        let mut pos_context = None;
+
+        for (n, c) in self.context_bfs_iter(
+            available_actors,
+            available_actor_properties,
+            available_event_properties,
+        ) {
+            if n == position {
+                pos_context = Some(c);
+                break;
+            }
+        }
+        pos_context
+    }
+
     pub fn resample_from_expr(
         self,
         available_actors: &[Actor],
@@ -17,23 +39,15 @@ impl RootedLambdaPool<Expr> {
     ) -> Self {
         let config = config.unwrap_or(&DEFAULT_CONFIG);
         let position = LambdaExprRef(rng.random_range(0..self.len()) as u32);
-        let mut pos_context = None;
 
-        for (n, x) in self
-            .context_bfs_iter(
+        let context = self
+            .get_context_for_expr(
+                position,
                 available_actors,
                 available_actor_properties,
                 available_event_properties,
             )
-            .enumerate()
-        {
-            if n == position.0 as usize {
-                pos_context = Some(x);
-                break;
-            }
-        }
-
-        let (position, context) = pos_context.expect("Couldn't find the {position}th expression");
+            .expect("Couldn't find the {position}th expression");
 
         //Here we extract the lambdas and reborrow them to avoid borrowing crap.
         let available_vars = context.available_vars;
@@ -83,6 +97,76 @@ impl RootedLambdaPool<Expr> {
         let pool = build_out_pool(pool, lambda_type, 0, context, config, rng);
         Ok(RootedLambdaPool::new(pool, LambdaExprRef(0)))
     }
+
+    pub fn prune_quantifiers(&mut self) {
+        let quantifiers = self
+            .pool
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, x)| match x {
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { .. }) => {
+                    Some(LambdaExprRef(i as u32))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        for quantifier in quantifiers {
+            if let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                var, subformula, ..
+            }) = self.get(quantifier)
+            {
+                let has_variable = self
+                    .pool
+                    .bfs_from(LambdaExprRef(subformula.0))
+                    .any(|(x, _)| {
+                        if let LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) = self.get(x) {
+                            v == var
+                        } else {
+                            false
+                        }
+                    });
+                if !has_variable {
+                    self.pool.0[quantifier.0 as usize] = self.pool.0[subformula.0 as usize].clone();
+                }
+            }
+        }
+        self.root = self.pool.cleanup(self.root);
+    }
+
+    /*
+    pub fn swap_expr(
+        &mut self,
+        available_actors: &[Actor],
+        available_actor_properties: &[PropertyLabel],
+        available_event_properties: &[PropertyLabel],
+        rng: &mut impl Rng,
+    ) {
+        let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
+
+        let context = self
+            .get_context_for_expr(
+                position,
+                available_actors,
+                available_actor_properties,
+                available_event_properties,
+            )
+            .unwrap_or_else(|| panic!("Couldn't find {}th expr!", position.0));
+        let x = self.get_mut(position);
+
+        match x {
+            LambdaExpr::Lambda(lambda_expr_ref, lambda_type) => (),
+            LambdaExpr::BoundVariable(_, lambda_type) => todo!(),
+            LambdaExpr::FreeVariable(_, lambda_type) => todo!(),
+            LambdaExpr::Application {
+                subformula,
+                argument,
+            } => todo!(),
+            LambdaExpr::LanguageOfThoughtExpr(_) => todo!(),
+        }
+    }
+    */
 }
 
 fn build_out_pool<'typ>(
@@ -485,5 +569,39 @@ impl RootedLambdaPool<Expr> {
             },
         ));
         ContextBFSIterator { pool: self, queue }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use chumsky::prelude::*;
+    use chumsky::{error::Rich, extra};
+
+    use crate::{LabelledScenarios, language::lot_parser};
+
+    #[test]
+    fn prune_quantifier_test() -> anyhow::Result<()> {
+        let mut labels = LabelledScenarios::default();
+        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
+        let mut pool = parser
+            .parse("some_e(x0,all_e,AgentOf(a2,a1) & PatientOf(a0,a0))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+
+        pool.prune_quantifiers();
+        assert_eq!(pool.to_string(), "(AgentOf(a2,a1) & PatientOf(a0,a0))");
+
+        let mut pool = parser
+            .parse("some_e(x0,all_e,some(z, all_a, AgentOf(z,e1) & PatientOf(a0,e0)))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+
+        pool.prune_quantifiers();
+        assert_eq!(
+            pool.to_string(),
+            "some(y,all_a,(AgentOf(y,e1) & PatientOf(a0,e0)))"
+        );
+
+        Ok(())
     }
 }
