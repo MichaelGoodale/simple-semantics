@@ -602,6 +602,15 @@ mod test {
             "some(y,all_a,(AgentOf(y,e1) & PatientOf(a0,e0)))"
         );
 
+        let mut pool = parser
+            .parse("~(every_e(z,pe1,pa2(a0)))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+
+        pool.prune_quantifiers();
+
+        assert_eq!(pool.to_string(), "~(pa2(a0))");
+
         Ok(())
     }
 }
