@@ -135,7 +135,6 @@ impl RootedLambdaPool<Expr> {
         self.root = self.pool.cleanup(self.root);
     }
 
-    /*
     pub fn swap_expr(
         &mut self,
         available_actors: &[Actor],
@@ -154,19 +153,7 @@ impl RootedLambdaPool<Expr> {
             )
             .unwrap_or_else(|| panic!("Couldn't find {}th expr!", position.0));
         let x = self.get_mut(position);
-
-        match x {
-            LambdaExpr::Lambda(lambda_expr_ref, lambda_type) => (),
-            LambdaExpr::BoundVariable(_, lambda_type) => todo!(),
-            LambdaExpr::FreeVariable(_, lambda_type) => todo!(),
-            LambdaExpr::Application {
-                subformula,
-                argument,
-            } => todo!(),
-            LambdaExpr::LanguageOfThoughtExpr(_) => todo!(),
-        }
     }
-    */
 }
 
 fn build_out_pool<'typ>(
@@ -337,7 +324,7 @@ fn add_expr<'props, 'pool>(
         .collect()
 }
 
-//We never do applications since they would be redundant. Bound variables are not yet implemented.
+//We never do applications since they would be redundant.
 #[derive(Debug, Clone)]
 enum UnbuiltExpr<'t> {
     Quantifier(Quantifier, ActorOrEvent),

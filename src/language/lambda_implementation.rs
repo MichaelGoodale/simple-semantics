@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::iter::empty;
 
 use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Quantifier,
@@ -27,6 +27,27 @@ impl LambdaLanguageOfThought for Expr {
         }
         .into_iter()
         .map(|x| LambdaExprRef(x.0))
+    }
+
+    fn change_children(&mut self, new_children: &[LambdaExprRef]) {
+        match self {
+            Expr::Quantifier {
+                restrictor,
+                subformula,
+                ..
+            } => {
+                *restrictor = ExprRef(new_children[0].0);
+                *subformula = ExprRef(new_children[1].0);
+            }
+            Expr::Binary(_, x, y) => {
+                *x = ExprRef(new_children[0].0);
+                *y = ExprRef(new_children[1].0);
+            }
+            Expr::Unary(_, x) => {
+                *x = ExprRef(new_children[0].0);
+            }
+            Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => (),
+        }
     }
 
     fn remap_refs(&mut self, remap: &[usize]) {
@@ -117,55 +138,37 @@ impl LambdaLanguageOfThought for Expr {
         }
     }
 
-    fn get_arguments(&self) -> &[LambdaType] {
+    fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a> {
         match self {
             Expr::Quantifier {
                 var: Variable::Actor(_),
                 ..
-            } => {
-                static Q: LazyLock<Vec<LambdaType>> =
-                    LazyLock::new(|| vec![LambdaType::at().clone(), LambdaType::t().clone()]);
-                &Q
-            }
+            } => Box::new([LambdaType::at().clone(), LambdaType::t().clone()].into_iter()),
             Expr::Quantifier {
                 var: Variable::Event(_),
                 ..
-            } => {
-                static Q: LazyLock<Vec<LambdaType>> =
-                    LazyLock::new(|| vec![LambdaType::et().clone(), LambdaType::t().clone()]);
-                &Q
-            }
+            } => Box::new([LambdaType::et().clone(), LambdaType::t().clone()].into_iter()),
             Expr::Variable(Variable::Event(_))
             | Expr::Variable(Variable::Actor(_))
             | Expr::Actor(_)
             | Expr::Event(_)
-            | Expr::Constant(_) => &[],
+            | Expr::Constant(_) => Box::new(empty()),
             Expr::Binary(BinOp::AgentOf, ..) | Expr::Binary(BinOp::PatientOf, ..) => {
-                static Q: LazyLock<Vec<LambdaType>> =
-                    LazyLock::new(|| vec![LambdaType::a().clone(), LambdaType::e().clone()]);
-                &Q
+                Box::new([LambdaType::a().clone(), LambdaType::e().clone()].into_iter())
             }
             Expr::Binary(BinOp::Or, ..) | Expr::Binary(BinOp::And, ..) => {
-                static Q: LazyLock<Vec<LambdaType>> =
-                    LazyLock::new(|| vec![LambdaType::t().clone(), LambdaType::t().clone()]);
-                &Q
+                Box::new([LambdaType::t().clone(), LambdaType::t().clone()].into_iter())
             }
             Expr::Unary(mon_op, _) => match mon_op {
                 MonOp::Property(_, ActorOrEvent::Actor) => {
-                    static Q: LazyLock<Vec<LambdaType>> =
-                        LazyLock::new(|| vec![LambdaType::a().clone()]);
-                    &Q
+                    Box::new([LambdaType::a().clone()].into_iter())
                 }
                 MonOp::Property(_, ActorOrEvent::Event) => {
-                    static Q: LazyLock<Vec<LambdaType>> =
-                        LazyLock::new(|| vec![LambdaType::a().clone()]);
-                    &Q
+                    Box::new([LambdaType::a().clone()].into_iter())
                 }
 
                 MonOp::Tautology | MonOp::Contradiction | MonOp::Not => {
-                    static Q: LazyLock<Vec<LambdaType>> =
-                        LazyLock::new(|| vec![LambdaType::t().clone()]);
-                    &Q
+                    Box::new([LambdaType::t().clone()].into_iter())
                 }
             },
         }

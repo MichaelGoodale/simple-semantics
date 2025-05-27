@@ -2,6 +2,7 @@ use anyhow::{Context, bail};
 use std::{
     collections::{HashSet, VecDeque},
     fmt::Debug,
+    iter::empty,
 };
 
 pub mod types;
@@ -20,8 +21,9 @@ pub trait LambdaLanguageOfThought {
     fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>)
     where
         Self: Sized;
+    fn change_children(&mut self, new_children: &[LambdaExprRef]);
     fn get_type(&self) -> &LambdaType;
-    fn get_arguments(&self) -> &[LambdaType];
+    fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a>;
     fn to_pool(pool: Vec<Self>, root: LambdaExprRef) -> Self::Pool
     where
         Self: Sized;
@@ -34,12 +36,14 @@ impl LambdaLanguageOfThought for () {
     }
     fn remap_refs(&mut self, _: &[usize]) {}
 
+    fn change_children(&mut self, _: &[LambdaExprRef]) {}
+
     fn get_type(&self) -> &LambdaType {
         unimplemented!()
     }
 
-    fn get_arguments(&self) -> &[LambdaType] {
-        &[]
+    fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a> {
+        Box::new(empty())
     }
 
     fn alpha_reduce(_a: &mut LambdaPool<Self>, _b: &mut LambdaPool<Self>) {}
@@ -65,7 +69,46 @@ pub struct RootedLambdaPool<T: LambdaLanguageOfThought> {
     pub(crate) root: LambdaExprRef,
 }
 
+pub struct ExpressionType {
+    pub output: LambdaType,
+    pub arguments: Vec<LambdaType>,
+}
+
 impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
+    fn get_expression_type(&self, i: LambdaExprRef) -> anyhow::Result<ExpressionType> {
+        match self.get(i) {
+            LambdaExpr::Lambda(lambda_expr_ref, lambda_type) => {
+                let arguments = vec![self.pool.get_type(*lambda_expr_ref)?];
+                Ok(ExpressionType {
+                    output: LambdaType::compose(
+                        lambda_type.clone(),
+                        arguments.first().unwrap().clone(),
+                    ),
+                    arguments,
+                })
+            }
+            LambdaExpr::BoundVariable(_, lambda_type)
+            | LambdaExpr::FreeVariable(_, lambda_type) => Ok(ExpressionType {
+                output: lambda_type.clone(),
+                arguments: vec![],
+            }),
+            LambdaExpr::Application {
+                subformula,
+                argument,
+            } => {
+                let subformula_type = self.pool.get_type(*subformula)?;
+                Ok(ExpressionType {
+                    output: subformula_type.rhs()?.clone(),
+                    arguments: vec![subformula_type, self.pool.get_type(*argument)?],
+                })
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(ExpressionType {
+                output: x.get_type().clone(),
+                arguments: x.get_arguments().collect(),
+            }),
+        }
+    }
+
     pub(crate) fn root(&self) -> LambdaExprRef {
         self.root
     }
@@ -372,6 +415,26 @@ where
         }
         Ok(())
     }
+    fn clone_section_return_expr(&mut self, source: LambdaExprRef) -> LambdaExpr<T> {
+        let mut expr = self.get(source).clone();
+        let new_children: Vec<_> = expr
+            .get_children()
+            .map(|child| self.clone_section(child))
+            .collect();
+        expr.change_children(&new_children);
+        expr
+    }
+
+    fn clone_section(&mut self, source: LambdaExprRef) -> LambdaExprRef {
+        let mut expr = self.get(source).clone();
+        let new_children: Vec<_> = expr
+            .get_children()
+            .map(|child| self.clone_section(child))
+            .collect();
+        expr.change_children(&new_children);
+        self.0.push(expr);
+        LambdaExprRef(self.0.len() as u32 - 1)
+    }
 
     fn beta_reduce(&mut self, app: LambdaExprRef) -> anyhow::Result<()> {
         //BFS over all children and then replace debruijn k w/ argument ref where k is the number
@@ -400,26 +463,30 @@ where
 
             (
                 inner_term,
-                self.get(*argument).clone(),
+                *argument,
                 self.bfs_from(inner_term)
-                    .filter(
-                        |(x, n)| matches!(self.get(*x), LambdaExpr::BoundVariable(i, _) if n == i),
-                    )
+                    .filter_map(|(x, n)| {
+                        if let LambdaExpr::BoundVariable(i, _) = self.get(x) {
+                            if *i == n { Some(x) } else { None }
+                        } else {
+                            None
+                        }
+                    })
                     .collect::<Vec<_>>(),
             )
         } else {
             bail!("ExprRef doesn't refer to a lambda")
         };
-        for (x, lambda_depth) in subformula_vars.iter() {
-            let val = self.get_mut(*x);
-            match val {
-                LambdaExpr::BoundVariable(n, _lambda) if *n == *lambda_depth => {
-                    *val = argument.clone()
-                }
-                LambdaExpr::BoundVariable(..) => (),
-                _ => {
-                    panic!("This should never happen because of the previous filter")
-                }
+
+        let n_variables = subformula_vars.len();
+        for (i, x) in subformula_vars.into_iter().enumerate() {
+            if i != n_variables - 1 {
+                //We have more variables to add so we need to copy.
+                let expr = self.clone_section_return_expr(argument);
+                *self.get_mut(x) = expr;
+            } else {
+                //Last iteration so we don't need to copy anymore.
+                *self.get_mut(x) = self.get(argument).clone();
             }
         }
 
@@ -481,6 +548,21 @@ where
 }
 
 impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
+    fn change_children(&mut self, children: &[LambdaExprRef]) {
+        match self {
+            LambdaExpr::Lambda(lambda_expr_ref, _) => *lambda_expr_ref = children[0],
+            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
+            LambdaExpr::Application {
+                subformula,
+                argument,
+            } => {
+                *subformula = children[0];
+                *argument = children[1];
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x) => x.change_children(children),
+        }
+    }
+
     fn remap_refs(&mut self, remap: &[usize]) {
         match self {
             LambdaExpr::Lambda(x, _) => {
@@ -1102,6 +1184,27 @@ mod test {
             )
             .unwrap().to_pool(&mut labels)?;
         a.reduce()?;
+
+        let mut a = p
+            .parse("(lambda <a,t> P (P(a3) & ~P(a1)))(lambda a x (every_e(y,pe4,AgentOf(x,y))))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+
+        a.pool.beta_reduce(a.root)?;
+        a.root = a.pool.cleanup(a.root);
+        println!("{a}");
+        dbg!(&a);
+
+        let mut a = p
+            .parse("(lambda <a,t> P (P(a3) & ~P(a1)))(lambda a x (every_e(y,pe4,AgentOf(x,y))))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+
+        a.reduce()?;
+        assert_eq!(
+            a.to_string(),
+            "(every_e(x,pe4,AgentOf(a3,x)) & ~(every_e(x,pe4,AgentOf(a1,x))))"
+        );
 
         Ok(())
     }
