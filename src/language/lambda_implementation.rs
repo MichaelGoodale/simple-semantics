@@ -205,7 +205,7 @@ pub fn to_var(x: usize) -> String {
 }
 
 impl RootedLambdaPool<Expr> {
-    fn parse(s: &str, labels: &mut LabelledScenarios) -> anyhow::Result<Self> {
+    pub fn parse(s: &str, labels: &mut LabelledScenarios) -> anyhow::Result<Self> {
         lot_parser::<extra::Err<Rich<_>>>()
             .parse(s)
             .into_result()
