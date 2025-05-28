@@ -1,13 +1,18 @@
+use chumsky::prelude::*;
 use std::iter::empty;
 
 use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Quantifier,
-    Variable,
+    Variable, lot_parser,
 };
-use crate::lambda::{
-    Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-    types::LambdaType,
+use crate::{
+    LabelledScenarios,
+    lambda::{
+        Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
+        types::LambdaType,
+    },
 };
+use chumsky::{error::Rich, extra};
 use rand::{Rng, seq::IteratorRandom};
 
 pub mod mutations;
@@ -200,6 +205,21 @@ pub fn to_var(x: usize) -> String {
 }
 
 impl RootedLambdaPool<Expr> {
+    fn parse(s: &str, labels: &mut LabelledScenarios) -> anyhow::Result<Self> {
+        lot_parser::<extra::Err<Rich<_>>>()
+            .parse(s)
+            .into_result()
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    e.into_iter()
+                        .map(|x| x.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })?
+            .to_pool(labels)
+    }
+
     fn string(&self, expr: LambdaExprRef, lambda_depth: usize) -> String {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
