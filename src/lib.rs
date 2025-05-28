@@ -67,6 +67,10 @@ impl Scenario {
     pub fn question(&self) -> Option<&RootedLambdaPool<Expr>> {
         self.question.as_ref()
     }
+
+    fn events(&self) -> impl Iterator<Item = Event> {
+        0..(self.thematic_relations.len() as Event)
+    }
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]

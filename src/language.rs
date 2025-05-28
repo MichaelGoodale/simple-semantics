@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use crate::LabelledScenarios;
+use crate::lambda::RootedLambdaPool;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 use lambda_implementation::to_var;
 
@@ -159,6 +161,10 @@ impl LanguageExpression {
     pub fn run(&self, scenario: &Scenario) -> Result<LanguageResult, LanguageTypeError> {
         let mut variables = VariableBuffer::default();
         self.pool.interp(self.start, scenario, &mut variables)
+    }
+
+    pub fn parse(s: &str, labels: &mut LabelledScenarios) -> anyhow::Result<LanguageExpression> {
+        RootedLambdaPool::parse(s, labels)?.into_pool()
     }
 
     pub fn new(pool: ExprPool, start: ExprRef) -> Self {
@@ -442,15 +448,29 @@ impl ExprPool {
         let mut variables = variables.clone();
         let domain: Vec<Entity> = match self.get_type(restrictor) {
             LanguageResultType::Bool => {
-                //TODO: Check if the quantification is over actors or events somehow!
                 let mut domain = vec![];
-                for e in scenario.actors.iter() {
-                    variables.set(*var, Entity::Actor(*e));
-                    let truth_value_for_e: bool = self
-                        .interp(restrictor, scenario, &mut variables)?
-                        .try_into()?;
-                    if truth_value_for_e {
-                        domain.push(Entity::Actor(*e))
+                match var {
+                    Variable::Actor(_) => {
+                        for e in scenario.actors.iter() {
+                            variables.set(*var, Entity::Actor(*e));
+                            let truth_value_for_e: bool = self
+                                .interp(restrictor, scenario, &mut variables)?
+                                .try_into()?;
+                            if truth_value_for_e {
+                                domain.push(Entity::Actor(*e))
+                            }
+                        }
+                    }
+                    Variable::Event(_) => {
+                        for e in scenario.events() {
+                            variables.set(*var, Entity::Event(e));
+                            let truth_value_for_e: bool = self
+                                .interp(restrictor, scenario, &mut variables)?
+                                .try_into()?;
+                            if truth_value_for_e {
+                                domain.push(Entity::Event(e))
+                            }
+                        }
                     }
                 }
                 domain
@@ -1089,6 +1109,26 @@ mod tests {
         expr.run(&b)?;
         println!("B works!");
         expr.run(&a)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn weird_and_not_behaviour() -> anyhow::Result<()> {
+        let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
+
+        let mut labels = LabelledScenarios::parse(scenario)?;
+
+        let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))", &mut labels)?;
+        let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))", &mut labels)?;
+        let c = LanguageExpression::parse(
+            "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))",
+            &mut labels,
+        )?;
+        let scenario = labels.iter_scenarios().next().unwrap();
+        assert_eq!(a.run(scenario)?, LanguageResult::Bool(true));
+        assert_eq!(b.run(scenario)?, LanguageResult::Bool(false));
+        assert_eq!(c.run(scenario)?, LanguageResult::Bool(true));
 
         Ok(())
     }
