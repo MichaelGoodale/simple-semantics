@@ -9,7 +9,7 @@ use chumsky::{
 };
 use rand::{Rng, seq::IteratorRandom};
 
-#[derive(Debug, Clone, Eq, PartialEq, Default)]
+#[derive(Debug, Clone, Eq, PartialEq, Default, Hash)]
 pub enum InnerLambdaType {
     #[default]
     A,
@@ -18,7 +18,7 @@ pub enum InnerLambdaType {
     Composition(Box<LambdaType>, Box<LambdaType>),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Default)]
+#[derive(Debug, Clone, Eq, PartialEq, Default, Hash)]
 pub struct LambdaType(InnerLambdaType);
 
 /*
