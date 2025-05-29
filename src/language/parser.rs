@@ -425,7 +425,7 @@ where
 
     let true_or_false = bool_literal();
     let possible_sets = sets();
-    let truth_value = recursive(|expr| {
+    recursive(|expr| {
         let atom = true_or_false
             .or(binary_operation(expr.clone(), expr.clone()))
             .or(properties())
@@ -499,8 +499,7 @@ where
             possible_sets,
             entity_or_variable,
         ))
-    });
-    truth_value
+    })
 }
 
 type ExtraType<'a> = extra::Full<Rich<'a, char>, extra::SimpleState<LabelledScenarios>, ()>;

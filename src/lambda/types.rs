@@ -7,7 +7,7 @@ use chumsky::{
     prelude::*,
     text::{TextExpected, inline_whitespace},
 };
-use rand::Rng;
+use rand::{Rng, seq::IteratorRandom};
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub enum InnerLambdaType {
@@ -158,30 +158,35 @@ impl Display for LambdaType {
     }
 }
 
+const RECURSE_PROB: f64 = 0.2;
+const MAX_DEPTH: u8 = 64;
+
 impl LambdaType {
-    pub fn random(r: &mut impl Rng) -> Self {
-        let p: f64 = r.random();
-        if p < 0.25 {
-            LambdaType::e().clone()
-        } else if p < 0.55 {
-            LambdaType::a().clone()
-        } else if p < 0.8 {
-            LambdaType::t().clone()
+    fn random_inner(r: &mut impl Rng, depth: u8, no_e: bool) -> Self {
+        if depth < MAX_DEPTH && r.random_bool(RECURSE_PROB) {
+            LambdaType::compose(
+                LambdaType::random_inner(r, depth + 1, false),
+                LambdaType::random_inner(r, depth + 1, no_e),
+            )
+        } else if no_e {
+            if r.random_bool(0.5) {
+                LambdaType::t().clone()
+            } else {
+                LambdaType::a().clone()
+            }
         } else {
-            LambdaType::compose(LambdaType::random(r), LambdaType::random(r))
+            let i = (0..3).choose(r).unwrap();
+            [LambdaType::t(), LambdaType::a(), LambdaType::e()][i].clone()
         }
+    }
+
+    pub fn random(r: &mut impl Rng) -> Self {
+        LambdaType::random_inner(r, 0, false)
     }
 
     ///Returns a random type, except for ``LambdaType::E``
     pub fn random_no_e(r: &mut impl Rng) -> Self {
-        let p: f64 = r.random();
-        if p < 0.4 {
-            LambdaType::a().clone()
-        } else if p < 0.8 {
-            LambdaType::t().clone()
-        } else {
-            LambdaType::compose(LambdaType::random(r), LambdaType::random_no_e(r))
-        }
+        LambdaType::random_inner(r, 0, true)
     }
 }
 
@@ -195,7 +200,7 @@ mod test {
     #[test]
     fn random_lambdas() -> anyhow::Result<()> {
         let mut r = ChaCha8Rng::seed_from_u64(32);
-        for _ in 0..100 {
+        for _ in 0..10_000 {
             let t = LambdaType::random(&mut r);
             println!("{t}");
         }

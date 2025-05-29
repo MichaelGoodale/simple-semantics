@@ -144,7 +144,7 @@ impl RootedLambdaPool<Expr> {
     ) {
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
 
-        let context = self
+        let _context = self
             .get_context_for_expr(
                 position,
                 available_actors,
@@ -152,7 +152,8 @@ impl RootedLambdaPool<Expr> {
                 available_event_properties,
             )
             .unwrap_or_else(|| panic!("Couldn't find {}th expr!", position.0));
-        let x = self.get_mut(position);
+        let _x = self.get_mut(position);
+        todo!();
     }
 }
 
