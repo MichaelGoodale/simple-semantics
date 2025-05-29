@@ -501,6 +501,10 @@ impl ExprPool {
             }
         };
 
+        if domain.is_empty() {
+            return Err(LanguageTypeError::PresuppositionError);
+        }
+
         let mut result = match quantifier {
             Quantifier::Universal => true,
             Quantifier::Existential => false,
@@ -1106,8 +1110,7 @@ mod tests {
             }],
             properties: vec![(0, vec![Entity::Event(0)])].into_iter().collect(),
         };
-        expr.run(&b)?;
-        println!("B works!");
+        assert_eq!(expr.run(&b), Err(LanguageTypeError::PresuppositionError));
         expr.run(&a)?;
 
         Ok(())
