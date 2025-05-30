@@ -373,10 +373,11 @@ impl<'typ> PossibleExpressions<'typ> {
             .unwrap_or_default();
 
         if arguments.len() == 1 {
-            possibilities.push(Cow::Owned(UnbuiltExpr::Lambda(
-                arguments.first().unwrap(),
-                lambda_type,
-            )));
+            if let Ok((lhs, rhs)) = lambda_type.split() {
+                if rhs == arguments.first().unwrap() {
+                    possibilities.push(Cow::Owned(UnbuiltExpr::Lambda(lhs, rhs)));
+                }
+            }
         } else if arguments.is_empty() {
             possibilities.extend(context.lambda_variables(lambda_type).map(Cow::Owned));
             if lambda_type == LambdaType::a() {
@@ -575,7 +576,7 @@ fn add_expr<'props, 'pool>(
         .collect()
 }
 
-//We never do applications since they would be redundant.
+//Need to add applications
 #[derive(Debug, Clone)]
 enum UnbuiltExpr<'t> {
     Quantifier(Quantifier, ActorOrEvent),
@@ -783,7 +784,7 @@ mod test {
     }
 
     #[test]
-    fn randomness() -> anyhow::Result<()> {
+    fn randomn_swap() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let actors = [0, 1];
         let available_actor_properties = [0, 1, 2];
