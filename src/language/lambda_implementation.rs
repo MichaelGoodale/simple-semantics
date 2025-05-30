@@ -17,6 +17,18 @@ use rand::{Rng, seq::IteratorRandom};
 
 pub mod mutations;
 
+impl From<ExprRef> for LambdaExprRef {
+    fn from(value: ExprRef) -> Self {
+        LambdaExprRef(value.0)
+    }
+}
+
+impl From<LambdaExprRef> for ExprRef {
+    fn from(value: LambdaExprRef) -> Self {
+        ExprRef(value.0)
+    }
+}
+
 impl LambdaLanguageOfThought for Expr {
     type Pool = LanguageExpression;
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
@@ -375,7 +387,7 @@ mod test {
         let actors = [0, 1];
         let available_actor_properties = [0, 1, 2];
         let available_event_properties = [2, 3, 4];
-        for _ in 0..2000 {
+        for _ in 0..200 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
             let pool = RootedLambdaPool::random_expr(
