@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::ChumskyParsingError;
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum TypeError {
     #[error("Cannot split a primitive type")]
     NotAFunction,

@@ -164,7 +164,7 @@ impl LanguageExpression {
     }
 
     pub fn parse(s: &str, labels: &mut LabelledScenarios) -> anyhow::Result<LanguageExpression> {
-        RootedLambdaPool::parse(s, labels)?.into_pool()
+        Ok(RootedLambdaPool::parse(s, labels)?.into_pool()?)
     }
 
     pub fn new(pool: ExprPool, start: ExprRef) -> Self {
@@ -642,6 +642,7 @@ impl ExprPool {
 }
 
 mod parser;
+pub use parser::LambdaParseError;
 pub use parser::UnprocessedParseTree;
 pub use parser::lot_parser;
 pub use parser::parse_executable;

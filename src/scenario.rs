@@ -2,7 +2,7 @@ use ahash::{HashSet, RandomState};
 use chumsky::{prelude::*, text::inline_whitespace};
 use std::collections::{BTreeMap, HashMap};
 
-use crate::language::lot_parser;
+use crate::language::{LambdaParseError, lot_parser};
 use crate::{
     Actor, Entity, Event, LabelledScenarios, PropertyLabel, Scenario, ThetaRoles, lambda::Fvar,
 };
@@ -17,7 +17,9 @@ struct StringEvents<'a> {
     event_props: ahash::HashMap<&'a str, Vec<Entity>>,
 }
 
-pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, anyhow::Result<LabelledScenarios>> {
+pub fn scenario_parser<'a>()
+-> impl Parser<'a, &'a str, Result<LabelledScenarios, LambdaParseError>, extra::Err<Rich<'a, char>>>
+{
     let string = none_of("\"")
         .repeated()
         .to_slice()
@@ -184,7 +186,7 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, anyhow::Result<Labelled
                         Err(e) => Err(e),
                     })
                 })
-                .collect::<anyhow::Result<Vec<_>>>();
+                .collect::<Result<Vec<_>, LambdaParseError>>();
 
             match lot_vec {
                 Ok(lot_vec) => {

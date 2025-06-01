@@ -1,4 +1,3 @@
-use anyhow::{Context, bail};
 use std::{
     collections::{HashSet, VecDeque},
     fmt::Debug,
@@ -7,10 +6,56 @@ use std::{
 use thiserror::Error;
 
 pub mod types;
-use types::LambdaType;
+use types::{LambdaType, TypeError};
 
 pub type Bvar = usize;
 pub type Fvar = usize;
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum LambdaError {
+    #[error("The free variable has type {free_var} while the argument is {arg}")]
+    BadFreeVariableApp {
+        free_var: LambdaType,
+        arg: LambdaType,
+    },
+    #[error("The free variable has type {free_var} while its lambda takes {lambda}")]
+    BadFreeVariable {
+        free_var: LambdaType,
+        lambda: LambdaType,
+    },
+    #[error(
+        "A bound variable {var:?} cannot have a DeBruijn index higher than its lambda depth ({depth})"
+    )]
+    BadBoundVariable { var: LambdaExprRef, depth: usize },
+
+    #[error("Expression has type error ({0})")]
+    TypeError(#[from] TypeError),
+
+    #[error("Failed reduction: {0}")]
+    ReductionError(#[from] ReductionError),
+}
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum LambdaConversionError {
+    #[error("There are still lambda terms in this pool")]
+    StillHasLambdaTerms,
+}
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum ReductionError {
+    #[error("{0:?} is not a valid ref!")]
+    NotValidRef(LambdaExprRef),
+    #[error("{0:?} is not an application!")]
+    NotApplication(LambdaExprRef),
+    #[error("The left hand side of the application ({app:?}), {lhs:?} is not a lambda expression!")]
+    NotLambdaInApplication {
+        app: LambdaExprRef,
+        lhs: LambdaExprRef,
+    },
+
+    #[error("Incorrect types: {0}")]
+    TypeError(#[from] TypeError),
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct LambdaExprRef(pub u32);
@@ -85,7 +130,10 @@ impl ExpressionType {
 }
 
 impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
-    pub(crate) fn get_expression_type(&self, i: LambdaExprRef) -> anyhow::Result<ExpressionType> {
+    pub(crate) fn get_expression_type(
+        &self,
+        i: LambdaExprRef,
+    ) -> Result<ExpressionType, TypeError> {
         match self.get(i) {
             LambdaExpr::Lambda(lambda_expr_ref, lambda_type) => {
                 let arguments = vec![self.pool.get_type(*lambda_expr_ref)?];
@@ -136,7 +184,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         self.pool.get_mut(x)
     }
 
-    pub fn get_type(&self) -> anyhow::Result<LambdaType> {
+    pub fn get_type(&self) -> Result<LambdaType, TypeError> {
         self.pool.get_type(self.root)
     }
 
@@ -185,13 +233,13 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         Some(self)
     }
 
-    pub fn reduce(&mut self) -> anyhow::Result<()> {
+    pub fn reduce(&mut self) -> Result<(), ReductionError> {
         let root = self.pool.reduce(self.root)?;
         self.root = root;
         Ok(())
     }
 
-    pub fn into_pool(self) -> anyhow::Result<T::Pool> {
+    pub fn into_pool(self) -> Result<T::Pool, LambdaConversionError> {
         self.pool.into_pool(self.root)
     }
 
@@ -199,7 +247,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         &mut self,
         fvar: Fvar,
         replacement: RootedLambdaPool<T>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), LambdaError> {
         let (other_pool, other_root) = replacement.into();
         let other_root = self.pool.extend_pool(other_root, other_pool);
         self.pool.bind_free_variable(self.root, fvar, other_root)?;
@@ -212,7 +260,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         fvar: Fvar,
         lambda_type: LambdaType,
         always_abstract: bool,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), LambdaError> {
         self.reduce()?;
         let vars = self
             .pool
@@ -220,16 +268,17 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
             .filter_map(|(x, d)| match self.pool.get(x) {
                 LambdaExpr::FreeVariable(var, var_type) if *var == fvar => {
                     if &lambda_type != var_type {
-                        Some(anyhow::Result::Err(anyhow::anyhow!(
-                            "Invalid type substitution"
-                        )))
+                        Some(Err(LambdaError::BadFreeVariable {
+                            free_var: var_type.clone(),
+                            lambda: lambda_type.clone(),
+                        }))
                     } else {
                         Some(Ok((x, d)))
                     }
                 }
                 _ => None,
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, LambdaError>>()?;
 
         if !vars.is_empty() || always_abstract {
             for (x, lambda_depth) in vars.into_iter() {
@@ -241,7 +290,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         Ok(())
     }
 
-    pub fn apply_new_free_variable(&mut self, fvar: Fvar) -> anyhow::Result<LambdaType> {
+    pub fn apply_new_free_variable(&mut self, fvar: Fvar) -> Result<LambdaType, LambdaError> {
         let pool_type = self.pool.get_type(self.root)?;
         let var_type = pool_type.lhs()?;
         let argument = self
@@ -273,15 +322,15 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
         other_root
     }
 
-    pub fn into_pool(self, root: LambdaExprRef) -> anyhow::Result<T::Pool> {
+    pub fn into_pool(self, root: LambdaExprRef) -> Result<T::Pool, LambdaConversionError> {
         let processed_pool = self
             .0
             .into_iter()
             .map(|x| match x {
                 LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x),
-                _ => bail!("Cannot turn into LOT expression, there are still lambda terms!"),
+                _ => Err(LambdaConversionError::StillHasLambdaTerms),
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, LambdaConversionError>>()?;
         Ok(T::to_pool(processed_pool, root))
     }
 
@@ -374,9 +423,7 @@ where
         }
     }
 
-    ///This function trusts that the subexpressions are all valid! For example if a lambda's body
-    ///has the wrong type, it won't know.
-    fn check_type_clash(&self, x: LambdaExprRef) -> anyhow::Result<LambdaType> {
+    fn check_type_clash(&self, x: LambdaExprRef) -> Result<LambdaType, ReductionError> {
         if let LambdaExpr::Application {
             subformula,
             argument,
@@ -386,11 +433,11 @@ where
             let subformula_type = self.get_type(*subformula)?;
             Ok(subformula_type.apply(&argument_type)?.clone())
         } else {
-            bail!("Can't apply when its not an application!")
+            Err(ReductionError::NotApplication(x))
         }
     }
 
-    pub fn get_type(&self, x: LambdaExprRef) -> anyhow::Result<LambdaType> {
+    pub fn get_type(&self, x: LambdaExprRef) -> Result<LambdaType, TypeError> {
         match self.get(x) {
             LambdaExpr::BoundVariable(_, x) | LambdaExpr::FreeVariable(_, x) => Ok(x.clone()),
             LambdaExpr::Lambda(s, x) => {
@@ -410,21 +457,32 @@ where
         root: LambdaExprRef,
         fvar: Fvar,
         replacement_root: LambdaExprRef,
-    ) -> anyhow::Result<()> {
-        //TODO: Add type checking here maybe.
+    ) -> Result<(), LambdaError> {
+        let arg_t = self.get_type(replacement_root)?;
+
         let to_change = self
             .bfs_from(root)
             .filter_map(|(x, _)| match self.get(x) {
-                LambdaExpr::FreeVariable(var, _t) if *var == fvar => Some(x),
+                LambdaExpr::FreeVariable(var, t) if *var == fvar => {
+                    if t == &arg_t {
+                        Some(Ok(x))
+                    } else {
+                        Some(Err(LambdaError::BadFreeVariableApp {
+                            free_var: t.clone(),
+                            arg: arg_t.clone(),
+                        }))
+                    }
+                }
                 _ => None,
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, LambdaError>>()?;
         let new_argument = self.get(replacement_root).clone();
         for x in to_change {
             self.0[x.0 as usize] = new_argument.clone();
         }
         Ok(())
     }
+
     fn clone_section_return_expr(&mut self, source: LambdaExprRef) -> LambdaExpr<T> {
         let mut expr = self.get(source).clone();
         let new_children: Vec<_> = expr
@@ -446,14 +504,16 @@ where
         LambdaExprRef(self.0.len() as u32 - 1)
     }
 
-    fn beta_reduce(&mut self, app: LambdaExprRef) -> anyhow::Result<()> {
+    fn beta_reduce(&mut self, app: LambdaExprRef) -> Result<(), ReductionError> {
         //BFS over all children and then replace debruijn k w/ argument ref where k is the number
         //of lambda abstractions we've gone under, e.g. (lambda 0 lambda 0 1)(u) -> lambda u lambda
         //1
         //
         //swap position of lambda ref and subformula ref so the lambda now leads to this.
         //
-        let expr = self.checked_get(app).context("ExprRef goes nowhere!")?;
+        let Some(expr) = self.checked_get(app) else {
+            return Err(ReductionError::NotValidRef(app));
+        };
 
         let (inner_term, argument, subformula_vars) = if let LambdaExpr::Application {
             argument,
@@ -466,9 +526,12 @@ where
 
                     *x
                 }
-                _ => bail!(
-                    "You can only beta reduce if the left hand side of the application is a lambda!"
-                ),
+                _ => {
+                    return Err(ReductionError::NotLambdaInApplication {
+                        app,
+                        lhs: *subformula,
+                    });
+                }
             };
 
             (
@@ -485,7 +548,7 @@ where
                     .collect::<Vec<_>>(),
             )
         } else {
-            bail!("ExprRef doesn't refer to a lambda")
+            return Err(ReductionError::NotApplication(app));
         };
 
         let n_variables = subformula_vars.len();
@@ -546,7 +609,7 @@ where
             })
     }
 
-    pub fn reduce(&mut self, root: LambdaExprRef) -> anyhow::Result<LambdaExprRef> {
+    pub fn reduce(&mut self, root: LambdaExprRef) -> Result<LambdaExprRef, ReductionError> {
         if let Some(x) = self.get_next_app(root) {
             self.beta_reduce(x)?;
             let new_root = self.cleanup(root);
@@ -625,7 +688,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         &self,
         i: LambdaExprRef,
         mut previous_lambdas: Vec<bool>,
-    ) -> anyhow::Result<(bool, Vec<bool>)> {
+    ) -> Result<(bool, Vec<bool>), LambdaError> {
         let expr = self.get(i);
 
         match expr {
@@ -635,9 +698,10 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
             LambdaExpr::BoundVariable(lambda, _) => {
                 let n_lambdas = previous_lambdas.len();
                 if *lambda >= previous_lambdas.len() {
-                    bail!(
-                        "BoundVariable with DeBruijn of {lambda} is too high for a lambda depth of {n_lambdas}"
-                    );
+                    return Err(LambdaError::BadBoundVariable {
+                        var: i,
+                        depth: previous_lambdas.len(),
+                    });
                 }
                 *previous_lambdas.get_mut(n_lambdas - 1 - lambda).unwrap() = true;
             }
@@ -924,8 +988,11 @@ mod test {
             LambdaExpr::FreeVariable(0, LambdaType::t().clone()),
         ]);
         assert_eq!(
-            pool.reduce(LambdaExprRef(0)).unwrap_err().to_string(),
-            "Cannot apply t to <a,t>!"
+            pool.reduce(LambdaExprRef(0)).unwrap_err(),
+            ReductionError::TypeError(TypeError::CantApply(
+                LambdaType::t().clone(),
+                LambdaType::at().clone()
+            ))
         );
 
         let mut pool = LambdaPool::<()>(vec![

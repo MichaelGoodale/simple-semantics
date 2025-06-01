@@ -3,12 +3,12 @@ use std::{collections::HashMap, fmt::Debug};
 use crate::{
     Entity, LabelledScenarios,
     lambda::{
-        Bvar, LambdaExpr, LambdaExprRef, LambdaPool, RootedLambdaPool,
+        Bvar, LambdaConversionError, LambdaExpr, LambdaExprRef, LambdaPool, ReductionError,
+        RootedLambdaPool,
         types::{LambdaType, core_type_parser},
     },
     language::{Constant, Expr, ExprRef, MonOp},
 };
-use anyhow::Context;
 use chumsky::prelude::*;
 use chumsky::{
     extra::ParserExtra,
@@ -18,6 +18,34 @@ use chumsky::{
 };
 
 use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier, Variable};
+use thiserror::Error;
+
+#[derive(Debug, Error, Clone)]
+pub enum LambdaParseError {
+    #[error("ParseError({0})")]
+    ParseError(String),
+
+    #[error("You must provide a type for unbound free variable {0} like so \"{0}#<e,t>\"")]
+    UnTypedFreeVariable(String),
+
+    #[error("Reduction Error: {0}")]
+    ReductionError(#[from] ReductionError),
+
+    #[error("{0}")]
+    ConversionError(#[from] LambdaConversionError),
+}
+
+impl<'a> From<Vec<Rich<'a, char>>> for LambdaParseError {
+    fn from(value: Vec<Rich<'a, char>>) -> Self {
+        LambdaParseError::ParseError(
+            value
+                .into_iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+}
 
 const RESERVED_KEYWORDS: [&str; 11] = [
     "lambda",
@@ -40,7 +68,7 @@ impl<'src> ParseTree<'src> {
         labels: &mut LabelledScenarios,
         variable_names: &mut VariableContext<'src>,
         lambda_depth: usize,
-    ) -> anyhow::Result<LambdaExprRef> {
+    ) -> Result<LambdaExprRef, LambdaParseError> {
         let expr = match &self {
             ParseTree::Constant(c) => LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(match c {
                 LabeledConstant::Constant(x) => *x,
@@ -127,7 +155,10 @@ impl<'src> ParseTree<'src> {
         Ok(pool.add(expr))
     }
 
-    fn to_pool(&self, labels: &mut LabelledScenarios) -> anyhow::Result<RootedLambdaPool<Expr>> {
+    fn to_pool(
+        &self,
+        labels: &mut LabelledScenarios,
+    ) -> Result<RootedLambdaPool<Expr>, LambdaParseError> {
         let mut pool = LambdaPool::new();
 
         let mut var_labels = VariableContext::default();
@@ -151,7 +182,7 @@ impl<'src> VariableContext<'src> {
         labels: &mut LabelledScenarios,
         lambda_type: Option<LambdaType>,
         lambda_depth: usize,
-    ) -> anyhow::Result<LambdaExpr<Expr>> {
+    ) -> Result<LambdaExpr<Expr>, LambdaParseError> {
         Ok(match self.0.get(variable) {
             Some(vars) => match vars
                 .last()
@@ -166,7 +197,12 @@ impl<'src> VariableContext<'src> {
             },
             None => LambdaExpr::FreeVariable(
                 labels.get_free_variable(variable),
-                lambda_type.context(format!("You must provide a type for unbound free variable {variable} like so \"{variable}#<e,t>\""))?,
+                match lambda_type {
+                    Some(x) => x,
+                    None => {
+                        return Err(LambdaParseError::UnTypedFreeVariable(variable.to_string()));
+                    }
+                },
             ),
         })
     }
@@ -510,7 +546,7 @@ impl UnprocessedParseTree<'_> {
     pub fn to_pool(
         &self,
         labels: &mut LabelledScenarios,
-    ) -> anyhow::Result<RootedLambdaPool<Expr>> {
+    ) -> Result<RootedLambdaPool<Expr>, LambdaParseError> {
         self.0.to_pool(labels)
     }
 }
@@ -530,22 +566,14 @@ where
 pub fn parse_executable(
     s: &str,
     labels: &mut LabelledScenarios,
-) -> anyhow::Result<LanguageExpression> {
+) -> Result<LanguageExpression, LambdaParseError> {
     let mut pool = language_parser::<extra::Err<Rich<char>>>()
         .then_ignore(end())
         .parse(s)
-        .into_result()
-        .map_err(|x| {
-            anyhow::Error::msg(
-                x.into_iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )
-        })?
+        .into_result()?
         .to_pool(labels)?;
     pool.reduce()?;
-    pool.into_pool()
+    Ok(pool.into_pool()?)
 }
 
 #[cfg(test)]

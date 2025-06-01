@@ -2,8 +2,8 @@ use chumsky::prelude::*;
 use std::iter::empty;
 
 use super::{
-    ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LanguageExpression, MonOp, Quantifier,
-    Variable, lot_parser,
+    ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LambdaParseError, LanguageExpression,
+    MonOp, Quantifier, Variable, lot_parser,
 };
 use crate::{
     LabelledScenarios,
@@ -217,18 +217,10 @@ pub fn to_var(x: usize) -> String {
 }
 
 impl RootedLambdaPool<Expr> {
-    pub fn parse(s: &str, labels: &mut LabelledScenarios) -> anyhow::Result<Self> {
+    pub fn parse(s: &str, labels: &mut LabelledScenarios) -> Result<Self, LambdaParseError> {
         lot_parser::<extra::Err<Rich<_>>>()
             .parse(s)
-            .into_result()
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    e.into_iter()
-                        .map(|x| x.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            })?
+            .into_result()?
             .to_pool(labels)
     }
 

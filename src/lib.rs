@@ -2,7 +2,7 @@
 use ahash::{HashSet, RandomState};
 use chumsky::prelude::*;
 use lambda::{Fvar, RootedLambdaPool};
-use language::Expr;
+use language::{Expr, LambdaParseError};
 use std::{collections::HashMap, fmt::Display, path::Path};
 
 use thiserror::Error;
@@ -141,31 +141,17 @@ impl LabelledScenarios {
         &self.lemmas
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, LambdaParseError> {
         let file_data = std::fs::read_to_string(path).unwrap();
         let parser = scenario::scenario_parser();
         let parse = parser.parse(&file_data).into_result();
-        parse.map_err(|x| {
-            anyhow::Error::msg(
-                x.into_iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )
-        })?
+        parse?
     }
 
-    pub fn parse(s: &str) -> anyhow::Result<Self> {
+    pub fn parse(s: &str) -> Result<Self, LambdaParseError> {
         let parser = scenario::scenario_parser();
         let parse = parser.parse(s).into_result();
-        parse.map_err(|x| {
-            anyhow::Error::msg(
-                x.into_iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )
-        })?
+        parse?
     }
 }
 
