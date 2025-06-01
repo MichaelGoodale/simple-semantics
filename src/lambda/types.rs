@@ -1,6 +1,5 @@
 use std::{fmt::Display, sync::LazyLock};
 
-use anyhow::bail;
 use chumsky::{
     extra::ParserExtra,
     label::LabelError,
@@ -8,6 +7,18 @@ use chumsky::{
     text::{TextExpected, inline_whitespace},
 };
 use rand::{Rng, seq::IteratorRandom};
+
+use thiserror::Error;
+
+use crate::ChumskyParsingError;
+
+#[derive(Debug, Clone, Error)]
+pub enum TypeError {
+    #[error("Cannot split a primitive type")]
+    NotAFunction,
+    #[error("Cannot apply {0} to {1}!")]
+    CantApply(LambdaType, LambdaType),
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Default, Hash)]
 pub enum InnerLambdaType {
@@ -46,20 +57,13 @@ where
     })
 }
 
-fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType> + Clone {
+fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType, extra::Err<Rich<'a, char>>> + Clone {
     core_type_parser().padded().then_ignore(end())
 }
 
 impl LambdaType {
-    pub fn from_string(s: &str) -> anyhow::Result<Self> {
-        type_parser().parse(s).into_result().map_err(|x| {
-            anyhow::anyhow!(
-                x.into_iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        })
+    pub fn from_string<'a>(s: &'a str) -> Result<Self, ChumskyParsingError<'a>> {
+        type_parser().parse(s).into_result().map_err(|x| x.into())
     }
 
     pub fn a() -> &'static Self {
@@ -114,16 +118,16 @@ impl LambdaType {
         matches!(&self.0, InnerLambdaType::Composition(a, _) if a.as_ref() == other)
     }
 
-    pub fn split(&self) -> anyhow::Result<(&LambdaType, &LambdaType)> {
+    pub fn split(&self) -> Result<(&LambdaType, &LambdaType), TypeError> {
         match &self.0 {
             InnerLambdaType::Composition(a, b) => Ok((a, b)),
-            _ => bail!("Can't split a primitive!"),
+            _ => Err(TypeError::NotAFunction),
         }
     }
 
-    pub fn apply(&self, other: &Self) -> anyhow::Result<&Self> {
+    pub fn apply(&self, other: &Self) -> Result<&Self, TypeError> {
         if !self.can_apply(other) {
-            bail!("Cannot apply {other} to {self}!")
+            return Err(TypeError::CantApply(other.clone(), self.clone()));
         }
         self.rhs()
     }
@@ -132,18 +136,12 @@ impl LambdaType {
         matches!(&self.0, InnerLambdaType::Composition(_, _))
     }
 
-    pub fn lhs(&self) -> anyhow::Result<&Self> {
-        match &self.0 {
-            InnerLambdaType::Composition(a, _) => Ok(a),
-            _ => bail!("Can't split a primitive!"),
-        }
+    pub fn lhs(&self) -> Result<&Self, TypeError> {
+        Ok(self.split()?.0)
     }
 
-    pub fn rhs(&self) -> anyhow::Result<&Self> {
-        match &self.0 {
-            InnerLambdaType::Composition(_a, b) => Ok(b.as_ref()),
-            _ => bail!("Can't split a primitive!"),
-        }
+    pub fn rhs(&self) -> Result<&Self, TypeError> {
+        Ok(self.split()?.1)
     }
 }
 

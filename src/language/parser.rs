@@ -739,7 +739,10 @@ mod tests {
             .to_pool(&mut labels)?
             .into();
 
-        assert_eq!(pool.get_type(root)?, LambdaType::from_string(lambda_type)?);
+        assert_eq!(
+            pool.get_type(root)?,
+            LambdaType::from_string(lambda_type).map_err(|e| anyhow::anyhow!(e.to_string()))?
+        );
         assert_eq!(pool, gold_pool);
         assert_eq!(root, LambdaExprRef(gold_root));
 

@@ -4,6 +4,7 @@ use std::{
     fmt::Debug,
     iter::empty,
 };
+use thiserror::Error;
 
 pub mod types;
 use types::LambdaType;
