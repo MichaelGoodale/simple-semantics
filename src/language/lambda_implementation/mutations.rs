@@ -514,6 +514,7 @@ fn add_expr<'props, 'pool>(
             children.extend_from_slice(&[
                 (
                     cur_size + 1,
+                    //TODO: Add ability to sample arbitrary restrictors (e.g. add type t)
                     match actor_or_event {
                         ActorOrEvent::Actor => LambdaType::at(),
                         ActorOrEvent::Event => LambdaType::et(),

@@ -482,8 +482,10 @@ where
                 _ => None,
             })
             .collect::<Result<Vec<_>, LambdaError>>()?;
+
         let new_argument = self.get(replacement_root).clone();
         for x in to_change {
+            //TODO: Use better copying to avoid glitches (and test too)
             self.0[x.0 as usize] = new_argument.clone();
         }
         Ok(())

@@ -68,6 +68,10 @@ impl Scenario {
         self.question.as_ref()
     }
 
+    pub fn question_mut(&mut self) -> Option<&mut RootedLambdaPool<Expr>> {
+        self.question.as_mut()
+    }
+
     fn events(&self) -> impl Iterator<Item = Event> {
         0..(self.thematic_relations.len() as Event)
     }
@@ -104,8 +108,16 @@ impl LabelledScenarios {
         }
     }
 
+    pub fn iter_scenarios_mut(&mut self) -> impl Iterator<Item = &mut Scenario> {
+        self.scenarios.iter_mut()
+    }
+
     pub fn iter_scenarios(&self) -> impl Iterator<Item = &Scenario> {
         self.scenarios.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut Scenario, &mut Vec<String>)> {
+        self.scenarios.iter_mut().zip(self.sentences.iter_mut())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&Scenario, &Vec<String>)> {
