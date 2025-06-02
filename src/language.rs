@@ -163,7 +163,10 @@ impl LanguageExpression {
         self.pool.interp(self.start, scenario, &mut variables)
     }
 
-    pub fn parse(s: &str, labels: &mut LabelledScenarios) -> anyhow::Result<LanguageExpression> {
+    pub fn parse(
+        s: &str,
+        labels: &mut LabelledScenarios,
+    ) -> Result<LanguageExpression, LambdaParseError> {
         Ok(RootedLambdaPool::parse(s, labels)?.into_pool()?)
     }
 

@@ -10,7 +10,26 @@ use rand::{Rng, seq::IteratorRandom};
 
 use thiserror::Error;
 
-use crate::ChumskyParsingError;
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub struct TypeParsingError(String);
+
+impl From<Vec<Rich<'_, char>>> for TypeParsingError {
+    fn from(value: Vec<Rich<'_, char>>) -> Self {
+        TypeParsingError(
+            value
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+}
+
+impl<'a> Display for TypeParsingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum TypeError {
@@ -62,7 +81,7 @@ fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType, extra::Err<Rich<'a,
 }
 
 impl LambdaType {
-    pub fn from_string<'a>(s: &'a str) -> Result<Self, ChumskyParsingError<'a>> {
+    pub fn from_string(s: &str) -> Result<Self, TypeParsingError> {
         type_parser().parse(s).into_result().map_err(|x| x.into())
     }
 

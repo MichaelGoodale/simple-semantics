@@ -5,31 +5,6 @@ use lambda::{Fvar, RootedLambdaPool};
 use language::{Expr, LambdaParseError};
 use std::{collections::HashMap, fmt::Display, path::Path};
 
-use thiserror::Error;
-
-#[derive(Error, Debug, Clone)]
-pub struct ChumskyParsingError<'a>(pub Vec<Rich<'a, char>>);
-
-impl<'a> From<Vec<Rich<'a, char>>> for ChumskyParsingError<'a> {
-    fn from(value: Vec<Rich<'a, char>>) -> Self {
-        ChumskyParsingError(value)
-    }
-}
-
-impl<'a> Display for ChumskyParsingError<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
-            f,
-            "{}",
-            self.0
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    }
-}
-
 pub type Actor = u16;
 pub type Event = u8;
 

@@ -5,12 +5,17 @@ use std::{
 };
 
 use ahash::HashMap;
-use anyhow::bail;
 use rand::seq::IndexedRandom;
-
-use crate::{Actor, Event, PropertyLabel, lambda::ExpressionType};
+use thiserror::Error;
 
 use super::*;
+use crate::{Actor, Event, PropertyLabel, lambda::ExpressionType};
+
+#[derive(Debug, Error, Clone, Copy)]
+pub enum MutationError {
+    #[error("You cannot make an expression that returns 'e'")]
+    InvalidType,
+}
 
 impl RootedLambdaPool<Expr> {
     fn get_context_for_expr<'a: 'pool, 'pool, 'props: 'pool>(
@@ -79,9 +84,9 @@ impl RootedLambdaPool<Expr> {
         available_event_properties: &[PropertyLabel],
         config: Option<&RandomExprConfig>,
         rng: &mut impl Rng,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, MutationError> {
         if lambda_type == LambdaType::e() {
-            bail!("There is no way to make a function with type E")
+            return Err(MutationError::InvalidType);
         }
         let pool = vec![None];
 

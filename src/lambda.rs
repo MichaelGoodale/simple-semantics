@@ -36,6 +36,12 @@ pub enum LambdaError {
 }
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum LambdaTryFromError {
+    #[error("The vec contains None")]
+    HasNone,
+}
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaConversionError {
     #[error("There are still lambda terms in this pool")]
     StillHasLambdaTerms,
@@ -744,12 +750,12 @@ impl<T: LambdaLanguageOfThought> From<LambdaPool<T>> for Vec<Option<LambdaExpr<T
 }
 
 impl<T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<T>>>> for LambdaPool<T> {
-    type Error = anyhow::Error;
+    type Error = LambdaTryFromError;
 
     fn try_from(value: Vec<Option<LambdaExpr<T>>>) -> Result<Self, Self::Error> {
         match value.into_iter().collect::<Option<Vec<_>>>() {
             Some(x) => Ok(LambdaPool(x)),
-            None => Err(anyhow::anyhow!("Vec is not only Some")),
+            None => Err(LambdaTryFromError::HasNone),
         }
     }
 }
