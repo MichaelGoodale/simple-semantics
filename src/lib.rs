@@ -68,8 +68,8 @@ impl Scenario {
         self.question.as_ref()
     }
 
-    pub fn question_mut(&mut self) -> Option<&mut RootedLambdaPool<Expr>> {
-        self.question.as_mut()
+    pub fn question_mut(&mut self) -> &mut Option<RootedLambdaPool<Expr>> {
+        &mut self.question
     }
 
     fn events(&self) -> impl Iterator<Item = Event> {
