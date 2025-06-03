@@ -466,7 +466,7 @@ where
     ) -> Result<(), LambdaError> {
         let arg_t = self.get_type(replacement_root)?;
 
-        let to_change = self
+        let to_replace = self
             .bfs_from(root)
             .filter_map(|(x, _)| match self.get(x) {
                 LambdaExpr::FreeVariable(var, t) if *var == fvar => {
@@ -483,11 +483,7 @@ where
             })
             .collect::<Result<Vec<_>, LambdaError>>()?;
 
-        let new_argument = self.get(replacement_root).clone();
-        for x in to_change {
-            //TODO: Use better copying to avoid glitches (and test too)
-            self.0[x.0 as usize] = new_argument.clone();
-        }
+        self.replace_section(&to_replace, replacement_root);
         Ok(())
     }
 
@@ -510,6 +506,20 @@ where
         expr.change_children(&new_children);
         self.0.push(expr);
         LambdaExprRef(self.0.len() as u32 - 1)
+    }
+
+    fn replace_section(&mut self, to_replace: &[LambdaExprRef], to_copy: LambdaExprRef) {
+        let n = to_replace.len();
+        for (i, x) in to_replace.iter().enumerate() {
+            if i != n - 1 {
+                //We have more to add so we need to copy.
+                let expr = self.clone_section_return_expr(to_copy);
+                *self.get_mut(*x) = expr;
+            } else {
+                //Last iteration so we don't need to copy anymore.
+                *self.get_mut(*x) = self.get(to_copy).clone();
+            }
+        }
     }
 
     fn beta_reduce(&mut self, app: LambdaExprRef) -> Result<(), ReductionError> {
@@ -559,17 +569,7 @@ where
             return Err(ReductionError::NotApplication(app));
         };
 
-        let n_variables = subformula_vars.len();
-        for (i, x) in subformula_vars.into_iter().enumerate() {
-            if i != n_variables - 1 {
-                //We have more variables to add so we need to copy.
-                let expr = self.clone_section_return_expr(argument);
-                *self.get_mut(x) = expr;
-            } else {
-                //Last iteration so we don't need to copy anymore.
-                *self.get_mut(x) = self.get(argument).clone();
-            }
-        }
+        self.replace_section(&subformula_vars, argument);
 
         //We used to swap this, but that will cause an insanely arcane bug.
         //This is because the same term may be referred to by multiple instructions so if you swap
@@ -1140,8 +1140,23 @@ mod test {
             .to_pool(&mut labels)?;
 
         pool.bind_free_variable(0, parser.parse("False").unwrap().to_pool(&mut labels)?)?;
-        dbg!(&pool);
         assert_eq!("(False & True)", pool.into_pool()?.to_string());
+
+        let input = parser
+            .parse("lambda a x (every_e(y,pe4,AgentOf(x,y)))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+        let mut a = parser
+            .parse("(P#<a,t>(a3) & ~P#<a,t>(a1))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+
+        a.bind_free_variable(1, input)?;
+        a.reduce()?;
+        assert_eq!(
+            a.to_string(),
+            "(every_e(x,pe4,AgentOf(a3,x)) & ~(every_e(x,pe4,AgentOf(a1,x))))"
+        );
         Ok(())
     }
 
