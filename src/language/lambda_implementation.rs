@@ -9,8 +9,8 @@ use super::{
 use crate::{
     LabelledScenarios,
     lambda::{
-        Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-        types::LambdaType,
+        Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
+        RootedLambdaPool, types::LambdaType,
     },
 };
 use chumsky::{error::Rich, extra};
@@ -34,6 +34,8 @@ impl From<LambdaExprRef> for ExprRef {
 pub enum LambdaConversionError {
     #[error("There are still lambda terms in this pool")]
     StillHasLambdaTerms,
+    #[error("Reducing lambda exprs in quantifiers is leading to a bug ({0})")]
+    ReductionError(#[from] ReductionError),
 }
 
 impl LambdaLanguageOfThought for Expr {
@@ -123,9 +125,60 @@ impl LambdaLanguageOfThought for Expr {
     }
 
     fn to_pool(
-        pool: LambdaPool<Self>,
-        root: LambdaExprRef,
+        mut pool: LambdaPool<Self>,
+        mut root: LambdaExprRef,
     ) -> Result<Self::Pool, Self::ConversionError> {
+        //Quantifiers can have lambda terms embedded in them, this extracts them!
+        //e.g. some(x, lambda a y (pa0(y) | pa1(y)), pa3(x)) -> some(x, pa0(x) | pa1(x), pa3(x))
+        let quantifier_restrictions = pool
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, x)| {
+                if let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                    var, restrictor, ..
+                }) = x
+                {
+                    let restr_expr = pool.get(LambdaExprRef(restrictor.0));
+                    let should_bind = match var {
+                        Variable::Actor(_) => {
+                            matches!(restr_expr, LambdaExpr::Lambda(_, t) if t == LambdaType::a())
+                        }
+                        Variable::Event(_) => {
+                            matches!(restr_expr, LambdaExpr::Lambda(_, t) if t == LambdaType::e())
+                        }
+                    };
+
+                    if should_bind {
+                        Some((LambdaExprRef(i as u32), LambdaExprRef(restrictor.0), *var))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if !quantifier_restrictions.is_empty() {
+            //Go over and add app of bound variable to each lambda expr for each quantifier
+            for (quantifer, restrictor, var) in quantifier_restrictions {
+                let var = pool.add(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(var)));
+                let new_restrictor = pool.add(LambdaExpr::Application {
+                    subformula: restrictor,
+                    argument: var,
+                });
+                let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { restrictor, .. }) =
+                    pool.get_mut(quantifer)
+                else {
+                    panic!("quantifier *must* be filtered to only quantifiers right before this.")
+                };
+
+                *restrictor = ExprRef(new_restrictor.0);
+            }
+            root = pool.reduce(root)?;
+        }
+
         let processed_pool = pool
             .0
             .into_iter()
@@ -450,7 +503,7 @@ mod test {
         assert!(pool.into_pool()?.run(&scenario)?.try_into()?);
 
         let pool = parser
-            .parse("every_e(x0, lambda a x (pe0(x) & pe1(x)), pe2(x0))")
+            .parse("every_e(x0, lambda e x (pe0(x) & pe1(x)), pe2(x0))")
             .unwrap()
             .to_pool(&mut labels)?;
 

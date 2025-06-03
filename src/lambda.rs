@@ -331,7 +331,7 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
     }
 
     pub fn into_pool(self, root: LambdaExprRef) -> Result<T::Pool, T::ConversionError> {
-        return T::to_pool(self, root);
+        T::to_pool(self, root)
     }
 
     pub fn from(x: Vec<LambdaExpr<T>>) -> Self {
@@ -346,11 +346,11 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
         self.0.get(expr.0 as usize)
     }
 
-    pub(crate) fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<T> {
+    pub fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<T> {
         &self.0[expr.0 as usize]
     }
 
-    fn get_mut(&mut self, expr: LambdaExprRef) -> &mut LambdaExpr<T> {
+    pub fn get_mut(&mut self, expr: LambdaExprRef) -> &mut LambdaExpr<T> {
         &mut self.0[expr.0 as usize]
     }
 
