@@ -4,19 +4,16 @@ use thiserror::Error;
 
 use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LambdaParseError, LanguageExpression,
-    MonOp, Quantifier, Variable, lot_parser,
+    MonOp, Variable, lot_parser,
 };
 use crate::{
     LabelledScenarios,
     lambda::{
-        Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
+        LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
         RootedLambdaPool, types::LambdaType,
     },
 };
 use chumsky::{error::Rich, extra};
-use rand::{Rng, seq::IteratorRandom};
-
-pub mod mutations;
 
 impl From<ExprRef> for LambdaExprRef {
     fn from(value: ExprRef) -> Self {
@@ -370,15 +367,9 @@ impl RootedLambdaPool<Expr> {
 mod test {
     use super::to_var;
 
-    use crate::{
-        Entity, LabelledScenarios, Scenario, ThetaRoles,
-        lambda::{RootedLambdaPool, types::LambdaType},
-        language::lot_parser,
-    };
+    use crate::{Entity, LabelledScenarios, Scenario, ThetaRoles, language::lot_parser};
 
     use chumsky::prelude::*;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {
@@ -445,38 +436,6 @@ mod test {
         let likes2 = parser.parse(s).unwrap().to_pool(&mut labels)?;
         assert_eq!(likes, likes2);
 
-        Ok(())
-    }
-
-    #[test]
-    fn randomness() -> anyhow::Result<()> {
-        let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = [0, 1];
-        let available_actor_properties = [0, 1, 2];
-        let available_event_properties = [2, 3, 4];
-        for _ in 0..200 {
-            let t = LambdaType::random_no_e(&mut rng);
-            println!("{t}");
-            let pool = RootedLambdaPool::random_expr(
-                &t,
-                &actors,
-                &available_actor_properties,
-                &available_event_properties,
-                None,
-                &mut rng,
-            )?;
-            println!("{}: {}", t, pool);
-            assert_eq!(t, pool.get_type()?);
-            let pool = pool.resample_from_expr(
-                &actors,
-                &available_actor_properties,
-                &available_event_properties,
-                None,
-                &mut rng,
-            );
-            println!("{}: {}", t, pool);
-            assert_eq!(t, pool.get_type()?);
-        }
         Ok(())
     }
 

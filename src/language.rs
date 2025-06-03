@@ -652,6 +652,7 @@ pub use parser::parse_executable;
 use thiserror::Error;
 
 mod lambda_implementation;
+mod mutations;
 
 #[cfg(test)]
 mod tests {
