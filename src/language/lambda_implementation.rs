@@ -1,5 +1,6 @@
 use chumsky::prelude::*;
 use std::iter::empty;
+use thiserror::Error;
 
 use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LambdaParseError, LanguageExpression,
@@ -29,8 +30,16 @@ impl From<LambdaExprRef> for ExprRef {
     }
 }
 
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum LambdaConversionError {
+    #[error("There are still lambda terms in this pool")]
+    StillHasLambdaTerms,
+}
+
 impl LambdaLanguageOfThought for Expr {
     type Pool = LanguageExpression;
+    type ConversionError = LambdaConversionError;
+
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
         match self {
             Expr::Quantifier {
@@ -113,11 +122,23 @@ impl LambdaLanguageOfThought for Expr {
         }
     }
 
-    fn to_pool(pool: Vec<Self>, root: LambdaExprRef) -> Self::Pool {
-        LanguageExpression {
-            pool: ExprPool(pool),
+    fn to_pool(
+        pool: LambdaPool<Self>,
+        root: LambdaExprRef,
+    ) -> Result<Self::Pool, Self::ConversionError> {
+        let processed_pool = pool
+            .0
+            .into_iter()
+            .map(|x| match x {
+                LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x),
+                _ => Err(LambdaConversionError::StillHasLambdaTerms),
+            })
+            .collect::<Result<Vec<_>, LambdaConversionError>>()?;
+
+        Ok(LanguageExpression {
+            pool: ExprPool(processed_pool),
             start: ExprRef(root.0),
-        }
+        })
     }
 
     fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>) {
@@ -297,10 +318,11 @@ mod test {
     use super::to_var;
 
     use crate::{
-        LabelledScenarios,
+        Entity, LabelledScenarios, Scenario, ThetaRoles,
         lambda::{RootedLambdaPool, types::LambdaType},
         language::lot_parser,
     };
+
     use chumsky::prelude::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
@@ -402,6 +424,50 @@ mod test {
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn fancy_quantification_reduction() -> anyhow::Result<()> {
+        let mut labels = LabelledScenarios::default();
+        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
+        let pool = parser
+            .parse("every_e(x0,pe0(x0) & pe1(x0), pe2(x0))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+        let scenario = Scenario::new(
+            vec![],
+            vec![ThetaRoles::default(); 5],
+            [
+                (0, vec![Entity::Event(1), Entity::Event(2)]),
+                (1, vec![Entity::Event(0), Entity::Event(1)]),
+                (2, vec![Entity::Event(1)]),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        assert!(pool.into_pool()?.run(&scenario)?.try_into()?);
+
+        let pool = parser
+            .parse("every_e(x0, lambda a x (pe0(x) & pe1(x)), pe2(x0))")
+            .unwrap()
+            .to_pool(&mut labels)?;
+
+        let scenario = Scenario::new(
+            vec![],
+            vec![ThetaRoles::default(); 5],
+            [
+                (0, vec![Entity::Event(1), Entity::Event(2)]),
+                (1, vec![Entity::Event(0), Entity::Event(1)]),
+                (2, vec![Entity::Event(1)]),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        assert!(pool.into_pool()?.run(&scenario)?.try_into()?);
+
         Ok(())
     }
 }

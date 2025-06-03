@@ -23,7 +23,7 @@ impl Display for Entity {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Eq)]
 pub struct ThetaRoles {
     pub agent: Option<Actor>,
     pub patient: Option<Actor>,

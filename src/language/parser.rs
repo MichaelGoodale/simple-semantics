@@ -3,11 +3,10 @@ use std::{collections::HashMap, fmt::Debug};
 use crate::{
     Entity, LabelledScenarios,
     lambda::{
-        Bvar, LambdaConversionError, LambdaExpr, LambdaExprRef, LambdaPool, ReductionError,
-        RootedLambdaPool,
+        Bvar, LambdaExpr, LambdaExprRef, LambdaPool, ReductionError, RootedLambdaPool,
         types::{LambdaType, core_type_parser},
     },
-    language::{Constant, Expr, ExprRef, MonOp},
+    language::{Constant, Expr, ExprRef, MonOp, lambda_implementation::LambdaConversionError},
 };
 use chumsky::prelude::*;
 use chumsky::{

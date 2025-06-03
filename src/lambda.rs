@@ -42,12 +42,6 @@ pub enum LambdaTryFromError {
 }
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
-pub enum LambdaConversionError {
-    #[error("There are still lambda terms in this pool")]
-    StillHasLambdaTerms,
-}
-
-#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum ReductionError {
     #[error("{0:?} is not a valid ref!")]
     NotValidRef(LambdaExprRef),
@@ -68,6 +62,8 @@ pub struct LambdaExprRef(pub u32);
 
 pub trait LambdaLanguageOfThought {
     type Pool;
+    type ConversionError;
+
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef>;
     fn remap_refs(&mut self, remap: &[usize]);
     fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>)
@@ -76,13 +72,17 @@ pub trait LambdaLanguageOfThought {
     fn change_children(&mut self, new_children: &[LambdaExprRef]);
     fn get_type(&self) -> &LambdaType;
     fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a>;
-    fn to_pool(pool: Vec<Self>, root: LambdaExprRef) -> Self::Pool
+    fn to_pool(
+        pool: LambdaPool<Self>,
+        root: LambdaExprRef,
+    ) -> Result<Self::Pool, Self::ConversionError>
     where
         Self: Sized;
 }
 
 impl LambdaLanguageOfThought for () {
     type Pool = ();
+    type ConversionError = ();
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
         std::iter::empty()
     }
@@ -100,7 +100,9 @@ impl LambdaLanguageOfThought for () {
 
     fn alpha_reduce(_a: &mut LambdaPool<Self>, _b: &mut LambdaPool<Self>) {}
 
-    fn to_pool(_: Vec<Self>, _: LambdaExprRef) -> Self::Pool {}
+    fn to_pool(_: LambdaPool<Self>, _: LambdaExprRef) -> Result<Self::Pool, ()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -245,7 +247,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         Ok(())
     }
 
-    pub fn into_pool(self) -> Result<T::Pool, LambdaConversionError> {
+    pub fn into_pool(self) -> Result<T::Pool, T::ConversionError> {
         self.pool.into_pool(self.root)
     }
 
@@ -328,16 +330,8 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
         other_root
     }
 
-    pub fn into_pool(self, root: LambdaExprRef) -> Result<T::Pool, LambdaConversionError> {
-        let processed_pool = self
-            .0
-            .into_iter()
-            .map(|x| match x {
-                LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x),
-                _ => Err(LambdaConversionError::StillHasLambdaTerms),
-            })
-            .collect::<Result<Vec<_>, LambdaConversionError>>()?;
-        Ok(T::to_pool(processed_pool, root))
+    pub fn into_pool(self, root: LambdaExprRef) -> Result<T::Pool, T::ConversionError> {
+        return T::to_pool(self, root);
     }
 
     pub fn from(x: Vec<LambdaExpr<T>>) -> Self {
