@@ -1,51 +1,27 @@
 use super::*;
 
-#[derive(Debug, Clone)]
-pub struct Context<'a, 't> {
+#[derive(Debug, Default, Clone)]
+pub struct Context<'t> {
     lambdas: Vec<&'t LambdaType>,
     available_vars: Vec<Variable>,
-    possible_expressions: &'a PossibleExpressions<'t>,
     depth: usize,
 }
 
-impl<'a, 't> Context<'a, 't> {
-    pub fn new(possible_expressions: &'a PossibleExpressions<'t>) -> Self {
-        Context {
-            lambdas: vec![],
-            available_vars: vec![],
-            possible_expressions,
-            depth: 0,
-        }
-    }
-
+impl<'t> Context<'t> {
     pub fn lambdas(&self) -> &[&LambdaType] {
         &self.lambdas
     }
 
-    pub fn to_owned_lambdas<'c, 'd>(
-        self,
-        new_lambdas: &'c [LambdaType],
-        possible_expressions: &'d PossibleExpressions<'c>,
-    ) -> Context<'d, 'c> {
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn to_owned_lambdas<'b>(self, new_lambdas: &'b [LambdaType]) -> Context<'b> {
         Context {
             lambdas: new_lambdas.iter().collect(),
             available_vars: self.available_vars,
-            possible_expressions,
             depth: self.depth,
         }
-    }
-
-    pub fn sample_expr(
-        &self,
-        lambda_type: &'t LambdaType,
-        config: &RandomExprConfig,
-        rng: &mut impl Rng,
-    ) -> UnbuiltExpr<'t> {
-        let (expressions, n_args) = self
-            .possible_expressions
-            .expr_from_output(lambda_type, self);
-        let i = (0..expressions.len()).choose(rng).unwrap();
-        expressions[i].clone().into_owned()
     }
 
     pub fn add_var(&mut self, v: Variable) -> Variable {
@@ -98,13 +74,13 @@ impl<'a, 't> Context<'a, 't> {
     }
 }
 
-pub struct ContextBFSIterator<'a, 'b> {
+pub struct ContextBFSIterator<'a> {
     pool: &'a RootedLambdaPool<Expr>,
-    queue: VecDeque<(LambdaExprRef, Context<'b, 'a>)>,
+    queue: VecDeque<(LambdaExprRef, Context<'a>)>,
 }
 
-impl<'a, 'b> Iterator for ContextBFSIterator<'a, 'b> {
-    type Item = (LambdaExprRef, Context<'b, 'a>);
+impl<'a> Iterator for ContextBFSIterator<'a> {
+    type Item = (LambdaExprRef, Context<'a>);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((x, context)) = self.queue.pop_front() {
@@ -152,17 +128,13 @@ impl<'a, 'b> Iterator for ContextBFSIterator<'a, 'b> {
 }
 
 impl RootedLambdaPool<Expr> {
-    pub fn context_bfs_iter<'a, 'b: 'a>(
-        &'a self,
-        possible_expressions: &'b PossibleExpressions,
-    ) -> ContextBFSIterator<'a, 'b> {
+    pub fn context_bfs_iter<'a>(&'a self) -> ContextBFSIterator<'a> {
         let mut queue = VecDeque::new();
         queue.push_back((
             self.root,
             Context {
                 lambdas: vec![],
                 available_vars: vec![],
-                possible_expressions,
                 depth: 0,
             },
         ));

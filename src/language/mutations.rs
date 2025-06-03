@@ -1,14 +1,6 @@
-use std::{
-    borrow::Cow,
-    collections::{VecDeque, hash_map::Entry},
-    iter::repeat_n,
-};
+use std::collections::VecDeque;
 
-use ahash::HashMap;
-use rand::{
-    Rng,
-    seq::{IndexedRandom, IteratorRandom},
-};
+use rand::{Rng, seq::IteratorRandom};
 use thiserror::Error;
 
 use super::*;
@@ -24,6 +16,8 @@ mod context;
 mod samplers;
 mod unbuilt;
 use context::Context;
+use samplers::PossibleExpressions;
+pub use samplers::RandomExprConfig;
 use unbuilt::{Fresher, UnbuiltExpr, add_expr};
 
 #[derive(Debug, Error, Clone, Copy)]
@@ -33,14 +27,10 @@ pub enum MutationError {
 }
 
 impl RootedLambdaPool<Expr> {
-    fn get_context_for_expr<'a: 'pool, 'pool, 'props: 'pool>(
-        &'pool self,
-        position: LambdaExprRef,
-        possible_expressions: &'a PossibleExpressions<'pool>,
-    ) -> Option<Context<'props, 'pool>> {
+    fn get_context_for_expr(&self, position: LambdaExprRef) -> Option<Context> {
         let mut pos_context = None;
 
-        for (n, c) in self.context_bfs_iter(possible_expressions) {
+        for (n, c) in self.context_bfs_iter() {
             if n == position {
                 pos_context = Some(c);
                 break;
@@ -64,10 +54,11 @@ impl RootedLambdaPool<Expr> {
             available_actors,
             available_actor_properties,
             available_event_properties,
+            config,
         );
 
         let context = self
-            .get_context_for_expr(position, &possible_expressions)
+            .get_context_for_expr(position)
             .expect("Couldn't find the {position}th expression");
 
         //Here we extract the lambdas and reborrow them to avoid borrowing crap.
@@ -76,7 +67,7 @@ impl RootedLambdaPool<Expr> {
             .iter()
             .map(|x| (*x).clone())
             .collect::<Vec<_>>();
-        let context = context.to_owned_lambdas(&lambdas, &possible_expressions);
+        let context = context.to_owned_lambdas(&lambdas);
 
         let (root, pool) = (self.root, self.pool);
 
@@ -84,7 +75,14 @@ impl RootedLambdaPool<Expr> {
         let mut pool: Vec<Option<LambdaExpr<_>>> = pool.into();
         pool[position.0 as usize] = None;
 
-        let mut pool = build_out_pool(pool, &lambda_type, position.0, context, config, rng);
+        let mut pool = build_out_pool(
+            pool,
+            &lambda_type,
+            position.0,
+            context,
+            possible_expressions,
+            rng,
+        );
         let root = pool.cleanup(root);
 
         RootedLambdaPool { pool, root }
@@ -102,16 +100,16 @@ impl RootedLambdaPool<Expr> {
             return Err(MutationError::InvalidType);
         }
         let pool = vec![None];
+        let config = &config.unwrap_or_default();
 
         let possible_expressions = PossibleExpressions::new(
             available_actors,
             available_actor_properties,
             available_event_properties,
+            config,
         );
-        let context = Context::new(&possible_expressions);
-        let config = &config.unwrap_or_default();
-
-        let pool = build_out_pool(pool, lambda_type, 0, context, config, rng);
+        let context = Context::default();
+        let pool = build_out_pool(pool, lambda_type, 0, context, possible_expressions, rng);
         Ok(RootedLambdaPool::new(pool, LambdaExprRef(0)))
     }
 
@@ -159,23 +157,22 @@ impl RootedLambdaPool<Expr> {
         available_event_properties: &[PropertyLabel],
         rng: &mut impl Rng,
     ) {
+        let config = RandomExprConfig::default();
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
         let possible_expressions = PossibleExpressions::new(
             available_actors,
             available_actor_properties,
             available_event_properties,
+            &config,
         );
 
         let context = self
-            .get_context_for_expr(position, &possible_expressions)
+            .get_context_for_expr(position)
             .unwrap_or_else(|| panic!("Couldn't find {}th expr!", position.0));
         let ExpressionType { output, arguments } = self.get_expression_type(position).unwrap();
         let replacement = possible_expressions
-            .expr_from_args_and_output(&output, &arguments, &context)
-            .choose(rng)
-            .unwrap()
-            .clone()
-            .into_owned();
+            .possiblities_fixed_children(&output, &arguments, &context)
+            .choose(rng);
 
         let new_expr = {
             let mut children = self.get(position).get_children();
@@ -223,221 +220,25 @@ fn build_out_pool<'typ>(
     mut pool: Vec<Option<LambdaExpr<Expr>>>,
     lambda_type: &'typ LambdaType,
     start_pos: u32,
-    context: Context<'_, 'typ>,
-    config: &RandomExprConfig,
+    context: Context<'typ>,
+    possible_expressions: PossibleExpressions<'typ, '_>,
     rng: &mut impl Rng,
 ) -> LambdaPool<Expr> {
     let mut fresher = Fresher::new(&pool);
-    let e: UnbuiltExpr<'typ> = context.sample_expr(lambda_type, config, rng);
+    let e = possible_expressions
+        .possibilities(lambda_type, &context)
+        .choose(rng);
 
     let mut stack = add_expr(e, start_pos, context, &mut fresher, &mut pool);
 
     while let Some((pos, lambda_type, context)) = stack.pop() {
-        let e = context.sample_expr(lambda_type, config, rng);
+        let e = possible_expressions
+            .possibilities(lambda_type, &context)
+            .choose(rng);
 
         stack.extend(add_expr(e, pos, context, &mut fresher, &mut pool));
     }
     pool.try_into().unwrap()
-}
-
-#[derive(Debug, Clone)]
-pub struct PossibleExpressions<'a> {
-    expressions: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<UnbuiltExpr<'a>>>>,
-}
-
-impl<'typ> PossibleExpressions<'typ> {
-    fn new(
-        actors: &[Actor],
-        actor_properties: &[PropertyLabel],
-        event_properties: &[PropertyLabel],
-    ) -> Self {
-        let mut all_expressions: Vec<UnbuiltExpr> = vec![
-            UnbuiltExpr::Constant(Constant::Everyone),
-            UnbuiltExpr::Constant(Constant::EveryEvent),
-            UnbuiltExpr::Unary(MonOp::Not),
-            UnbuiltExpr::Binary(BinOp::And),
-            UnbuiltExpr::Binary(BinOp::Or),
-            UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Actor),
-            UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Actor),
-            UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Event),
-            UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Event),
-            UnbuiltExpr::Binary(BinOp::AgentOf),
-            UnbuiltExpr::Binary(BinOp::PatientOf),
-        ];
-
-        all_expressions.extend(actors.iter().map(|x| UnbuiltExpr::Actor(*x)));
-
-        all_expressions.extend(actor_properties.iter().flat_map(|i| {
-            [
-                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor)),
-                UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Actor)),
-            ]
-        }));
-        all_expressions.extend(event_properties.iter().flat_map(|i| {
-            [
-                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event)),
-                UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Event)),
-            ]
-        }));
-
-        let mut expressions: HashMap<LambdaType, HashMap<_, Vec<_>>> = HashMap::default();
-        for expr in all_expressions {
-            let ExpressionType { output, arguments } = expr.get_expression_type();
-
-            //Annoying match to avoid cloning arguments
-            match expressions.entry(output) {
-                Entry::Occupied(mut occupied) => {
-                    let inner_h: &mut HashMap<_, _> = occupied.get_mut();
-                    match inner_h.entry(arguments) {
-                        Entry::Occupied(mut occupied) => occupied.get_mut().push(expr),
-                        Entry::Vacant(vacant) => {
-                            vacant.insert(vec![expr]);
-                        }
-                    }
-                }
-                Entry::Vacant(vacant) => {
-                    vacant.insert([(arguments, vec![expr])].into_iter().collect());
-                }
-            }
-        }
-
-        PossibleExpressions { expressions }
-    }
-
-    fn expr_from_args_and_output<'a>(
-        &'a self,
-        lambda_type: &'typ LambdaType,
-        arguments: &'typ [LambdaType],
-        context: &Context<'_, 'typ>,
-    ) -> Vec<Cow<'a, UnbuiltExpr<'typ>>> {
-        let mut possibilities: Vec<Cow<UnbuiltExpr<'typ>>> = self
-            .expressions
-            .get(lambda_type)
-            .map(|x| {
-                x.get(arguments)
-                    .map(|x| x.iter().map(Cow::Borrowed).collect::<Vec<_>>())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-
-        if arguments.len() == 1 {
-            if let Ok((lhs, rhs)) = lambda_type.split() {
-                if rhs == arguments.first().unwrap() {
-                    possibilities.push(Cow::Owned(UnbuiltExpr::Lambda(lhs, rhs)));
-                }
-            }
-        } else if arguments.is_empty() {
-            possibilities.extend(context.lambda_variables(lambda_type).map(Cow::Owned));
-            if lambda_type == LambdaType::a() {
-                possibilities.extend(context.actor_variables().map(Cow::Owned));
-            } else if lambda_type == LambdaType::e() {
-                possibilities.extend(context.event_variables().map(Cow::Owned));
-            }
-        }
-
-        possibilities
-    }
-
-    fn expr_from_output<'a>(
-        &'a self,
-        lambda_type: &'typ LambdaType,
-        context: &Context<'_, 'typ>,
-    ) -> (Vec<Cow<'a, UnbuiltExpr<'typ>>>, Vec<usize>) {
-        let (mut possibilities, mut n_args): (Vec<Cow<UnbuiltExpr<'typ>>>, Vec<usize>) = self
-            .expressions
-            .get(lambda_type)
-            .map(|x| {
-                x.iter()
-                    .filter(|(k, _)| !has_e_argument(k) || context.can_sample_event())
-                    .flat_map(|(k, v)| v.iter().map(|x| (Cow::Borrowed(x), k.len())))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        if let Ok((lhs, rhs)) = lambda_type.split() {
-            possibilities.push(Cow::Owned(UnbuiltExpr::Lambda(lhs, rhs)));
-            n_args.push(1);
-        }
-
-        let n_possibilities = possibilities.len();
-
-        possibilities.extend(context.lambda_variables(lambda_type).map(Cow::Owned));
-        if lambda_type == LambdaType::a() {
-            possibilities.extend(context.actor_variables().map(Cow::Owned));
-        } else if lambda_type == LambdaType::e() {
-            possibilities.extend(context.event_variables().map(Cow::Owned));
-        }
-
-        let n_new_possibilities = possibilities.len() - n_possibilities;
-        n_args.extend(repeat_n(0, n_new_possibilities));
-
-        #[cfg(test)]
-        assert_eq!(possibilities.len(), n_args.len());
-
-        (possibilities, n_args)
-    }
-}
-
-/*
-#[derive(Debug, Copy, Clone)]
-enum SampleDetails {
-    LambdaExpr,
-    LambdaVar,
-    QuantifierVar(Variable),
-    Other(u8),
-}
-
-impl SampleDetails {
-    fn new(e: &UnbuiltExpr, n_args: usize) -> {
-        match e {
-            UnbuiltExpr::Quantifier(quantifier, actor_or_event) => todo!(),
-            UnbuiltExpr::Variable(variable) => todo!(),
-            UnbuiltExpr::Actor(_) => todo!(),
-            UnbuiltExpr::Event(_) => todo!(),
-            UnbuiltExpr::Binary(bin_op) => todo!(),
-            UnbuiltExpr::Unary(mon_op) => todo!(),
-            UnbuiltExpr::Constant(constant) => todo!(),
-            UnbuiltExpr::Lambda(lambda_type, lambda_type1) => todo!(),
-            UnbuiltExpr::BoundVariable(_, lambda_type) => todo!(),
-        }
-    }
-}
-*/
-fn has_e_argument(v: &[LambdaType]) -> bool {
-    v.iter().any(|v| v == LambdaType::e())
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RandomExprConfig {
-    lambda_prob: f64,
-    variable_prob: f64,
-}
-
-impl RandomExprConfig {
-    fn new(lambda_prob: f64, variable_prob: f64) -> Self {
-        Self {
-            lambda_prob,
-            variable_prob,
-        }
-    }
-}
-
-impl Default for RandomExprConfig {
-    fn default() -> Self {
-        Self {
-            lambda_prob: 0.2,
-            variable_prob: 0.5,
-        }
-    }
-}
-impl RandomExprConfig {
-    fn is_lambda(&self, lambda_type: &LambdaType, rng: &mut impl Rng) -> bool {
-        lambda_type.is_function() && rng.random_bool(self.lambda_prob)
-    }
-
-    fn is_variable(&self, rng: &mut impl Rng) -> bool {
-        rng.random_bool(self.variable_prob)
-    }
 }
 
 #[cfg(test)]
@@ -522,6 +323,7 @@ mod test {
         let actors = [0, 1];
         let available_actor_properties = [0, 1, 2];
         let available_event_properties = [2, 3, 4];
+        let mut lengths = vec![];
         for _ in 0..200 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
@@ -533,6 +335,7 @@ mod test {
                 None,
                 &mut rng,
             )?;
+            lengths.push(pool.len());
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
             let pool = pool.resample_from_expr(
@@ -545,6 +348,7 @@ mod test {
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
         }
+        println!("{:?}", lengths);
         Ok(())
     }
 }

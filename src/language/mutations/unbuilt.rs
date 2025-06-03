@@ -80,13 +80,13 @@ impl UnbuiltExpr<'_> {
     }
 }
 
-pub fn add_expr<'props, 'pool>(
+pub fn add_expr<'pool>(
     e: UnbuiltExpr<'pool>,
     pos: u32,
-    mut context: Context<'props, 'pool>,
+    mut context: Context<'pool>,
     fresher: &mut Fresher,
     pool: &mut Vec<Option<LambdaExpr<Expr>>>,
-) -> Vec<(u32, &'pool LambdaType, Context<'props, 'pool>)> {
+) -> Vec<(u32, &'pool LambdaType, Context<'pool>)> {
     let cur_size = pool.len() as u32 - 1;
     let mut children = vec![];
     let expr = match e {
