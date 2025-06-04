@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::LabelledScenarios;
-use crate::lambda::RootedLambdaPool;
+use crate::lambda::{LambdaExpr, LambdaPool, RootedLambdaPool};
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 use lambda_implementation::to_var;
 
@@ -152,8 +152,17 @@ pub struct LanguageExpression {
 
 impl Display for LanguageExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = self.string(self.start);
-        write!(f, "{string}")
+        let z = RootedLambdaPool {
+            pool: LambdaPool::from(
+                self.pool
+                    .0
+                    .iter()
+                    .map(|x| LambdaExpr::LanguageOfThoughtExpr(x.clone()))
+                    .collect(),
+            ),
+            root: crate::lambda::LambdaExprRef(self.start.0),
+        };
+        write!(f, "{z}")
     }
 }
 
@@ -172,41 +181,6 @@ impl LanguageExpression {
 
     pub fn new(pool: ExprPool, start: ExprRef) -> Self {
         LanguageExpression { pool, start }
-    }
-
-    fn string(&self, expr: ExprRef) -> String {
-        match self.pool.get(expr) {
-            Expr::Quantifier {
-                quantifier,
-                var,
-                restrictor,
-                subformula,
-            } => format!(
-                "{}{}({},{},{})",
-                quantifier,
-                match var {
-                    Variable::Actor(_) => "",
-                    Variable::Event(_) => "_e",
-                },
-                var.to_var_string(),
-                self.string(*restrictor),
-                self.string(*subformula)
-            ),
-            Expr::Variable(variable) => variable.to_var_string(),
-            Expr::Actor(a) => format!("a{a}"),
-            Expr::Event(e) => format!("a{e}"),
-            Expr::Binary(bin_op, x, y) => match bin_op {
-                BinOp::AgentOf | BinOp::PatientOf => {
-                    format!("{bin_op}({},{})", self.string(*x), self.string(*y))
-                }
-
-                BinOp::And | BinOp::Or => {
-                    format!("({} {bin_op} {})", self.string(*x), self.string(*y))
-                }
-            },
-            Expr::Unary(mon_op, arg) => format!("{mon_op}({})", self.string(*arg)),
-            Expr::Constant(constant) => format!("{constant}"),
-        }
     }
 }
 
@@ -653,6 +627,7 @@ use thiserror::Error;
 
 mod lambda_implementation;
 mod mutations;
+mod serializations;
 
 #[cfg(test)]
 mod tests {
