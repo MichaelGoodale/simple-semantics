@@ -1,3 +1,4 @@
+use ahash::HashMap;
 use chumsky::prelude::*;
 use std::iter::empty;
 use thiserror::Error;
@@ -265,7 +266,7 @@ impl LambdaLanguageOfThought for Expr {
 
 impl std::fmt::Display for RootedLambdaPool<Expr> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = self.string(self.root(), 0);
+        let string = self.string(self.root(), VarContext::default());
         write!(f, "{string}")
     }
 }
@@ -287,6 +288,49 @@ pub fn to_var(x: usize) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+enum Var {
+    Depth(usize),
+    Quantifier(Variable),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+struct VarContext {
+    vars: HashMap<Var, usize>,
+    depth: usize,
+}
+
+impl VarContext {
+    fn inc_depth(mut self) -> (Self, String) {
+        let n_var = self.vars.len();
+        self.vars.insert(Var::Depth(self.depth), n_var);
+        self.depth += 1;
+        (self, to_var(n_var))
+    }
+
+    fn lambda_var(&self, bvar: usize) -> String {
+        to_var(*self.vars.get(&Var::Depth(self.depth - bvar - 1)).unwrap())
+    }
+    fn q_var(&self, var: Variable) -> String {
+        to_var(
+            self.vars
+                .get(&Var::Quantifier(var))
+                .copied()
+                .unwrap_or_else(|| match var {
+                    //This is on the off-chance that the string is invalid due to a mutation (e.g.
+                    //swaping a quantifier and making a free var invalid)
+                    Variable::Actor(a) | Variable::Event(a) => a as usize + 1000,
+                }),
+        )
+    }
+
+    fn add_qvar(mut self, x: Variable) -> (Self, String) {
+        let n_var = self.vars.len();
+        self.vars.insert(Var::Quantifier(x), n_var);
+        (self, to_var(n_var))
+    }
+}
+
 impl RootedLambdaPool<Expr> {
     pub fn parse(s: &str, labels: &mut LabelledScenarios) -> Result<Self, LambdaParseError> {
         lot_parser::<extra::Err<Rich<_>>>()
@@ -295,25 +339,26 @@ impl RootedLambdaPool<Expr> {
             .to_pool(labels)
     }
 
-    fn string(&self, expr: LambdaExprRef, lambda_depth: usize) -> String {
+    fn string(&self, expr: LambdaExprRef, c: VarContext) -> String {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
+                let (c, var) = c.inc_depth();
                 format!(
-                    "lambda {} {}_l ({})",
+                    "lambda {} {} ({})",
                     lambda_type,
-                    to_var(lambda_depth),
-                    self.string(*child, lambda_depth + 1)
+                    var,
+                    self.string(*child, c)
                 )
             }
-            LambdaExpr::BoundVariable(bvar, _) => format!("{}_l", to_var(lambda_depth - bvar - 1)),
+            LambdaExpr::BoundVariable(bvar, _) => c.lambda_var(*bvar),
             LambdaExpr::FreeVariable(fvar, _) => format!("{fvar}_f"),
             LambdaExpr::Application {
                 subformula,
                 argument,
             } => format!(
                 "({})({})",
-                self.string(*subformula, lambda_depth),
-                self.string(*argument, lambda_depth)
+                self.string(*subformula, c.clone()),
+                self.string(*argument, c)
             ),
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
                 Expr::Quantifier {
@@ -321,42 +366,42 @@ impl RootedLambdaPool<Expr> {
                     var,
                     restrictor,
                     subformula,
-                } => format!(
-                    "{}{}({},{},{})",
-                    quantifier,
-                    match var {
-                        Variable::Actor(_) => "",
-                        Variable::Event(_) => "_e",
-                    },
-                    var.to_var_string(),
-                    self.string(LambdaExprRef(restrictor.0), lambda_depth),
-                    self.string(LambdaExprRef(subformula.0), lambda_depth)
-                ),
-                Expr::Variable(variable) => variable.to_var_string(),
+                } => {
+                    let (c, var_string) = c.add_qvar(*var);
+                    format!(
+                        "{}{}({},{},{})",
+                        quantifier,
+                        match var {
+                            Variable::Actor(_) => "",
+                            Variable::Event(_) => "_e",
+                        },
+                        var_string,
+                        self.string(LambdaExprRef(restrictor.0), c.clone()),
+                        self.string(LambdaExprRef(subformula.0), c)
+                    )
+                }
+                Expr::Variable(variable) => c.q_var(*variable),
                 Expr::Actor(a) => format!("a{a}"),
                 Expr::Event(e) => format!("e{e}"),
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {
                         format!(
                             "{bin_op}({},{})",
-                            self.string(LambdaExprRef(x.0), lambda_depth),
-                            self.string(LambdaExprRef(y.0), lambda_depth)
+                            self.string(LambdaExprRef(x.0), c.clone()),
+                            self.string(LambdaExprRef(y.0), c)
                         )
                     }
 
                     BinOp::And | BinOp::Or => {
                         format!(
                             "({} {bin_op} {})",
-                            self.string(LambdaExprRef(x.0), lambda_depth),
-                            self.string(LambdaExprRef(y.0), lambda_depth)
+                            self.string(LambdaExprRef(x.0), c.clone()),
+                            self.string(LambdaExprRef(y.0), c)
                         )
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
-                    format!(
-                        "{mon_op}({})",
-                        self.string(LambdaExprRef(arg.0), lambda_depth)
-                    )
+                    format!("{mon_op}({})", self.string(LambdaExprRef(arg.0), c))
                 }
                 Expr::Constant(constant) => format!("{constant}"),
             },
@@ -427,11 +472,12 @@ mod test {
         );
         let likes = parser
             .parse(
-                "lambda e x ((lambda e y (some(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
+                "lambda e x ((lambda e y (some(e, all_e, AgentOf(x, e) & PatientOf(y,e) & pe_likes(e)))))",
             )
             .unwrap().to_pool(&mut labels)?;
 
-        let s = "lambda e x_l (lambda e y_l (some(x,all_e,((AgentOf(x,x_l) & PatientOf(x,y_l)) & pe0(x)))))";
+        let s =
+            "lambda e x (lambda e y (some(z,all_e,((AgentOf(x,z) & PatientOf(y,z)) & pe0(z)))))";
         assert_eq!(likes.to_string(), s,);
         let likes2 = parser.parse(s).unwrap().to_pool(&mut labels)?;
         assert_eq!(likes, likes2);

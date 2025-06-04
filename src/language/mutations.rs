@@ -271,7 +271,7 @@ mod test {
         pool.prune_quantifiers();
         assert_eq!(
             pool.to_string(),
-            "some(y,all_a,(AgentOf(y,e1) & PatientOf(a0,e0)))"
+            "some(x,all_a,(AgentOf(x,e1) & PatientOf(a0,e0)))"
         );
 
         let mut pool = parser

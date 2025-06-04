@@ -157,7 +157,7 @@ impl Display for LanguageExpression {
                 self.pool
                     .0
                     .iter()
-                    .map(|x| LambdaExpr::LanguageOfThoughtExpr(x.clone()))
+                    .map(|x| LambdaExpr::LanguageOfThoughtExpr(*x))
                     .collect(),
             ),
             root: crate::lambda::LambdaExprRef(self.start.0),
