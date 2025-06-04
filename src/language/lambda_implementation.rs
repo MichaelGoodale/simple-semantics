@@ -1,6 +1,6 @@
 use ahash::HashMap;
 use chumsky::prelude::*;
-use std::iter::empty;
+use std::{borrow::Cow, iter::empty};
 use thiserror::Error;
 
 use super::{
@@ -266,7 +266,7 @@ impl LambdaLanguageOfThought for Expr {
 
 impl std::fmt::Display for RootedLambdaPool<Expr> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = self.string(self.root(), VarContext::default());
+        let string = self.string(self.root(), Cow::Owned(VarContext::default()));
         write!(f, "{string}")
     }
 }
@@ -339,10 +339,11 @@ impl RootedLambdaPool<Expr> {
             .to_pool(labels)
     }
 
-    fn string(&self, expr: LambdaExprRef, c: VarContext) -> String {
+    fn string(&self, expr: LambdaExprRef, c: Cow<VarContext>) -> String {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
-                let (c, var) = c.inc_depth();
+                let (c, var) = c.into_owned().inc_depth();
+                let c = Cow::Owned(c);
                 format!(
                     "lambda {} {} ({})",
                     lambda_type,
@@ -367,7 +368,8 @@ impl RootedLambdaPool<Expr> {
                     restrictor,
                     subformula,
                 } => {
-                    let (c, var_string) = c.add_qvar(*var);
+                    let (c, var_string) = c.into_owned().add_qvar(*var);
+                    let c: Cow<VarContext> = Cow::Owned(c);
                     format!(
                         "{}{}({},{},{})",
                         quantifier,
