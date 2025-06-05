@@ -67,7 +67,7 @@ impl RootedLambdaPool<Expr> {
             .iter()
             .map(|x| (*x).clone())
             .collect::<Vec<_>>();
-        let context = context.to_owned_lambdas(&lambdas);
+        let context = context.into_owned_lambdas(&lambdas);
 
         let (root, pool) = (self.root, self.pool);
 

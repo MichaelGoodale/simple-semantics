@@ -295,23 +295,23 @@ enum Var {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-struct VarContext {
+pub(super) struct VarContext {
     vars: HashMap<Var, usize>,
     depth: usize,
 }
 
 impl VarContext {
-    fn inc_depth(mut self) -> (Self, String) {
+    pub(super) fn inc_depth(mut self) -> (Self, String) {
         let n_var = self.vars.len();
         self.vars.insert(Var::Depth(self.depth), n_var);
         self.depth += 1;
         (self, to_var(n_var))
     }
 
-    fn lambda_var(&self, bvar: usize) -> String {
+    pub(super) fn lambda_var(&self, bvar: usize) -> String {
         to_var(*self.vars.get(&Var::Depth(self.depth - bvar - 1)).unwrap())
     }
-    fn q_var(&self, var: Variable) -> String {
+    pub(super) fn q_var(&self, var: Variable) -> String {
         to_var(
             self.vars
                 .get(&Var::Quantifier(var))
@@ -324,7 +324,7 @@ impl VarContext {
         )
     }
 
-    fn add_qvar(mut self, x: Variable) -> (Self, String) {
+    pub(super) fn add_qvar(mut self, x: Variable) -> (Self, String) {
         let n_var = self.vars.len();
         self.vars.insert(Var::Quantifier(x), n_var);
         (self, to_var(n_var))

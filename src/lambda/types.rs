@@ -25,7 +25,7 @@ impl From<Vec<Rich<'_, char>>> for TypeParsingError {
     }
 }
 
-impl<'a> Display for TypeParsingError {
+impl Display for TypeParsingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{}", self.0)
     }

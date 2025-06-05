@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::LabelledScenarios;
-use crate::lambda::{LambdaExpr, LambdaPool, RootedLambdaPool};
+use crate::lambda::RootedLambdaPool;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 use lambda_implementation::to_var;
 

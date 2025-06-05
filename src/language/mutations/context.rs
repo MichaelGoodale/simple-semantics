@@ -16,7 +16,7 @@ impl<'t> Context<'t> {
         self.depth
     }
 
-    pub fn to_owned_lambdas<'b>(self, new_lambdas: &'b [LambdaType]) -> Context<'b> {
+    pub fn into_owned_lambdas<'b>(self, new_lambdas: &'b [LambdaType]) -> Context<'b> {
         Context {
             lambdas: new_lambdas.iter().collect(),
             available_vars: self.available_vars,
