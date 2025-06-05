@@ -292,7 +292,30 @@ impl LabelledScenarios {
         *self
             .actor_labels
             .entry(label.to_string())
-            .or_insert(n as u16)
+            .or_insert(n as Actor)
+    }
+
+    //These probably could be made faster in O(n) terms with a Bimap but the scales are so small
+    //that its probably not worth the overhead.
+
+    pub fn from_actor(&self, actor: Actor) -> Option<&str> {
+        self.actor_labels
+            .iter()
+            .find(|(_, a)| **a == actor)
+            .map(|(s, _)| s.as_str())
+    }
+
+    pub fn from_prop(&self, prop: PropertyLabel) -> Option<&str> {
+        self.property_labels
+            .iter()
+            .find(|(_, p)| **p == prop)
+            .map(|(s, _)| s.as_str())
+    }
+    pub fn from_fvar(&self, fvar: Fvar) -> Option<&str> {
+        self.free_variables
+            .iter()
+            .find(|(_, v)| **v == fvar)
+            .map(|(s, _)| s.as_str())
     }
 }
 

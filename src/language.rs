@@ -56,6 +56,15 @@ pub enum ActorOrEvent {
     Event,
 }
 
+impl Display for ActorOrEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActorOrEvent::Actor => write!(f, "a"),
+            ActorOrEvent::Event => write!(f, "e"),
+        }
+    }
+}
+
 impl ActorOrEvent {
     fn to_variable(self, n: u32) -> Variable {
         match self {
@@ -152,17 +161,8 @@ pub struct LanguageExpression {
 
 impl Display for LanguageExpression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let z = RootedLambdaPool {
-            pool: LambdaPool::from(
-                self.pool
-                    .0
-                    .iter()
-                    .map(|x| LambdaExpr::LanguageOfThoughtExpr(*x))
-                    .collect(),
-            ),
-            root: crate::lambda::LambdaExprRef(self.start.0),
-        };
-        write!(f, "{z}")
+        let x: RootedLambdaPool<Expr> = self.clone().into();
+        write!(f, "{x}")
     }
 }
 
