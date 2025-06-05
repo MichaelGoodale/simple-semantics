@@ -1,7 +1,13 @@
 use divan::AllocProfiler;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use simple_semantics::lambda::{RootedLambdaPool, types::LambdaType};
+use simple_semantics::{
+    LabelledScenarios, LanguageExpression,
+    lambda::{
+        RootedLambdaPool,
+        types::{LambdaType, TypeParsingError},
+    },
+};
 
 #[global_allocator]
 static ALLOC: AllocProfiler = AllocProfiler::system();
@@ -13,7 +19,7 @@ fn main() {
 
 // Register a `fibonacci` function and benchmark it over multiple cases.
 #[divan::bench(args = ["a", "<a,t>", "<<a,<t,t>>"])]
-fn parsing(s: &str) -> anyhow::Result<LambdaType> {
+fn parsing(s: &str) -> Result<LambdaType, TypeParsingError> {
     LambdaType::from_string(s)
 }
 
@@ -30,17 +36,17 @@ fn constant_types() -> [&'static LambdaType; 6] {
 }
 
 #[divan::bench(args = [("a", "<a,t>"), ("<a,<a,<e,t>>>", "<<a,<a,<e,t>>>,<a,<e,t>>>")])]
-fn complicated_application(args: (&str, &str)) -> LambdaType {
+fn complicated_application(bencher: divan::Bencher, args: (&str, &str)) {
     let (alpha, beta) = divan::black_box((
         LambdaType::from_string(args.0).unwrap(),
         LambdaType::from_string(args.1).unwrap(),
     ));
 
-    beta.apply(&alpha).unwrap().clone()
+    bencher.bench(|| beta.apply(&alpha).unwrap().clone())
 }
 #[divan::bench]
 fn random_types() {
-    let mut rng = divan::black_box(ChaCha8Rng::seed_from_u64(32));
+    let mut rng = ChaCha8Rng::seed_from_u64(32);
     for _ in 0..100 {
         LambdaType::random(&mut rng);
     }
@@ -48,7 +54,7 @@ fn random_types() {
 
 #[divan::bench]
 fn random_exprs() {
-    let mut rng = divan::black_box(ChaCha8Rng::seed_from_u64(32));
+    let mut rng = ChaCha8Rng::seed_from_u64(32);
     let actors = &[1, 2, 3, 4, 5];
     let actor_properties = &[1, 2, 3, 4, 5];
     let event_properties = &[1, 2, 3, 4, 5];
@@ -64,4 +70,26 @@ fn random_exprs() {
         )
         .unwrap();
     }
+}
+
+#[divan::bench(args = ["every_e(x,pe_dance,AgentOf(a_Phil,x))",
+"every_e(x,pe_dance,AgentOf(a_Mary,x))",
+"(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))"])]
+fn to_string(bencher: divan::Bencher, s: &str) {
+    let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
+
+    let mut labels = LabelledScenarios::parse(scenario).unwrap();
+    let a = LanguageExpression::parse(s, &mut labels).unwrap();
+    bencher.bench(|| a.to_string());
+}
+
+#[divan::bench(args = ["lambda a z (every_e(x,pe_dance,AgentOf(z,x)))",
+"lambda <a,<a,t>> P (every_e(x,pe_dance, (P(a_Mary))(x)))",
+"lambda a r ((every_e(x,pe_dance,AgentOf(r,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x))))"])]
+fn lambda_string(bencher: divan::Bencher, s: &str) {
+    let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
+
+    let mut labels = LabelledScenarios::parse(scenario).unwrap();
+    let a = RootedLambdaPool::parse(s, &mut labels).unwrap();
+    bencher.bench(|| a.to_string());
 }
