@@ -3,9 +3,7 @@ use chumsky::{prelude::*, text::inline_whitespace};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::language::{LambdaParseError, lot_parser};
-use crate::{
-    Actor, Entity, Event, LabelledScenarios, PropertyLabel, Scenario, ThetaRoles, lambda::Fvar,
-};
+use crate::{Actor, Entity, Event, LabelledScenarios, Scenario, ThetaRoles};
 
 struct StringThetaRole<'a> {
     agent: Option<&'a str>,
@@ -14,11 +12,11 @@ struct StringThetaRole<'a> {
 
 struct StringEvents<'a> {
     events: Vec<StringThetaRole<'a>>,
-    event_props: ahash::HashMap<&'a str, Vec<Entity>>,
+    event_props: ahash::HashMap<&'a str, Vec<Entity<'a>>>,
 }
 
 pub fn scenario_parser<'a>()
--> impl Parser<'a, &'a str, Result<LabelledScenarios, LambdaParseError>, extra::Err<Rich<'a, char>>>
+-> impl Parser<'a, &'a str, Result<LabelledScenarios<'a>, LambdaParseError>, extra::Err<Rich<'a, char>>>
 {
     let string = none_of("\"")
         .repeated()
@@ -268,55 +266,6 @@ fn add_scenario<'a>(
 
     training_dataset.1.extend(s.clone());
     training_dataset.0.sentences.push(s);
-}
-
-impl LabelledScenarios {
-    pub fn get_free_variable(&mut self, label: &str) -> Fvar {
-        let n = self.free_variables.len();
-        *self
-            .free_variables
-            .entry(label.to_string())
-            .or_insert(n as Fvar)
-    }
-
-    pub fn get_property_label(&mut self, label: &str) -> PropertyLabel {
-        let n = self.property_labels.len();
-        *self
-            .property_labels
-            .entry(label.to_string())
-            .or_insert(n as u32)
-    }
-
-    pub fn get_actor_label(&mut self, label: &str) -> Actor {
-        let n = self.actor_labels.len();
-        *self
-            .actor_labels
-            .entry(label.to_string())
-            .or_insert(n as Actor)
-    }
-
-    //These probably could be made faster in O(n) terms with a Bimap but the scales are so small
-    //that its probably not worth the overhead.
-
-    pub fn from_actor(&self, actor: Actor) -> Option<&str> {
-        self.actor_labels
-            .iter()
-            .find(|(_, a)| **a == actor)
-            .map(|(s, _)| s.as_str())
-    }
-
-    pub fn from_prop(&self, prop: PropertyLabel) -> Option<&str> {
-        self.property_labels
-            .iter()
-            .find(|(_, p)| **p == prop)
-            .map(|(s, _)| s.as_str())
-    }
-    pub fn from_fvar(&self, fvar: Fvar) -> Option<&str> {
-        self.free_variables
-            .iter()
-            .find(|(_, v)| **v == fvar)
-            .map(|(s, _)| s.as_str())
-    }
 }
 
 #[cfg(test)]

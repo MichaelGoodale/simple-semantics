@@ -63,8 +63,7 @@ const RESERVED_KEYWORDS: [&str; 11] = [
 impl<'src> ParseTree<'src> {
     fn add_to_pool(
         &'src self,
-        pool: &mut LambdaPool<Expr>,
-        labels: &mut LabelledScenarios,
+        pool: &mut LambdaPool<Expr<'src>>,
         variable_names: &mut VariableContext<'src>,
         lambda_depth: usize,
     ) -> Result<LambdaExprRef, LambdaParseError> {
@@ -154,14 +153,11 @@ impl<'src> ParseTree<'src> {
         Ok(pool.add(expr))
     }
 
-    fn to_pool(
-        &self,
-        labels: &mut LabelledScenarios,
-    ) -> Result<RootedLambdaPool<Expr>, LambdaParseError> {
+    fn to_pool(&self) -> Result<RootedLambdaPool<Expr<'src>>, LambdaParseError> {
         let mut pool = LambdaPool::new();
 
         let mut var_labels = VariableContext::default();
-        let root = self.add_to_pool(&mut pool, labels, &mut var_labels, 0)?;
+        let root = self.add_to_pool(&mut pool, &mut var_labels, 0)?;
         Ok(RootedLambdaPool::new(pool, root))
     }
 }
@@ -245,8 +241,8 @@ enum ParseTree<'src> {
         subformula: Box<ParseTree<'src>>,
         argument: Box<ParseTree<'src>>,
     },
-    Constant(LabeledConstant<'src>),
-    Unary(LabeledProperty<'src>, Box<ParseTree<'src>>),
+    Constant(Constant<'src>),
+    Unary(MonOp<'src>, Box<ParseTree<'src>>),
     Binary(BinOp, Box<ParseTree<'src>>, Box<ParseTree<'src>>),
     Quantifier {
         quantifier: Quantifier,
@@ -255,13 +251,7 @@ enum ParseTree<'src> {
         restrictor: Box<ParseTree<'src>>,
         subformula: Box<ParseTree<'src>>,
     },
-    Entity(LabeledEntity<'src>),
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum LabeledEntity<'a> {
-    Unlabeled(Entity),
-    LabeledActor(&'a str),
+    Entity(Entity<'src>),
 }
 
 fn entity<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Copy
@@ -271,21 +261,13 @@ where
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    let actor_or_event_number = one_of("ae")
-        .then(text::int(10))
-        .map(|(c, num): (char, &str)| {
-            LabeledEntity::Unlabeled(match c {
-                'a' => Entity::Actor(num.parse().unwrap()),
-                'e' => Entity::Event(num.parse().unwrap()),
-                _ => panic!("Unreachable because of one_of"),
-            })
-        });
+    let event = just("e_")
+        .ignore_then(text::int(10))
+        .map(|num: &str| Entity::Event(num.parse().unwrap()));
 
-    let actor_or_event_keyword = just("a_")
-        .ignore_then(text::ident())
-        .map(LabeledEntity::LabeledActor);
+    let actor = just("a_").ignore_then(text::ident()).map(Entity::Actor);
 
-    choice((actor_or_event_keyword, actor_or_event_number))
+    choice((actor, event))
         .map(ParseTree::Entity)
         .labelled("entity")
 }
@@ -299,19 +281,7 @@ where
         just("True").to(Constant::Tautology),
         just("False").to(Constant::Contradiction),
     ))
-    .map(|x| ParseTree::Constant(LabeledConstant::Constant(x)))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LabeledConstant<'a> {
-    Constant(Constant),
-    LabeledProperty(&'a str, ActorOrEvent),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LabeledProperty<'a> {
-    Property(MonOp),
-    LabeledProperty(&'a str, ActorOrEvent),
+    .map(ParseTree::Constant)
 }
 
 fn properties<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
@@ -332,18 +302,9 @@ where
                     .to(ActorOrEvent::Actor)
                     .or(just("e").to(ActorOrEvent::Event)),
             )
-            .then(text::int(10))
-            .map(|(a, p): (_, &str)| MonOp::Property(p.parse().unwrap(), a))
-            .map(LabeledProperty::Property)
-            .or(just("p")
-                .ignore_then(
-                    just("a")
-                        .to(ActorOrEvent::Actor)
-                        .or(just("e").to(ActorOrEvent::Event)),
-                )
-                .then_ignore(just("_"))
-                .then(text::ident())
-                .map(|(a, p)| LabeledProperty::LabeledProperty(p, a)))
+            .then_ignore(just("_"))
+            .then(text::ident())
+            .map(|(a, s)| MonOp::Property(s, a))
             .then(entity_or_var.clone())
             .map(|(x, arg)| ParseTree::Unary(x, Box::new(arg))),
         variable()
@@ -364,25 +325,15 @@ where
     choice((
         just("all_a").to(Constant::Everyone),
         just("all_e").to(Constant::EveryEvent),
-        just("p")
+        just("p_")
             .ignore_then(
                 just("a")
                     .to(ActorOrEvent::Actor)
                     .or(just("e").to(ActorOrEvent::Event)),
             )
-            .then(text::int(10))
-            .map(|(a, p): (_, &str)| Constant::Property(p.parse().unwrap(), a)),
+            .then(text::ident())
+            .map(|(a, p): (_, &str)| Constant::Property(p, a)),
     ))
-    .map(LabeledConstant::Constant)
-    .or(just("p")
-        .ignore_then(
-            just("a")
-                .to(ActorOrEvent::Actor)
-                .or(just("e").to(ActorOrEvent::Event)),
-        )
-        .then_ignore(just("_"))
-        .then(text::ident())
-        .map(|(a, p)| LabeledConstant::LabeledProperty(p, a)))
     .map(ParseTree::Constant)
 }
 
@@ -467,9 +418,9 @@ where
             .or(variable())
             .or(expr.clone().delimited_by(just('('), just(')')));
 
-        let neg = just("~").repeated().foldr(atom, |_, b| {
-            ParseTree::Unary(LabeledProperty::Property(MonOp::Not), Box::new(b))
-        });
+        let neg = just("~")
+            .repeated()
+            .foldr(atom, |_, b| ParseTree::Unary(MonOp::Not, Box::new(b)));
 
         let non_quantified = neg.clone().foldl(
             choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
@@ -537,16 +488,11 @@ where
     })
 }
 
-type ExtraType<'a> = extra::Full<Rich<'a, char>, extra::SimpleState<LabelledScenarios>, ()>;
-
 pub struct UnprocessedParseTree<'a>(ParseTree<'a>);
 
-impl UnprocessedParseTree<'_> {
-    pub fn to_pool(
-        &self,
-        labels: &mut LabelledScenarios,
-    ) -> Result<RootedLambdaPool<Expr>, LambdaParseError> {
-        self.0.to_pool(labels)
+impl<'a> UnprocessedParseTree<'a> {
+    pub fn to_pool(&self) -> Result<RootedLambdaPool<Expr<'a>>, LambdaParseError> {
+        self.0.to_pool()
     }
 }
 
@@ -562,15 +508,12 @@ where
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
-pub fn parse_executable(
-    s: &str,
-    labels: &mut LabelledScenarios,
-) -> Result<LanguageExpression, LambdaParseError> {
+pub fn parse_executable<'a>(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
     let mut pool = language_parser::<extra::Err<Rich<char>>>()
         .then_ignore(end())
         .parse(s)
         .into_result()?
-        .to_pool(labels)?;
+        .to_pool()?;
     pool.reduce()?;
     Ok(pool.into_pool()?)
 }

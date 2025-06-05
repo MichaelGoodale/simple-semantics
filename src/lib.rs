@@ -1,50 +1,50 @@
 #![allow(dead_code)]
 use ahash::{HashSet, RandomState};
 use chumsky::prelude::*;
-use lambda::{Fvar, RootedLambdaPool};
+use lambda::RootedLambdaPool;
 use language::{Expr, LambdaParseError};
-use std::{collections::HashMap, fmt::Display, path::Path};
+use std::{collections::HashMap, fmt::Display};
 
-pub type Actor = u16;
+pub type Actor<'a> = &'a str;
 pub type Event = u8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Entity {
-    Actor(Actor),
+pub enum Entity<'a> {
+    Actor(Actor<'a>),
     Event(Event),
 }
 
-impl Display for Entity {
+impl Display for Entity<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Entity::Actor(a) => write!(f, "a{a}"),
-            Entity::Event(a) => write!(f, "e{a}"),
+            Entity::Actor(a) => write!(f, "a_{a}"),
+            Entity::Event(a) => write!(f, "e_{a}"),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Eq)]
-pub struct ThetaRoles {
-    pub agent: Option<Actor>,
-    pub patient: Option<Actor>,
+pub struct ThetaRoles<'a> {
+    pub agent: Option<Actor<'a>>,
+    pub patient: Option<Actor<'a>>,
 }
 
-pub type PropertyLabel = u32;
+pub type PropertyLabel<'a> = &'a str;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Scenario {
-    actors: Vec<Actor>,
-    thematic_relations: Vec<ThetaRoles>,
-    properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
-    question: Option<RootedLambdaPool<Expr>>,
+pub struct Scenario<'a> {
+    actors: Vec<Actor<'a>>,
+    thematic_relations: Vec<ThetaRoles<'a>>,
+    properties: HashMap<PropertyLabel<'a>, Vec<Entity<'a>>, RandomState>,
+    question: Option<RootedLambdaPool<Expr<'a>>>,
 }
 
-impl Scenario {
+impl<'a> Scenario<'a> {
     pub fn new(
-        actors: Vec<Actor>,
-        thematic_relations: Vec<ThetaRoles>,
-        properties: HashMap<PropertyLabel, Vec<Entity>, RandomState>,
-    ) -> Scenario {
+        actors: Vec<Actor<'a>>,
+        thematic_relations: Vec<ThetaRoles<'a>>,
+        properties: HashMap<PropertyLabel<'a>, Vec<Entity<'a>>, RandomState>,
+    ) -> Scenario<'a> {
         Scenario {
             actors,
             thematic_relations,
@@ -68,7 +68,7 @@ impl Scenario {
         self.question.as_ref()
     }
 
-    pub fn question_mut(&mut self) -> &mut Option<RootedLambdaPool<Expr>> {
+    pub fn question_mut(&mut self) -> &mut Option<RootedLambdaPool<Expr<'a>>> {
         &mut self.question
     }
 
@@ -78,37 +78,28 @@ impl Scenario {
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
-pub struct LabelledScenarios {
-    scenarios: Vec<Scenario>,
-    sentences: Vec<Vec<String>>,
-    lemmas: Vec<String>,
-    property_labels: HashMap<String, PropertyLabel, RandomState>,
-    actor_labels: HashMap<String, Actor, RandomState>,
-    free_variables: HashMap<String, Fvar, RandomState>,
+pub struct LabelledScenarios<'a> {
+    scenarios: Vec<Scenario<'a>>,
+    sentences: Vec<Vec<&'a str>>,
+    lemmas: Vec<&'a str>,
 }
 
-impl LabelledScenarios {
+impl<'a> LabelledScenarios<'a> {
     pub fn new(
-        scenarios: Vec<Scenario>,
-        sentences: Vec<Vec<String>>,
-        lemmas: HashSet<String>,
-        property_labels: HashMap<String, PropertyLabel, RandomState>,
-        actor_labels: HashMap<String, Actor, RandomState>,
-        free_variables: HashMap<String, Fvar, RandomState>,
+        scenarios: Vec<Scenario<'a>>,
+        sentences: Vec<Vec<&'a str>>,
+        lemmas: HashSet<&'a str>,
     ) -> Self {
-        let mut lemmas: Vec<String> = lemmas.into_iter().collect();
+        let mut lemmas: Vec<_> = lemmas.into_iter().collect();
         lemmas.sort();
         LabelledScenarios {
             scenarios,
             sentences,
             lemmas,
-            property_labels,
-            actor_labels,
-            free_variables,
         }
     }
 
-    pub fn iter_scenarios_mut(&mut self) -> impl Iterator<Item = &mut Scenario> {
+    pub fn iter_scenarios_mut(&mut self) -> impl Iterator<Item = &mut Scenario<'a>> {
         self.scenarios.iter_mut()
     }
 
@@ -116,26 +107,19 @@ impl LabelledScenarios {
         self.scenarios.iter()
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut Scenario, &mut Vec<String>)> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut Scenario<'a>, &mut Vec<&'a str>)> {
         self.scenarios.iter_mut().zip(self.sentences.iter_mut())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&Scenario, &Vec<String>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Scenario<'a>, &Vec<&'a str>)> {
         self.scenarios.iter().zip(self.sentences.iter())
     }
 
-    pub fn lemmas(&self) -> &[String] {
+    pub fn lemmas(&self) -> &[&'a str] {
         &self.lemmas
     }
 
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, LambdaParseError> {
-        let file_data = std::fs::read_to_string(path).unwrap();
-        let parser = scenario::scenario_parser();
-        let parse = parser.parse(&file_data).into_result();
-        parse?
-    }
-
-    pub fn parse(s: &str) -> Result<Self, LambdaParseError> {
+    pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         let parser = scenario::scenario_parser();
         let parse = parser.parse(s).into_result();
         parse?

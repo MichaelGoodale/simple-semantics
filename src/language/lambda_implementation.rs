@@ -36,8 +36,8 @@ pub enum LambdaConversionError {
     ReductionError(#[from] ReductionError),
 }
 
-impl LambdaLanguageOfThought for Expr {
-    type Pool = LanguageExpression;
+impl<'a> LambdaLanguageOfThought for Expr<'a> {
+    type Pool = LanguageExpression<'a>;
     type ConversionError = LambdaConversionError;
 
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
@@ -227,7 +227,7 @@ impl LambdaLanguageOfThought for Expr {
         }
     }
 
-    fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a> {
+    fn get_arguments<'b>(&'b self) -> Box<dyn Iterator<Item = LambdaType> + 'b> {
         match self {
             Expr::Quantifier {
                 var: Variable::Actor(_),
@@ -264,7 +264,7 @@ impl LambdaLanguageOfThought for Expr {
     }
 }
 
-impl std::fmt::Display for RootedLambdaPool<Expr> {
+impl<'a> std::fmt::Display for RootedLambdaPool<Expr<'a>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let string = self.string(self.root(), VarContext::default(), None);
         write!(f, "{string}")
@@ -331,8 +331,8 @@ impl VarContext {
     }
 }
 
-impl From<LanguageExpression> for RootedLambdaPool<Expr> {
-    fn from(value: LanguageExpression) -> Self {
+impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<Expr<'a>> {
+    fn from(value: LanguageExpression<'a>) -> Self {
         RootedLambdaPool {
             pool: LambdaPool::from(
                 value
@@ -347,23 +347,12 @@ impl From<LanguageExpression> for RootedLambdaPool<Expr> {
     }
 }
 
-impl LanguageExpression {
-    pub fn to_labeled_string(&self, labels: &LabelledScenarios) -> String {
-        let x: RootedLambdaPool<Expr> = self.clone().into();
-        x.string(x.root(), VarContext::default(), Some(labels))
-    }
-}
-
-impl RootedLambdaPool<Expr> {
-    pub fn parse(s: &str, labels: &mut LabelledScenarios) -> Result<Self, LambdaParseError> {
-        lot_parser::<extra::Err<Rich<_>>>()
+impl<'a> RootedLambdaPool<Expr<'a>> {
+    pub fn parse(s: &'a str, labels: &mut LabelledScenarios<'a>) -> Result<Self, LambdaParseError> {
+        lot_parser::<'a, extra::Err<Rich<_>>>()
             .parse(s)
             .into_result()?
             .to_pool(labels)
-    }
-
-    pub fn to_labeled_string(&self, labels: &LabelledScenarios) -> String {
-        self.string(self.root(), VarContext::default(), Some(labels))
     }
 
     fn string(
@@ -384,13 +373,7 @@ impl RootedLambdaPool<Expr> {
             }
             LambdaExpr::BoundVariable(bvar, _) => c.lambda_var(*bvar),
             LambdaExpr::FreeVariable(fvar, t) => {
-                if let Some(x) = labels {
-                    x.from_fvar(*fvar)
-                        .map(|x| format!("{x}#{t}"))
-                        .unwrap_or_else(|| format!("{fvar}#{t}"))
-                } else {
-                    format!("{fvar}#{t}")
-                }
+                format!("{fvar}#{t}")
             }
 
             LambdaExpr::Application {
@@ -423,13 +406,7 @@ impl RootedLambdaPool<Expr> {
                 }
                 Expr::Variable(variable) => c.q_var(*variable),
                 Expr::Actor(a) => {
-                    if let Some(x) = labels {
-                        x.from_actor(*a)
-                            .map(|x| format!("a_{x}"))
-                            .unwrap_or_else(|| format!("a{a}"))
-                    } else {
-                        format!("a{a}")
-                    }
+                    format!("a_{a}")
                 }
                 Expr::Event(e) => format!("e{e}"),
                 Expr::Binary(bin_op, x, y) => match bin_op {
@@ -450,22 +427,9 @@ impl RootedLambdaPool<Expr> {
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
-                    let mon_s = match (mon_op, labels) {
-                        (MonOp::Property(p, t), Some(labels)) => labels
-                            .from_prop(*p)
-                            .map(|x| format!("p{t}_{x}"))
-                            .unwrap_or_else(|| format!("{}", MonOp::Property(*p, *t))),
-                        _ => mon_op.to_string(),
-                    };
-                    format!("{mon_s}({})", self.string(LambdaExprRef(arg.0), c, labels))
+                    format!("{mon_op}({})", self.string(LambdaExprRef(arg.0), c, labels))
                 }
-                Expr::Constant(constant) => match (constant, labels) {
-                    (Constant::Property(p, t), Some(labels)) => labels
-                        .from_prop(*p)
-                        .map(|x| format!("p{t}_{x}"))
-                        .unwrap_or_else(|| format!("{}", Constant::Property(*p, *t))),
-                    _ => format!("{constant}"),
-                },
+                Expr::Constant(constant) => format!("{constant}"),
             },
         }
     }
