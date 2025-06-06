@@ -2,7 +2,7 @@ use divan::AllocProfiler;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use simple_semantics::{
-    LabelledScenarios, LanguageExpression,
+    LanguageExpression, ScenarioDataset,
     lambda::{
         RootedLambdaPool,
         types::{LambdaType, TypeParsingError},
@@ -92,7 +92,7 @@ fn lambda_string(bencher: divan::Bencher, s: &str) {
 fn scenarios(bencher: divan::Bencher) {
     let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
 
-    let labels = LabelledScenarios::parse(scenario).unwrap();
+    let labels = ScenarioDataset::parse(scenario).unwrap();
 
     let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))").unwrap();
     let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))").unwrap();

@@ -627,7 +627,7 @@ mod serializations;
 
 #[cfg(test)]
 mod tests {
-    use crate::LabelledScenarios;
+    use crate::ScenarioDataset;
     use std::collections::HashMap;
 
     use ahash::RandomState;
@@ -1089,7 +1089,7 @@ mod tests {
     fn weird_and_not_behaviour() -> anyhow::Result<()> {
         let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
 
-        let labels = LabelledScenarios::parse(scenario)?;
+        let labels = ScenarioDataset::parse(scenario)?;
 
         let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))")?;
         let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))")?;

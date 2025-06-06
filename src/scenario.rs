@@ -3,10 +3,10 @@ use chumsky::{prelude::*, text::inline_whitespace};
 use std::collections::HashMap;
 
 use crate::language::{LambdaParseError, lot_parser};
-use crate::{Actor, Entity, Event, LabelledScenarios, Scenario, ThetaRoles};
+use crate::{Actor, Entity, Event, Scenario, ScenarioDataset, ThetaRoles};
 
 pub fn scenario_parser<'a>()
--> impl Parser<'a, &'a str, Result<LabelledScenarios<'a>, LambdaParseError>, extra::Err<Rich<'a, char>>>
+-> impl Parser<'a, &'a str, Result<ScenarioDataset<'a>, LambdaParseError>, extra::Err<Rich<'a, char>>>
 {
     let string = none_of("\"")
         .repeated()
@@ -143,7 +143,7 @@ pub fn scenario_parser<'a>()
     scenario
         .clone()
         .map(|((s, actors, actor_props, events), lot)| {
-            let mut dataset = (LabelledScenarios::default(), HashSet::default());
+            let mut dataset = (ScenarioDataset::default(), HashSet::default());
             add_scenario(&mut dataset, s, actors, actor_props, events);
             (dataset, vec![lot])
         })
@@ -189,7 +189,7 @@ type EventParseType<'a> = Option<(
 )>;
 
 fn add_scenario<'a>(
-    training_dataset: &mut (LabelledScenarios<'a>, HashSet<&'a str>),
+    training_dataset: &mut (ScenarioDataset<'a>, HashSet<&'a str>),
     s: &'a str,
     actors: Vec<Actor<'a>>,
     actor_props: HashMap<&'a str, Vec<&'a str>, RandomState>,

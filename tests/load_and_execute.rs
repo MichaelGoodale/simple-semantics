@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use simple_semantics::{Entity, LabelledScenarios, LanguageResult, Scenario, ThetaRoles};
+use simple_semantics::{Entity, LanguageResult, Scenario, ScenarioDataset, ThetaRoles};
 
 fn get_resource_path() -> anyhow::Result<PathBuf> {
     let cargo_path = std::env::var("CARGO_MANIFEST_DIR")?;
@@ -14,7 +14,7 @@ fn get_resource_path() -> anyhow::Result<PathBuf> {
 fn load_dataset() -> anyhow::Result<()> {
     let path = get_resource_path()?.join("testfile.scenario");
     let file = std::fs::read_to_string(path)?;
-    let parsed_data = LabelledScenarios::parse(&file)?;
+    let parsed_data = ScenarioDataset::parse(&file)?;
 
     let scenarios = vec![
         Scenario::new(
@@ -43,7 +43,7 @@ fn load_dataset() -> anyhow::Result<()> {
         ),
     ];
 
-    let data = LabelledScenarios::new(
+    let data = ScenarioDataset::new(
         scenarios,
         ["John ran", "Mary ran", "John saw Mary"]
             .map(|x| x.split(" ").collect::<Vec<_>>())
@@ -70,7 +70,7 @@ fn load_dataset() -> anyhow::Result<()> {
 fn lambda_stuff() -> anyhow::Result<()> {
     let path = get_resource_path()?.join("men.scenario");
     let file = std::fs::read_to_string(path)?;
-    let parsed_data = LabelledScenarios::parse(&file)?;
+    let parsed_data = ScenarioDataset::parse(&file)?;
 
     let executable = simple_semantics::parse_executable(
         "every(x,pa_man, some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",

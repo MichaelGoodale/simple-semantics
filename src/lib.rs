@@ -78,13 +78,13 @@ impl<'a> Scenario<'a> {
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
-pub struct LabelledScenarios<'a> {
+pub struct ScenarioDataset<'a> {
     scenarios: Vec<Scenario<'a>>,
     sentences: Vec<Vec<&'a str>>,
     lemmas: Vec<&'a str>,
 }
 
-impl<'a> LabelledScenarios<'a> {
+impl<'a> ScenarioDataset<'a> {
     pub fn new(
         scenarios: Vec<Scenario<'a>>,
         sentences: Vec<Vec<&'a str>>,
@@ -92,7 +92,7 @@ impl<'a> LabelledScenarios<'a> {
     ) -> Self {
         let mut lemmas: Vec<_> = lemmas.into_iter().collect();
         lemmas.sort();
-        LabelledScenarios {
+        ScenarioDataset {
             scenarios,
             sentences,
             lemmas,
