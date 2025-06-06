@@ -431,49 +431,14 @@ mod test {
     use super::to_var;
 
     use crate::{
-        Entity, LabelledScenarios, Scenario, ThetaRoles, lambda::RootedLambdaPool,
-        language::lot_parser, parse_executable,
+        Entity, Scenario, ThetaRoles, lambda::RootedLambdaPool, language::lot_parser,
+        parse_executable,
     };
 
-    use ahash::HashMap;
     use chumsky::prelude::*;
 
     #[test]
     fn fancy_printing() -> anyhow::Result<()> {
-        let mut properties = HashMap::default();
-
-        properties.insert(1, vec![Entity::Actor(1)]);
-        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
-
-        let simple_scenario = Scenario {
-            question: None,
-            actors: vec![0, 1],
-            thematic_relations: vec![
-                ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
-                },
-                ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
-                },
-            ],
-            properties,
-        };
-
-        let actor_labels =
-            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
-        let property_labels =
-            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
-        let mut labels = LabelledScenarios {
-            scenarios: vec![simple_scenario.clone()],
-            actor_labels,
-            property_labels,
-            free_variables: HashMap::default(),
-            sentences: vec![],
-            lemmas: vec![],
-        };
-
         for statement in [
             "~(AgentOf(a_John,e0))",
             "(pa_Red(a_John) & ~(pa_Red(a_Mary)))",
@@ -482,12 +447,12 @@ mod test {
             "every(x,pa5,pa10(a59))",
             "every_e(x,all_e,PatientOf(a_Mary,x))",
         ] {
-            let expression = parse_executable(statement, &mut labels)?;
-            assert_eq!(expression.to_labeled_string(&labels), statement);
+            let expression = parse_executable(statement)?;
+            assert_eq!(expression.to_string(), statement);
         }
         for s in ["(cool#<a,t>)(a_John)", "(bad#<a,t>)(man#a)"] {
-            let p = RootedLambdaPool::parse(s, &mut labels)?;
-            assert_eq!(p.to_labeled_string(&labels), s);
+            let p = RootedLambdaPool::parse(s)?;
+            assert_eq!(p.to_string(), s);
         }
 
         Ok(())
@@ -495,16 +460,15 @@ mod test {
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let john = parser.parse("a_j").unwrap().to_pool(&mut labels)?;
+        let john = parser.parse("a_j").unwrap().to_pool()?;
         let likes = parser
             .parse(
                 "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
             )
-            .unwrap().to_pool(&mut labels)?;
+            .unwrap().to_pool()?;
 
-        let mary = parser.parse("a_m").unwrap().to_pool(&mut labels)?;
+        let mary = parser.parse("a_m").unwrap().to_pool()?;
         let phi = mary.clone().merge(likes.clone()).unwrap();
         let mut phi = phi.merge(john.clone()).unwrap();
         phi.reduce()?;
@@ -537,12 +501,11 @@ mod test {
 
     #[test]
     fn printing() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let pool = parser
             .parse("some_e(x0,all_e,((AgentOf(x0,a1) & PatientOf(x0,a0)) & pe0(x0)))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
         assert_eq!(
             pool.to_string(),
             "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))"
@@ -551,12 +514,12 @@ mod test {
             .parse(
                 "lambda e x ((lambda e y (some(e, all_e, AgentOf(x, e) & PatientOf(y,e) & pe_likes(e)))))",
             )
-            .unwrap().to_pool(&mut labels)?;
+            .unwrap().to_pool()?;
 
         let s =
             "lambda e x (lambda e y (some(z,all_e,((AgentOf(x,z) & PatientOf(y,z)) & pe0(z)))))";
         assert_eq!(likes.to_string(), s,);
-        let likes2 = parser.parse(s).unwrap().to_pool(&mut labels)?;
+        let likes2 = parser.parse(s).unwrap().to_pool()?;
         assert_eq!(likes, likes2);
 
         Ok(())
@@ -564,19 +527,18 @@ mod test {
 
     #[test]
     fn fancy_quantification_reduction() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let pool = parser
-            .parse("every_e(x0,pe0(x0) & pe1(x0), pe2(x0))")
+            .parse("every_e(x0,pe_0(x0) & pe_1(x0), pe_2(x0))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
         let scenario = Scenario::new(
             vec![],
             vec![ThetaRoles::default(); 5],
             [
-                (0, vec![Entity::Event(1), Entity::Event(2)]),
-                (1, vec![Entity::Event(0), Entity::Event(1)]),
-                (2, vec![Entity::Event(1)]),
+                ("0", vec![Entity::Event(1), Entity::Event(2)]),
+                ("1", vec![Entity::Event(0), Entity::Event(1)]),
+                ("2", vec![Entity::Event(1)]),
             ]
             .into_iter()
             .collect(),
@@ -585,17 +547,17 @@ mod test {
         assert!(pool.into_pool()?.run(&scenario)?.try_into()?);
 
         let pool = parser
-            .parse("every_e(x0, lambda e x (pe0(x) & pe1(x)), pe2(x0))")
+            .parse("every_e(x0, lambda e x (pe_0(x) & pe_1(x)), pe_2(x0))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         let scenario = Scenario::new(
             vec![],
             vec![ThetaRoles::default(); 5],
             [
-                (0, vec![Entity::Event(1), Entity::Event(2)]),
-                (1, vec![Entity::Event(0), Entity::Event(1)]),
-                (2, vec![Entity::Event(1)]),
+                ("0", vec![Entity::Event(1), Entity::Event(2)]),
+                ("1", vec![Entity::Event(0), Entity::Event(1)]),
+                ("2", vec![Entity::Event(1)]),
             ]
             .into_iter()
             .collect(),

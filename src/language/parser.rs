@@ -506,6 +506,7 @@ mod tests {
     use crate::language::{ExprPool, LanguageResult, VariableBuffer};
     use crate::{LabelledScenarios, Scenario, ThetaRoles};
     use std::collections::HashMap;
+    use std::env::set_current_dir;
 
     #[test]
     fn parse_entity() {
@@ -531,17 +532,17 @@ mod tests {
 
         for (s, result) in [
             (
-                "AgentOf(a32, e2)",
+                "AgentOf(a_32, e_2)",
                 vec![
-                    Expr::Actor(32),
+                    Expr::Actor("32"),
                     Expr::Event(2),
                     Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
                 ],
             ),
             (
-                "PatientOf(a0, e1)",
+                "PatientOf(a_0, e_1)",
                 vec![
-                    Expr::Actor(0),
+                    Expr::Actor("0"),
                     Expr::Event(1),
                     Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
                 ],
@@ -564,52 +565,36 @@ mod tests {
             bool_literal::<extra::Err<Simple<_>>>()
                 .parse("True")
                 .unwrap(),
-            ParseTree::Constant(LabeledConstant::Constant(Constant::Tautology))
+            ParseTree::Constant(Constant::Tautology)
         );
         assert_eq!(
             bool_literal::<extra::Err<Simple<_>>>()
                 .parse("False")
                 .unwrap(),
-            ParseTree::Constant(LabeledConstant::Constant(Constant::Contradiction))
+            ParseTree::Constant(Constant::Contradiction)
         );
     }
 
     #[test]
     fn parse_sets() {
-        for n in [1, 6, 3, 4, 5, 100, 1032, 40343] {
-            let str = format!("pa{n}");
-            assert_eq!(
-                sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Constant(LabeledConstant::Constant(Constant::Property(
-                    n,
-                    ActorOrEvent::Actor
-                )))
-            );
-            let str = format!("pe{n}");
-            assert_eq!(
-                sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Constant(LabeledConstant::Constant(Constant::Property(
-                    n,
-                    ActorOrEvent::Event
-                ))),
-            );
-        }
         assert_eq!(
             sets::<extra::Err<Simple<_>>>().parse("all_e").unwrap(),
-            ParseTree::Constant(LabeledConstant::Constant(Constant::EveryEvent)),
+            ParseTree::Constant(Constant::EveryEvent),
         );
         assert_eq!(
             sets::<extra::Err<Simple<_>>>().parse("all_a").unwrap(),
-            ParseTree::Constant(LabeledConstant::Constant(Constant::Everyone)),
+            ParseTree::Constant(Constant::Everyone),
         );
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("pa_{keyword}");
             assert_eq!(
                 sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Constant(LabeledConstant::LabeledProperty(
-                    keyword,
-                    ActorOrEvent::Actor
-                )),
+                ParseTree::Constant(Constant::Property(keyword, ActorOrEvent::Actor)),
+            );
+            let str = format!("pe_{keyword}");
+            assert_eq!(
+                sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                ParseTree::Constant(Constant::Property(keyword, ActorOrEvent::Event)),
             );
         }
     }
@@ -625,7 +610,7 @@ mod tests {
         (pool, start)
     }
 
-    fn get_parse(s: &str, simple_scenario: &Scenario) -> LanguageResult {
+    fn get_parse<'a>(s: &'a str, simple_scenario: &'a Scenario) -> LanguageResult<'a> {
         let mut variables = VariableBuffer(vec![]);
         let (pool, root) = get_pool(s);
         pool.interp(root, simple_scenario, &mut variables).unwrap()
@@ -637,40 +622,6 @@ mod tests {
         gold_pool: LambdaPool<Expr>,
         gold_root: u32,
     ) -> anyhow::Result<()> {
-        print!("{statement}");
-        let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
-
-        properties.insert(1, vec![Entity::Actor(1)]);
-        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
-
-        let simple_scenario = Scenario {
-            question: None,
-            actors: vec![0, 1],
-            thematic_relations: vec![
-                ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
-                },
-                ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
-                },
-            ],
-            properties,
-        };
-
-        let actor_labels =
-            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
-        let property_labels =
-            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
-        let mut labels = LabelledScenarios {
-            scenarios: vec![simple_scenario],
-            actor_labels,
-            property_labels,
-            free_variables: HashMap::default(),
-            sentences: vec![],
-            lemmas: vec![],
-        };
         let (pool, root) = language_parser::<extra::Err<Rich<char>>>()
             .parse(statement)
             .into_result()
@@ -692,25 +643,6 @@ mod tests {
         assert_eq!(pool, gold_pool);
         assert_eq!(root, LambdaExprRef(gold_root));
 
-        //try again with the context-sensitive parser
-        let mut label_state = labels.clone();
-        let (pool, root) = lot_parser::<extra::Err<Rich<_>>>()
-            .parse(statement)
-            .into_result()
-            .map_err(|x| {
-                anyhow::Error::msg(
-                    x.into_iter()
-                        .map(|x| x.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            })?
-            .to_pool(&mut label_state)?
-            .into();
-
-        assert_eq!(pool, gold_pool);
-        assert_eq!(root, LambdaExprRef(gold_root));
-        println!(" is good!");
         Ok(())
     }
 
@@ -722,7 +654,7 @@ mod tests {
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property(1, ActorOrEvent::Event),
+                    MonOp::Property("Red", ActorOrEvent::Event),
                     ExprRef(0),
                 )),
                 LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::e().clone()),
@@ -745,11 +677,11 @@ mod tests {
             4,
         )?;
         check_lambdas(
-            "lambda <a,t> P (P(a0))",
+            "lambda <a,t> P (P(a_0))",
             "<<a,t>,t>",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::at().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(0)),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("0")),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
@@ -762,8 +694,8 @@ mod tests {
             "~hey#<e,t>(lol#e)",
             "t",
             LambdaPool::from(vec![
-                LambdaExpr::FreeVariable(0, LambdaType::et().clone()),
-                LambdaExpr::FreeVariable(1, LambdaType::e().clone()),
+                LambdaExpr::FreeVariable("hey", LambdaType::et().clone()),
+                LambdaExpr::FreeVariable("lol", LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
@@ -774,11 +706,11 @@ mod tests {
         )?;
 
         check_lambdas(
-            "(lambda <a,t> P (P(a0)))(lambda a x (pa_Red(x)))",
+            "(lambda <a,t> P (P(a_0)))(lambda a x (pa_Red(x)))",
             "t",
             LambdaPool::from(vec![
                 LambdaExpr::BoundVariable(0, LambdaType::at().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(0)),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("0")),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),
@@ -786,7 +718,7 @@ mod tests {
                 LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at().clone()),
                 LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property(1, ActorOrEvent::Actor),
+                    MonOp::Property("Red", ActorOrEvent::Actor),
                     ExprRef(4),
                 )),
                 LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::a().clone()),
@@ -814,43 +746,7 @@ mod tests {
 
     #[test]
     fn test_parse_with_beta_reduction() -> anyhow::Result<()> {
-        let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
-
-        properties.insert(1, vec![Entity::Actor(1)]);
-        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
-
-        let simple_scenario = Scenario {
-            question: None,
-            actors: vec![0, 1],
-            thematic_relations: vec![
-                ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
-                },
-                ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
-                },
-            ],
-            properties,
-        };
-
-        let actor_labels =
-            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
-        let property_labels =
-            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
-        let mut labels = LabelledScenarios {
-            scenarios: vec![simple_scenario],
-            actor_labels,
-            property_labels,
-            free_variables: HashMap::default(),
-            sentences: vec![],
-            lemmas: vec![],
-        };
-        parse_executable(
-            "(lambda <a,t> P (P(a0)))(lambda a x (pa_Red(x)))",
-            &mut labels,
-        )?;
+        parse_executable("(lambda <a,t> P (P(a_0)))(lambda a x (pa_Red(x)))")?;
         Ok(())
     }
 
@@ -858,36 +754,23 @@ mod tests {
     fn parse_with_keywords() -> anyhow::Result<()> {
         let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
 
-        properties.insert(1, vec![Entity::Actor(1)]);
-        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
+        properties.insert("Red", vec![Entity::Actor("John")]);
+        properties.insert("Blue", vec![Entity::Actor("Mary"), Entity::Actor("John")]);
 
-        let simple_scenario = Scenario {
+        let scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["Mary", "John"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
+                    agent: Some("Mary"),
+                    patient: Some("Mary"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
+                    agent: Some("John"),
+                    patient: Some("Mary"),
                 },
             ],
             properties,
-        };
-
-        let actor_labels =
-            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
-        let property_labels =
-            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
-        let mut labels = LabelledScenarios {
-            scenarios: vec![simple_scenario.clone()],
-            actor_labels,
-            property_labels,
-            free_variables: HashMap::default(),
-            sentences: vec![],
-            lemmas: vec![],
         };
 
         for statement in [
@@ -905,21 +788,18 @@ mod tests {
             "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), pa_Blue(x0))",
         ] {
             println!("{statement}");
-            let expression = parse_executable(statement, &mut labels)?;
-            assert_eq!(
-                expression.run(&labels.scenarios[0])?,
-                LanguageResult::Bool(true)
-            );
+            let expression = parse_executable(statement)?;
+            assert_eq!(expression.run(&scenario)?, LanguageResult::Bool(true));
         }
 
         for (statement, result) in [
-            ("a_Mary", LanguageResult::Actor(0)),
-            ("pa_Red", LanguageResult::ActorSet(vec![1])),
-            ("pa_Blue", LanguageResult::ActorSet(vec![0, 1])),
+            ("a_Mary", LanguageResult::Actor("Mary")),
+            ("pa_Red", LanguageResult::ActorSet(vec!["John"])),
+            ("pa_Blue", LanguageResult::ActorSet(vec!["Mary", "John"])),
         ] {
             println!("{statement}");
-            let expression = parse_executable(statement, &mut labels)?;
-            assert_eq!(expression.run(&labels.scenarios[0])?, result);
+            let expression = parse_executable(statement)?;
+            assert_eq!(expression.run(&scenario)?, result);
         }
 
         Ok(())
@@ -929,20 +809,20 @@ mod tests {
     fn parse_test() -> anyhow::Result<()> {
         let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
 
-        properties.insert(1, vec![Entity::Actor(1)]);
-        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
+        properties.insert("Red", vec![Entity::Actor("John")]);
+        properties.insert("Blue", vec![Entity::Actor("Mary"), Entity::Actor("John")]);
 
-        let simple_scenario = Scenario {
+        let scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["Mary", "John"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
+                    agent: Some("Mary"),
+                    patient: Some("Mary"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
+                    agent: Some("John"),
+                    patient: Some("Mary"),
                 },
             ],
             properties,
@@ -951,37 +831,34 @@ mod tests {
         for statement in [
             "True",
             "~~~False",
-            "~AgentOf(a1, e0)",
+            "~AgentOf(a_John, e0)",
             "~(True & False)",
             "True | False",
             "(True & False) | True",
             "~(True & False) | False",
-            "pa1(a1) & ~pa1(a0)",
-            "pa1(a1) & ~pa1(a0) & pa1(a1)",
-            "~(pa1(a1) & ~(True & pa1(a1)))",
+            "pa1(a_John) & ~pa1(a_Mary)",
+            "pa1(a_John) & ~pa1(a_Mary) & pa1(a_John)",
+            "~(pa1(a_John) & ~(True & pa1(a_John)))",
             "every(x0, all_a, pa4(x0))",
             "every(x0, pa4, pa4(x0))",
             "every_e(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
             "every_e(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
-            "every_e(x0, all_e, PatientOf(a0, x0))",
+            "every_e(x0, all_e, PatientOf(a_Mary, x0))",
             "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), pa4(x0))",
         ] {
             println!("{statement}");
-            assert_eq!(
-                get_parse(statement, &simple_scenario),
-                LanguageResult::Bool(true)
-            );
+            assert_eq!(get_parse(statement, &scenario), LanguageResult::Bool(true));
         }
         for (statement, result) in [
-            ("a0", LanguageResult::Actor(0)),
+            ("a_Mary", LanguageResult::Actor("Mary")),
             ("e0", LanguageResult::Event(0)),
             ("all_e", LanguageResult::EventSet(vec![0, 1])),
-            ("all_a", LanguageResult::ActorSet(vec![0, 1])),
-            ("pa1", LanguageResult::ActorSet(vec![1])),
-            ("pa4", LanguageResult::ActorSet(vec![0, 1])),
+            ("all_a", LanguageResult::ActorSet(vec!["Mary", "John"])),
+            ("pa_Red", LanguageResult::ActorSet(vec!["John"])),
+            ("pa_Blue", LanguageResult::ActorSet(vec!["Mary", "John"])),
         ] {
             println!("{statement}");
-            assert_eq!(get_parse(statement, &simple_scenario), result);
+            assert_eq!(get_parse(statement, &scenario), result);
         }
 
         Ok(())
