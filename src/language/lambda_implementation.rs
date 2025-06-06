@@ -7,12 +7,9 @@ use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LambdaParseError, LanguageExpression,
     MonOp, Variable, lot_parser,
 };
-use crate::{
-    LabelledScenarios,
-    lambda::{
-        LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
-        RootedLambdaPool, types::LambdaType,
-    },
+use crate::lambda::{
+    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
+    RootedLambdaPool, types::LambdaType,
 };
 use chumsky::{error::Rich, extra};
 
@@ -266,7 +263,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
 impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = self.string(self.root(), VarContext::default(), None);
+        let string = self.string(self.root(), VarContext::default());
         write!(f, "{string}")
     }
 }
@@ -355,12 +352,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
             .to_pool()
     }
 
-    fn string(
-        &self,
-        expr: LambdaExprRef,
-        c: VarContext,
-        labels: Option<&LabelledScenarios>,
-    ) -> String {
+    fn string(&self, expr: LambdaExprRef, c: VarContext) -> String {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
                 let (c, var) = c.inc_depth();
@@ -368,7 +360,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     "lambda {} {} ({})",
                     lambda_type,
                     var,
-                    self.string(*child, c, labels)
+                    self.string(*child, c)
                 )
             }
             LambdaExpr::BoundVariable(bvar, _) => c.lambda_var(*bvar),
@@ -381,8 +373,8 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                 argument,
             } => format!(
                 "({})({})",
-                self.string(*subformula, c.clone(), labels),
-                self.string(*argument, c, labels)
+                self.string(*subformula, c.clone()),
+                self.string(*argument, c)
             ),
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
                 Expr::Quantifier {
@@ -400,8 +392,8 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                             Variable::Event(_) => "_e",
                         },
                         var_string,
-                        self.string(LambdaExprRef(restrictor.0), c.clone(), labels),
-                        self.string(LambdaExprRef(subformula.0), c, labels)
+                        self.string(LambdaExprRef(restrictor.0), c.clone()),
+                        self.string(LambdaExprRef(subformula.0), c)
                     )
                 }
                 Expr::Variable(variable) => c.q_var(*variable),
@@ -413,21 +405,21 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     BinOp::AgentOf | BinOp::PatientOf => {
                         format!(
                             "{bin_op}({},{})",
-                            self.string(LambdaExprRef(x.0), c.clone(), labels),
-                            self.string(LambdaExprRef(y.0), c, labels)
+                            self.string(LambdaExprRef(x.0), c.clone()),
+                            self.string(LambdaExprRef(y.0), c)
                         )
                     }
 
                     BinOp::And | BinOp::Or => {
                         format!(
                             "({} {bin_op} {})",
-                            self.string(LambdaExprRef(x.0), c.clone(), labels),
-                            self.string(LambdaExprRef(y.0), c, labels)
+                            self.string(LambdaExprRef(x.0), c.clone()),
+                            self.string(LambdaExprRef(y.0), c)
                         )
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
-                    format!("{mon_op}({})", self.string(LambdaExprRef(arg.0), c, labels))
+                    format!("{mon_op}({})", self.string(LambdaExprRef(arg.0), c))
                 }
                 Expr::Constant(constant) => format!("{constant}"),
             },

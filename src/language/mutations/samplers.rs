@@ -138,18 +138,18 @@ impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
             UnbuiltExpr::Binary(BinOp::PatientOf),
         ];
 
-        all_expressions.extend(actors.iter().map(|x| UnbuiltExpr::Actor(*x)));
+        all_expressions.extend(actors.iter().map(|x| UnbuiltExpr::Actor(x)));
 
         all_expressions.extend(actor_properties.iter().flat_map(|i| {
             [
-                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor)),
-                UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Actor)),
+                UnbuiltExpr::Unary(MonOp::Property(i, ActorOrEvent::Actor)),
+                UnbuiltExpr::Constant(Constant::Property(i, ActorOrEvent::Actor)),
             ]
         }));
         all_expressions.extend(event_properties.iter().flat_map(|i| {
             [
-                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event)),
-                UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Event)),
+                UnbuiltExpr::Unary(MonOp::Property(i, ActorOrEvent::Event)),
+                UnbuiltExpr::Constant(Constant::Property(i, ActorOrEvent::Event)),
             ]
         }));
 

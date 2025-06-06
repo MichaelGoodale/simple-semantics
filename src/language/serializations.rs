@@ -1,7 +1,6 @@
 use serde::Serialize;
 
 use crate::{
-    LabelledScenarios,
     lambda::{LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
     language::{BinOp, Expr, Variable},
 };
@@ -23,7 +22,6 @@ impl RootedLambdaPool<'_, Expr<'_>> {
         expr: LambdaExprRef,
         c: VarContext,
         v: &mut Vec<Token<'a>>,
-        labels: Option<&'b LabelledScenarios>,
     ) {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
@@ -33,7 +31,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     var: TokenVar::Lambda(var),
                 });
                 v.push(Token::OpenDelim);
-                self.tokens(*child, c, v, labels);
+                self.tokens(*child, c, v);
                 v.push(Token::CloseDelim);
             }
             LambdaExpr::BoundVariable(bvar, _) => {
@@ -51,10 +49,10 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                 argument,
             } => {
                 v.push(Token::OpenDelim);
-                self.tokens(*subformula, c.clone(), v, labels);
+                self.tokens(*subformula, c.clone(), v);
                 v.push(Token::CloseDelim);
                 v.push(Token::OpenDelim);
-                self.tokens(*argument, c.clone(), v, labels);
+                self.tokens(*argument, c.clone(), v);
                 v.push(Token::CloseDelim);
             }
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
@@ -75,10 +73,10 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                         var: TokenVar::Quantifier(var_string),
                     });
                     v.push(Token::OpenDelim);
-                    self.tokens(LambdaExprRef(restrictor.0), c.clone(), v, labels);
+                    self.tokens(LambdaExprRef(restrictor.0), c.clone(), v);
                     v.push(Token::CloseDelim);
                     v.push(Token::OpenDelim);
-                    self.tokens(LambdaExprRef(subformula.0), c, v, labels);
+                    self.tokens(LambdaExprRef(subformula.0), c, v);
                     v.push(Token::CloseDelim);
                 }
                 Expr::Variable(variable) => {
@@ -90,23 +88,23 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     BinOp::AgentOf | BinOp::PatientOf => {
                         v.push(Token::Func(bin_op.to_string()));
                         v.push(Token::OpenDelim);
-                        self.tokens(LambdaExprRef(x.0), c.clone(), v, labels);
-                        self.tokens(LambdaExprRef(y.0), c, v, labels);
+                        self.tokens(LambdaExprRef(x.0), c.clone(), v);
+                        self.tokens(LambdaExprRef(y.0), c, v);
                         v.push(Token::CloseDelim);
                     }
 
                     BinOp::And | BinOp::Or => {
                         v.push(Token::OpenDelim);
-                        self.tokens(LambdaExprRef(x.0), c.clone(), v, labels);
+                        self.tokens(LambdaExprRef(x.0), c.clone(), v);
                         v.push(Token::Func(bin_op.to_string()));
-                        self.tokens(LambdaExprRef(y.0), c, v, labels);
+                        self.tokens(LambdaExprRef(y.0), c, v);
                         v.push(Token::CloseDelim);
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
                     v.push(Token::Func(mon_op.to_string()));
                     v.push(Token::OpenDelim);
-                    self.tokens(LambdaExprRef(arg.0), c, v, labels);
+                    self.tokens(LambdaExprRef(arg.0), c, v);
                     v.push(Token::CloseDelim);
                 }
                 Expr::Constant(constant) => {
@@ -151,7 +149,7 @@ impl Serialize for RootedLambdaPool<'_, Expr<'_>> {
         S: serde::Serializer,
     {
         let mut v: Vec<Token> = vec![];
-        self.tokens(self.root, VarContext::default(), &mut v, None);
+        self.tokens(self.root, VarContext::default(), &mut v);
         v.serialize(serializer)
     }
 }

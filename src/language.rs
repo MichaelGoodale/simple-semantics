@@ -425,12 +425,12 @@ impl<'a> ExprPool<'a> {
                 match var {
                     Variable::Actor(_) => {
                         for e in scenario.actors.iter() {
-                            variables.set(*var, Entity::Actor(*e));
+                            variables.set(*var, Entity::Actor(e));
                             let truth_value_for_e: bool = self
                                 .interp(restrictor, scenario, &mut variables)?
                                 .try_into()?;
                             if truth_value_for_e {
-                                domain.push(Entity::Actor(*e))
+                                domain.push(Entity::Actor(e))
                             }
                         }
                     }
@@ -516,7 +516,7 @@ impl<'a> ExprPool<'a> {
                 variables,
             )?,
             Expr::Variable(i) => variables.get(*i).unwrap(),
-            Expr::Actor(a) => LanguageResult::Actor(*a),
+            Expr::Actor(a) => LanguageResult::Actor(a),
             Expr::Event(a) => LanguageResult::Event(*a),
             Expr::Binary(bin_op, lhs, rhs) => {
                 let lhs = self.interp(*lhs, scenario, variables)?;
