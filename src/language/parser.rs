@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
-    Entity, LabelledScenarios,
+    Entity,
     lambda::{
         Bvar, LambdaExpr, LambdaExprRef, LambdaPool, ReductionError, RootedLambdaPool,
         types::{LambdaType, core_type_parser},
@@ -67,33 +67,19 @@ impl<'src> ParseTree<'src> {
         variable_names: &mut VariableContext<'src>,
         lambda_depth: usize,
     ) -> Result<LambdaExprRef, LambdaParseError> {
-        let expr = match &self {
-            ParseTree::Constant(c) => LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(match c {
-                LabeledConstant::Constant(x) => *x,
-                LabeledConstant::LabeledProperty(p, a) => {
-                    Constant::Property(labels.get_property_label(p), *a)
-                }
-            })),
+        let expr: LambdaExpr<Expr<'src>> = match &self {
+            ParseTree::Constant(c) => LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(*c)),
             ParseTree::Entity(e) => LambdaExpr::LanguageOfThoughtExpr(match e {
-                LabeledEntity::Unlabeled(entity) => match entity {
-                    Entity::Actor(a) => Expr::Actor(*a),
-                    Entity::Event(e) => Expr::Event(*e),
-                },
-                LabeledEntity::LabeledActor(label) => Expr::Actor(labels.get_actor_label(label)),
+                Entity::Actor(a) => Expr::Actor(a),
+                Entity::Event(e) => Expr::Event(*e),
             }),
             ParseTree::Unary(m, x) => {
-                let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth)?.0);
-                let m = match m {
-                    LabeledProperty::Property(mon_op) => *mon_op,
-                    LabeledProperty::LabeledProperty(label, a) => {
-                        MonOp::Property(labels.get_property_label(label), *a)
-                    }
-                };
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(m, x))
+                let x = ExprRef(x.add_to_pool(pool, variable_names, lambda_depth)?.0);
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(*m, x))
             }
             ParseTree::Binary(b, x, y) => {
-                let x = ExprRef(x.add_to_pool(pool, labels, variable_names, lambda_depth)?.0);
-                let y = ExprRef(y.add_to_pool(pool, labels, variable_names, lambda_depth)?.0);
+                let x = ExprRef(x.add_to_pool(pool, variable_names, lambda_depth)?.0);
+                let y = ExprRef(y.add_to_pool(pool, variable_names, lambda_depth)?.0);
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x, y))
             }
             ParseTree::Quantifier {
@@ -106,13 +92,13 @@ impl<'src> ParseTree<'src> {
                 let var = variable_names.bind_fresh_quantifier(variable, *lambda_type);
                 let restrictor = ExprRef(
                     restrictor
-                        .add_to_pool(pool, labels, variable_names, lambda_depth)?
+                        .add_to_pool(pool, variable_names, lambda_depth)?
                         .0,
                 );
 
                 let subformula = ExprRef(
                     subformula
-                        .add_to_pool(pool, labels, variable_names, lambda_depth)?
+                        .add_to_pool(pool, variable_names, lambda_depth)?
                         .0,
                 );
                 variable_names.unbind(variable);
@@ -127,9 +113,8 @@ impl<'src> ParseTree<'src> {
                 subformula,
                 argument,
             } => {
-                let subformula =
-                    subformula.add_to_pool(pool, labels, variable_names, lambda_depth)?;
-                let argument = argument.add_to_pool(pool, labels, variable_names, lambda_depth)?;
+                let subformula = subformula.add_to_pool(pool, variable_names, lambda_depth)?;
+                let argument = argument.add_to_pool(pool, variable_names, lambda_depth)?;
                 LambdaExpr::Application {
                     subformula,
                     argument,
@@ -141,24 +126,26 @@ impl<'src> ParseTree<'src> {
                 lambda_type,
             } => {
                 variable_names.bind_lambda(var, lambda_depth + 1, lambda_type.clone());
-                let body = body.add_to_pool(pool, labels, variable_names, lambda_depth + 1)?;
+                let body = body.add_to_pool(pool, variable_names, lambda_depth + 1)?;
                 variable_names.unbind(var);
                 LambdaExpr::Lambda(body, lambda_type.clone())
             }
-            ParseTree::Variable(var) => variable_names.to_expr(var, labels, None, lambda_depth)?,
+            ParseTree::Variable(var) => variable_names.to_expr(var, None, lambda_depth)?,
             ParseTree::FreeVariable(var, lambda_type) => {
-                variable_names.to_expr(var, labels, Some(lambda_type.clone()), lambda_depth)?
+                variable_names.to_expr(var, Some(lambda_type.clone()), lambda_depth)?
             }
         };
         Ok(pool.add(expr))
     }
 
     fn to_pool(&self) -> Result<RootedLambdaPool<Expr<'src>>, LambdaParseError> {
-        let mut pool = LambdaPool::new();
+        /*
+        let mut pool: LambdaPool<Expr<'src>> = LambdaPool::new();
 
-        let mut var_labels = VariableContext::default();
+        let mut var_labels: VariableContext<'src> = VariableContext::default();
         let root = self.add_to_pool(&mut pool, &mut var_labels, 0)?;
-        Ok(RootedLambdaPool::new(pool, root))
+        Ok(RootedLambdaPool::new(pool, root))*/
+        todo!()
     }
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -174,10 +161,9 @@ impl<'src> VariableContext<'src> {
     fn to_expr(
         &self,
         variable: &'src str,
-        labels: &mut LabelledScenarios,
         lambda_type: Option<LambdaType>,
         lambda_depth: usize,
-    ) -> Result<LambdaExpr<Expr>, LambdaParseError> {
+    ) -> Result<LambdaExpr<Expr<'src>>, LambdaParseError> {
         Ok(match self.0.get(variable) {
             Some(vars) => match vars
                 .last()
@@ -190,15 +176,13 @@ impl<'src> VariableContext<'src> {
                     LambdaExpr::BoundVariable(lambda_depth - og_depth, lambda_type.clone())
                 }
             },
-            None => LambdaExpr::FreeVariable(
-                labels.get_free_variable(variable),
-                match lambda_type {
-                    Some(x) => x,
-                    None => {
-                        return Err(LambdaParseError::UnTypedFreeVariable(variable.to_string()));
-                    }
-                },
-            ),
+            //Do free var
+            None => match lambda_type {
+                Some(x) => todo!(),
+                None => {
+                    return Err(LambdaParseError::UnTypedFreeVariable(variable.to_string()));
+                }
+            },
         })
     }
 

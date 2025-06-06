@@ -26,7 +26,7 @@ pub enum MutationError {
     InvalidType,
 }
 
-impl RootedLambdaPool<Expr> {
+impl<'src> RootedLambdaPool<Expr<'src>> {
     fn get_context_for_expr(&self, position: LambdaExprRef) -> Option<Context> {
         let mut pos_context = None;
 
@@ -41,9 +41,9 @@ impl RootedLambdaPool<Expr> {
 
     pub fn resample_from_expr(
         self,
-        available_actors: &[Actor],
-        available_actor_properties: &[PropertyLabel],
-        available_event_properties: &[PropertyLabel],
+        available_actors: &[Actor<'src>],
+        available_actor_properties: &[PropertyLabel<'src>],
+        available_event_properties: &[PropertyLabel<'src>],
         config: Option<RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> Self {
@@ -90,9 +90,9 @@ impl RootedLambdaPool<Expr> {
 
     pub fn random_expr(
         lambda_type: &LambdaType,
-        available_actors: &[Actor],
-        available_actor_properties: &[PropertyLabel],
-        available_event_properties: &[PropertyLabel],
+        available_actors: &[Actor<'src>],
+        available_actor_properties: &[PropertyLabel<'src>],
+        available_event_properties: &[PropertyLabel<'src>],
         config: Option<RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> Result<Self, MutationError> {
@@ -152,9 +152,9 @@ impl RootedLambdaPool<Expr> {
 
     pub fn swap_expr(
         &mut self,
-        available_actors: &[Actor],
-        available_actor_properties: &[PropertyLabel],
-        available_event_properties: &[PropertyLabel],
+        available_actors: &[Actor<'src>],
+        available_actor_properties: &[PropertyLabel<'src>],
+        available_event_properties: &[PropertyLabel<'src>],
         rng: &mut impl Rng,
     ) {
         let config = RandomExprConfig::default();
@@ -216,14 +216,14 @@ impl RootedLambdaPool<Expr> {
     }
 }
 
-fn build_out_pool<'typ>(
-    mut pool: Vec<Option<LambdaExpr<Expr>>>,
+fn build_out_pool<'src, 'typ>(
+    mut pool: Vec<Option<LambdaExpr<Expr<'src>>>>,
     lambda_type: &'typ LambdaType,
     start_pos: u32,
     context: Context<'typ>,
-    possible_expressions: PossibleExpressions<'typ, '_>,
+    possible_expressions: PossibleExpressions<'src, 'typ, '_>,
     rng: &mut impl Rng,
-) -> LambdaPool<Expr> {
+) -> LambdaPool<Expr<'src>> {
     let mut fresher = Fresher::new(&pool);
     let e = possible_expressions
         .possibilities(lambda_type, &context)

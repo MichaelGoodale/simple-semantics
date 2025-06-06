@@ -1,6 +1,5 @@
 use std::fmt::Display;
 
-use crate::LabelledScenarios;
 use crate::lambda::RootedLambdaPool;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 use lambda_implementation::to_var;
@@ -172,11 +171,8 @@ impl<'a> LanguageExpression<'a> {
         self.pool.interp(self.start, scenario, &mut variables)
     }
 
-    pub fn parse(
-        s: &'a str,
-        labels: &mut LabelledScenarios<'a>,
-    ) -> Result<LanguageExpression<'a>, LambdaParseError> {
-        Ok(RootedLambdaPool::parse(s, labels)?.into_pool()?)
+    pub fn parse(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
+        Ok(RootedLambdaPool::parse(s)?.into_pool()?)
     }
 
     pub fn new(pool: ExprPool<'a>, start: ExprRef) -> Self {

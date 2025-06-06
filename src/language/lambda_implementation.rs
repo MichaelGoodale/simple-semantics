@@ -348,11 +348,11 @@ impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<Expr<'a>> {
 }
 
 impl<'a> RootedLambdaPool<Expr<'a>> {
-    pub fn parse(s: &'a str, labels: &mut LabelledScenarios<'a>) -> Result<Self, LambdaParseError> {
+    pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         lot_parser::<'a, extra::Err<Rich<_>>>()
             .parse(s)
             .into_result()?
-            .to_pool(labels)
+            .to_pool()
     }
 
     fn string(

@@ -1,19 +1,9 @@
 use ahash::{HashSet, RandomState};
 use chumsky::{prelude::*, text::inline_whitespace};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use crate::language::{LambdaParseError, lot_parser};
 use crate::{Actor, Entity, Event, LabelledScenarios, Scenario, ThetaRoles};
-
-struct StringThetaRole<'a> {
-    agent: Option<&'a str>,
-    patient: Option<&'a str>,
-}
-
-struct StringEvents<'a> {
-    events: Vec<StringThetaRole<'a>>,
-    event_props: ahash::HashMap<&'a str, Vec<Entity<'a>>>,
-}
 
 pub fn scenario_parser<'a>()
 -> impl Parser<'a, &'a str, Result<LabelledScenarios<'a>, LambdaParseError>, extra::Err<Rich<'a, char>>>
@@ -21,7 +11,6 @@ pub fn scenario_parser<'a>()
     let string = none_of("\"")
         .repeated()
         .to_slice()
-        .map(ToString::to_string)
         .delimited_by(just('"'), just('"'));
 
     let properties = text::ident()
@@ -35,7 +24,7 @@ pub fn scenario_parser<'a>()
 
     let actors = actor
         .map(|(a, p)| {
-            let mut properties: HashMap<&str, Vec<&str>, RandomState> = HashMap::default();
+            let mut properties: HashMap<&str, Vec<_>, RandomState> = HashMap::default();
             if let Some(property_labels) = p {
                 for property in property_labels {
                     properties.insert(property, vec![a]);
@@ -72,26 +61,26 @@ pub fn scenario_parser<'a>()
         theta_role('A')
             .then_ignore(just(','))
             .then(theta_role('P'))
-            .map(|(a, p)| StringThetaRole {
+            .map(|(a, p)| ThetaRoles {
                 agent: Some(a),
                 patient: Some(p),
             }),
         theta_role('P')
             .then_ignore(just(','))
             .then(theta_role('A'))
-            .map(|(p, a)| StringThetaRole {
+            .map(|(p, a)| ThetaRoles {
                 agent: Some(a),
                 patient: Some(p),
             }),
-        theta_role('P').map(|n| StringThetaRole {
+        theta_role('P').map(|n| ThetaRoles {
             agent: None,
             patient: Some(n),
         }),
-        theta_role('A').map(|n| StringThetaRole {
+        theta_role('A').map(|n| ThetaRoles {
             agent: Some(n),
             patient: None,
         }),
-        empty().map(|_| StringThetaRole {
+        empty().map(|_| ThetaRoles {
             agent: None,
             patient: None,
         }),
@@ -119,25 +108,21 @@ pub fn scenario_parser<'a>()
                 None => vec![],
             };
 
-            StringEvents {
-                events,
-                event_props: properties,
-            }
+            (events, properties)
         })
         .foldl(
             just(',').ignore_then(event).repeated().enumerate(),
-            |mut string_events, (i, (event, event_props))| {
-                string_events.events.push(event);
+            |(mut acc_event, mut acc_props), (i, (event, event_props))| {
+                acc_event.push(event);
                 if let Some(event_props) = event_props {
                     for property_label in event_props {
-                        string_events
-                            .event_props
+                        acc_props
                             .entry(property_label)
                             .and_modify(|x| x.push(Entity::Event((i + 1) as Event)))
                             .or_insert(vec![Entity::Event((i + 1) as Event)]);
                     }
                 }
-                string_events
+                (acc_event, acc_props)
             },
         );
 
@@ -179,7 +164,7 @@ pub fn scenario_parser<'a>()
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, x)| {
-                    x.map(|x| match x.to_pool(&mut data) {
+                    x.map(|x| match x.to_pool() {
                         Ok(x) => Ok((i, x)),
                         Err(e) => Err(e),
                     })
@@ -198,71 +183,40 @@ pub fn scenario_parser<'a>()
         })
 }
 
+type EventParseType<'a> = Option<(
+    Vec<ThetaRoles<'a>>,
+    HashMap<&'a str, Vec<Entity<'a>>, ahash::RandomState>,
+)>;
+
 fn add_scenario<'a>(
-    training_dataset: &mut (LabelledScenarios, HashSet<String>),
-    s: String,
-    actors: Vec<&'a str>,
+    training_dataset: &mut (LabelledScenarios<'a>, HashSet<&'a str>),
+    s: &'a str,
+    actors: Vec<Actor<'a>>,
     actor_props: HashMap<&'a str, Vec<&'a str>, RandomState>,
-    events: Option<StringEvents>,
+    events: EventParseType<'a>,
 ) {
-    let actors: Vec<Actor> = actors
+    let (events, event_props) = events.unwrap_or_else(|| (Vec::default(), HashMap::default()));
+
+    let mut properties: HashMap<&str, Vec<Entity>, _> = actor_props
         .into_iter()
-        .map(|x| {
-            let n = training_dataset.0.actor_labels.len();
-            *training_dataset
-                .0
-                .actor_labels
-                .entry(x.to_string())
-                .or_insert(n as u16)
-        })
+        .map(|(k, v)| (k, v.into_iter().map(Entity::Actor).collect()))
         .collect();
 
-    let events = events.unwrap_or_else(|| StringEvents {
-        events: Vec::default(),
-        event_props: HashMap::default(),
-    });
-
-    let mut properties: BTreeMap<&str, Vec<Entity>> = actor_props
-        .into_iter()
-        .map(|(k, v)| {
-            (
-                k,
-                v.into_iter()
-                    .map(|x| Entity::Actor(training_dataset.0.get_actor_label(x)))
-                    .collect(),
-            )
-        })
-        .collect();
-
-    for (k, mut v) in events.event_props.into_iter() {
+    for (k, mut v) in event_props.into_iter() {
         properties
             .entry(k)
             .and_modify(|value| value.append(&mut v))
             .or_insert(v);
     }
 
-    let thematic_relations = events
-        .events
-        .into_iter()
-        .map(|x| ThetaRoles {
-            agent: x.agent.map(|x| training_dataset.0.get_actor_label(x)),
-            patient: x.patient.map(|x| training_dataset.0.get_actor_label(x)),
-        })
-        .collect();
-
-    let properties = properties
-        .into_iter()
-        .map(|(k, v)| (training_dataset.0.get_property_label(k), v))
-        .collect();
-
     training_dataset.0.scenarios.push(Scenario {
         question: None,
         actors,
-        thematic_relations,
+        thematic_relations: events,
         properties,
     });
 
-    let s: Vec<String> = s.split(" ").map(ToString::to_string).collect();
+    let s: Vec<&str> = s.split(" ").collect();
 
     training_dataset.1.extend(s.clone());
     training_dataset.0.sentences.push(s);

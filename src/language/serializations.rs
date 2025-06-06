@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::{
     LabelledScenarios,
     lambda::{LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
-    language::{BinOp, Constant, Expr, MonOp, Variable},
+    language::{BinOp, Expr, Variable},
 };
 
 use crate::language::lambda_implementation::VarContext;
@@ -17,7 +17,7 @@ impl Serialize for LambdaType {
     }
 }
 
-impl RootedLambdaPool<Expr> {
+impl RootedLambdaPool<Expr<'_>> {
     pub(super) fn tokens<'a, 'b: 'a>(
         &'a self,
         expr: LambdaExprRef,
@@ -40,14 +40,10 @@ impl RootedLambdaPool<Expr> {
                 v.push(Token::Var(TokenVar::Lambda(c.lambda_var(*bvar))))
             }
             LambdaExpr::FreeVariable(fvar, t) => {
-                let f = if let Some(x) = labels {
-                    x.from_fvar(*fvar)
-                        .map(|x| x.to_string())
-                        .unwrap_or_else(|| fvar.to_string())
-                } else {
-                    fvar.to_string()
-                };
-                v.push(Token::Var(TokenVar::Free { label: f, t }));
+                v.push(Token::Var(TokenVar::Free {
+                    label: fvar.to_string(),
+                    t,
+                }));
             }
 
             LambdaExpr::Application {
@@ -88,18 +84,7 @@ impl RootedLambdaPool<Expr> {
                 Expr::Variable(variable) => {
                     v.push(Token::Var(TokenVar::Quantifier(c.q_var(*variable))))
                 }
-                Expr::Actor(a) => {
-                    let s = {
-                        if let Some(x) = labels {
-                            x.from_actor(*a)
-                                .map(|x| x.to_string())
-                                .unwrap_or_else(|| a.to_string())
-                        } else {
-                            a.to_string()
-                        }
-                    };
-                    v.push(Token::Actor(s))
-                }
+                Expr::Actor(a) => v.push(Token::Actor(a.to_string())),
                 Expr::Event(e) => v.push(Token::Event(e.to_string())),
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {
@@ -119,27 +104,13 @@ impl RootedLambdaPool<Expr> {
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
-                    let mon_s = match (mon_op, labels) {
-                        (MonOp::Property(p, t), Some(labels)) => labels
-                            .from_prop(*p)
-                            .map(|x| x.to_string())
-                            .unwrap_or_else(|| format!("{}", MonOp::Property(*p, *t))),
-                        _ => mon_op.to_string(),
-                    };
-                    v.push(Token::Func(mon_s));
+                    v.push(Token::Func(mon_op.to_string()));
                     v.push(Token::OpenDelim);
                     self.tokens(LambdaExprRef(arg.0), c, v, labels);
                     v.push(Token::CloseDelim);
                 }
                 Expr::Constant(constant) => {
-                    let s = match (constant, labels) {
-                        (Constant::Property(p, t), Some(labels)) => labels
-                            .from_prop(*p)
-                            .map(|x| x.to_string())
-                            .unwrap_or_else(|| format!("{}", Constant::Property(*p, *t))),
-                        _ => format!("{constant}"),
-                    };
-                    v.push(Token::Const(s));
+                    v.push(Token::Const(constant.to_string()));
                 }
             },
         }
@@ -174,29 +145,7 @@ pub(super) enum Token<'a> {
     CloseDelim,
 }
 
-///Special struct for serialization; you shouldn't use this normally.
-pub struct PoolForSerialization<'a>(Vec<Token<'a>>);
-
-impl RootedLambdaPool<Expr> {
-    pub fn serialize_with_labels<'a, 'b: 'a>(
-        &'a self,
-        labels: &'a LabelledScenarios,
-    ) -> PoolForSerialization<'a> {
-        let mut v = vec![];
-        self.tokens(self.root, VarContext::default(), &mut v, Some(labels));
-        PoolForSerialization(v)
-    }
-}
-impl Serialize for PoolForSerialization<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.serialize(serializer)
-    }
-}
-
-impl Serialize for RootedLambdaPool<Expr> {
+impl Serialize for RootedLambdaPool<Expr<'_>> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,

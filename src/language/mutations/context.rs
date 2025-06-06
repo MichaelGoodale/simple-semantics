@@ -32,7 +32,7 @@ impl<'t> Context<'t> {
         self.lambdas.push(lhs);
     }
 
-    pub fn event_variables(&self) -> impl Iterator<Item = UnbuiltExpr<'t>> {
+    pub fn event_variables<'a>(&self) -> impl Iterator<Item = UnbuiltExpr<'a, 't>> {
         self.available_vars.iter().filter_map(|x| {
             if matches!(x, Variable::Event(_)) {
                 Some(UnbuiltExpr::Variable(*x))
@@ -42,7 +42,7 @@ impl<'t> Context<'t> {
         })
     }
 
-    pub fn actor_variables(&self) -> impl Iterator<Item = UnbuiltExpr<'t>> {
+    pub fn actor_variables<'a>(&self) -> impl Iterator<Item = UnbuiltExpr<'a, 't>> {
         self.available_vars.iter().filter_map(|x| {
             if matches!(x, Variable::Actor(_)) {
                 Some(UnbuiltExpr::Variable(*x))
@@ -59,10 +59,10 @@ impl<'t> Context<'t> {
             | self.lambdas.iter().any(|lam| *lam == LambdaType::e())
     }
 
-    pub fn lambda_variables(
+    pub fn lambda_variables<'a>(
         &self,
         lambda_type: &LambdaType,
-    ) -> impl Iterator<Item = UnbuiltExpr<'t>> {
+    ) -> impl Iterator<Item = UnbuiltExpr<'a, 't>> {
         let n = self.lambdas.len();
         self.lambdas.iter().enumerate().filter_map(move |(i, t)| {
             if *t == lambda_type {
@@ -74,12 +74,12 @@ impl<'t> Context<'t> {
     }
 }
 
-pub struct ContextBFSIterator<'a> {
-    pool: &'a RootedLambdaPool<Expr>,
+pub struct ContextBFSIterator<'src, 'a> {
+    pool: &'a RootedLambdaPool<Expr<'src>>,
     queue: VecDeque<(LambdaExprRef, Context<'a>)>,
 }
 
-impl<'a> Iterator for ContextBFSIterator<'a> {
+impl<'src, 'a> Iterator for ContextBFSIterator<'src, 'a> {
     type Item = (LambdaExprRef, Context<'a>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -127,8 +127,8 @@ impl<'a> Iterator for ContextBFSIterator<'a> {
     }
 }
 
-impl RootedLambdaPool<Expr> {
-    pub fn context_bfs_iter<'a>(&'a self) -> ContextBFSIterator<'a> {
+impl<'src> RootedLambdaPool<Expr<'src>> {
+    pub fn context_bfs_iter<'a>(&'a self) -> ContextBFSIterator<'src, 'a> {
         let mut queue = VecDeque::new();
         queue.push_back((
             self.root,
