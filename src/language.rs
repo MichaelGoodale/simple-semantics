@@ -195,7 +195,7 @@ impl<'a> VariableBuffer<'a> {
     fn get(&self, v: Variable) -> Option<LanguageResult<'a>> {
         match self.0.get(v.id() as usize) {
             Some(x) => match (v, x) {
-                (Variable::Actor(_), Some(Entity::Actor(a))) => Some(LanguageResult::Actor(*a)),
+                (Variable::Actor(_), Some(Entity::Actor(a))) => Some(LanguageResult::Actor(a)),
                 (Variable::Event(_), Some(Entity::Event(e))) => Some(LanguageResult::Event(*e)),
                 _ => None,
             },

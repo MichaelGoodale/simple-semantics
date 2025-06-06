@@ -36,7 +36,7 @@ pub struct Scenario<'a> {
     actors: Vec<Actor<'a>>,
     thematic_relations: Vec<ThetaRoles<'a>>,
     properties: HashMap<PropertyLabel<'a>, Vec<Entity<'a>>, RandomState>,
-    question: Option<RootedLambdaPool<Expr<'a>>>,
+    question: Option<RootedLambdaPool<'a, Expr<'a>>>,
 }
 
 impl<'a> Scenario<'a> {
@@ -68,7 +68,7 @@ impl<'a> Scenario<'a> {
         self.question.as_ref()
     }
 
-    pub fn question_mut(&mut self) -> &mut Option<RootedLambdaPool<Expr<'a>>> {
+    pub fn question_mut(&mut self) -> &mut Option<RootedLambdaPool<'a, Expr<'a>>> {
         &mut self.question
     }
 

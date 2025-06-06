@@ -264,7 +264,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for RootedLambdaPool<Expr<'a>> {
+impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let string = self.string(self.root(), VarContext::default(), None);
         write!(f, "{string}")
@@ -331,7 +331,7 @@ impl VarContext {
     }
 }
 
-impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<Expr<'a>> {
+impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<'a, Expr<'a>> {
     fn from(value: LanguageExpression<'a>) -> Self {
         RootedLambdaPool {
             pool: LambdaPool::from(
@@ -347,7 +347,7 @@ impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<Expr<'a>> {
     }
 }
 
-impl<'a> RootedLambdaPool<Expr<'a>> {
+impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         lot_parser::<'a, extra::Err<Rich<_>>>()
             .parse(s)

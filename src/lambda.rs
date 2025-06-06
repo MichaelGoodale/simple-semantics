@@ -9,7 +9,7 @@ pub mod types;
 use types::{LambdaType, TypeError};
 
 pub type Bvar = usize;
-pub type Fvar = usize;
+pub type Fvar<'a> = &'a str;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaError {
@@ -106,10 +106,10 @@ impl LambdaLanguageOfThought for () {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum LambdaExpr<T> {
+pub enum LambdaExpr<'a, T> {
     Lambda(LambdaExprRef, LambdaType),
     BoundVariable(Bvar, LambdaType),
-    FreeVariable(Fvar, LambdaType),
+    FreeVariable(Fvar<'a>, LambdaType),
     Application {
         subformula: LambdaExprRef,
         argument: LambdaExprRef,
@@ -118,8 +118,8 @@ pub enum LambdaExpr<T> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct RootedLambdaPool<T: LambdaLanguageOfThought> {
-    pub(crate) pool: LambdaPool<T>,
+pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
+    pub(crate) pool: LambdaPool<'src, T>,
     pub(crate) root: LambdaExprRef,
 }
 
@@ -137,7 +137,7 @@ impl ExpressionType {
     }
 }
 
-impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
+impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'src, T> {
     pub(crate) fn get_expression_type(
         &self,
         i: LambdaExprRef,
@@ -188,7 +188,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         self.pool.0.len()
     }
 
-    pub fn get_mut(&mut self, x: LambdaExprRef) -> &mut LambdaExpr<T> {
+    pub fn get_mut(&mut self, x: LambdaExprRef) -> &mut LambdaExpr<'src, T> {
         self.pool.get_mut(x)
     }
 
@@ -196,11 +196,11 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         self.pool.get_type(self.root)
     }
 
-    pub fn new(pool: LambdaPool<T>, root: LambdaExprRef) -> Self {
+    pub fn new(pool: LambdaPool<'src, T>, root: LambdaExprRef) -> Self {
         RootedLambdaPool { pool, root }
     }
 
-    pub fn into(self) -> (LambdaPool<T>, LambdaExprRef) {
+    pub fn into(self) -> (LambdaPool<'src, T>, LambdaExprRef) {
         (self.pool, self.root)
     }
 
@@ -253,8 +253,8 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
 
     pub fn bind_free_variable(
         &mut self,
-        fvar: Fvar,
-        replacement: RootedLambdaPool<T>,
+        fvar: Fvar<'src>,
+        replacement: RootedLambdaPool<'src, T>,
     ) -> Result<(), LambdaError> {
         let (other_pool, other_root) = replacement.into();
         let other_root = self.pool.extend_pool(other_root, other_pool);
@@ -265,7 +265,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
 
     pub fn lambda_abstract_free_variable(
         &mut self,
-        fvar: Fvar,
+        fvar: Fvar<'src>,
         lambda_type: LambdaType,
         always_abstract: bool,
     ) -> Result<(), LambdaError> {
@@ -298,7 +298,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         Ok(())
     }
 
-    pub fn apply_new_free_variable(&mut self, fvar: Fvar) -> Result<LambdaType, LambdaError> {
+    pub fn apply_new_free_variable(&mut self, fvar: Fvar<'src>) -> Result<LambdaType, LambdaError> {
         let pool_type = self.pool.get_type(self.root)?;
         let var_type = pool_type.lhs()?;
         let argument = self
@@ -314,13 +314,13 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
-pub struct LambdaPool<T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<T>>);
+pub struct LambdaPool<'a, T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<'a, T>>);
 
-impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
+impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
     fn extend_pool(
         &mut self,
         mut other_root: LambdaExprRef,
-        mut other_pool: LambdaPool<T>,
+        mut other_pool: LambdaPool<'src, T>,
     ) -> LambdaExprRef {
         let shift_n = self.0.len();
         let remap: Vec<_> = (0..other_pool.0.len()).map(|x| x + shift_n).collect();
@@ -334,43 +334,43 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
         T::to_pool(self, root)
     }
 
-    pub fn from(x: Vec<LambdaExpr<T>>) -> Self {
+    pub fn from(x: Vec<LambdaExpr<'src, T>>) -> Self {
         LambdaPool(x)
     }
 
-    pub fn new() -> LambdaPool<T> {
+    pub fn new<'c>() -> LambdaPool<'c, T> {
         LambdaPool(vec![])
     }
 
-    fn checked_get(&self, expr: LambdaExprRef) -> Option<&LambdaExpr<T>> {
+    fn checked_get(&self, expr: LambdaExprRef) -> Option<&LambdaExpr<'src, T>> {
         self.0.get(expr.0 as usize)
     }
 
-    pub fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<T> {
+    pub fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<'src, T> {
         &self.0[expr.0 as usize]
     }
 
-    pub fn get_mut(&mut self, expr: LambdaExprRef) -> &mut LambdaExpr<T> {
+    pub fn get_mut(&mut self, expr: LambdaExprRef) -> &mut LambdaExpr<'src, T> {
         &mut self.0[expr.0 as usize]
     }
 
-    pub fn add(&mut self, expr: LambdaExpr<T>) -> LambdaExprRef {
+    pub fn add(&mut self, expr: LambdaExpr<'src, T>) -> LambdaExprRef {
         let idx = self.0.len();
         self.0.push(expr);
         LambdaExprRef(idx.try_into().expect("Too many exprs in the pool"))
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut LambdaExpr<T>> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut LambdaExpr<'src, T>> {
         self.0.iter_mut()
     }
 }
 
-pub struct LambdaPoolBFSIterator<'a, T: LambdaLanguageOfThought> {
-    pool: &'a LambdaPool<T>,
+pub struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
+    pool: &'a LambdaPool<'src, T>,
     queue: VecDeque<(LambdaExprRef, Bvar)>,
 }
 
-impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
+impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
     pub(crate) fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaExprRef> + 'a> {
         match self {
             LambdaExpr::Lambda(x, _) => Box::new([x].into_iter().copied()),
@@ -386,7 +386,7 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
     }
 }
 
-impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, T> {
+impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, '_, T> {
     type Item = (LambdaExprRef, Bvar);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -412,7 +412,7 @@ impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, T> {
     }
 }
 
-impl<T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<T>
+impl<'src, T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<'src, T>
 where
     T: Clone,
 {
@@ -455,7 +455,7 @@ where
     fn bind_free_variable(
         &mut self,
         root: LambdaExprRef,
-        fvar: Fvar,
+        fvar: Fvar<'src>,
         replacement_root: LambdaExprRef,
     ) -> Result<(), LambdaError> {
         let arg_t = self.get_type(replacement_root)?;
@@ -481,7 +481,7 @@ where
         Ok(())
     }
 
-    fn clone_section_return_expr(&mut self, source: LambdaExprRef) -> LambdaExpr<T> {
+    fn clone_section_return_expr(&mut self, source: LambdaExprRef) -> LambdaExpr<'src, T> {
         let mut expr = self.get(source).clone();
         let new_children: Vec<_> = expr
             .get_children()
@@ -622,7 +622,7 @@ where
     }
 }
 
-impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
+impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
     fn change_children(&mut self, children: &[LambdaExprRef]) {
         match self {
             LambdaExpr::Lambda(lambda_expr_ref, _) => *lambda_expr_ref = children[0],
@@ -666,7 +666,7 @@ pub enum LambdaSummaryStats {
     Malformed,
 }
 
-impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
+impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'src, T> {
     pub fn stats(&self) -> LambdaSummaryStats {
         let lambda_type = self.get_type();
         if lambda_type.is_err() {
@@ -739,16 +739,16 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
     }
 }
 
-impl<T: LambdaLanguageOfThought> From<LambdaPool<T>> for Vec<Option<LambdaExpr<T>>> {
-    fn from(value: LambdaPool<T>) -> Self {
+impl<'a, T: LambdaLanguageOfThought> From<LambdaPool<'a, T>> for Vec<Option<LambdaExpr<'a, T>>> {
+    fn from(value: LambdaPool<'a, T>) -> Self {
         value.0.into_iter().map(Some).collect()
     }
 }
 
-impl<T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<T>>>> for LambdaPool<T> {
+impl<'a, T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<'a, T>>>> for LambdaPool<'a, T> {
     type Error = LambdaTryFromError;
 
-    fn try_from(value: Vec<Option<LambdaExpr<T>>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Vec<Option<LambdaExpr<'a, T>>>) -> Result<Self, Self::Error> {
         match value.into_iter().collect::<Option<Vec<_>>>() {
             Some(x) => Ok(LambdaPool(x)),
             None => Err(LambdaTryFromError::HasNone),

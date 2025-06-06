@@ -26,7 +26,7 @@ pub enum MutationError {
     InvalidType,
 }
 
-impl<'src> RootedLambdaPool<Expr<'src>> {
+impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     fn get_context_for_expr(&self, position: LambdaExprRef) -> Option<Context> {
         let mut pos_context = None;
 
@@ -217,13 +217,13 @@ impl<'src> RootedLambdaPool<Expr<'src>> {
 }
 
 fn build_out_pool<'src, 'typ>(
-    mut pool: Vec<Option<LambdaExpr<Expr<'src>>>>,
+    mut pool: Vec<Option<LambdaExpr<'src, Expr<'src>>>>,
     lambda_type: &'typ LambdaType,
     start_pos: u32,
     context: Context<'typ>,
     possible_expressions: PossibleExpressions<'src, 'typ, '_>,
     rng: &mut impl Rng,
-) -> LambdaPool<Expr<'src>> {
+) -> LambdaPool<'src, Expr<'src>> {
     let mut fresher = Fresher::new(&pool);
     let e = possible_expressions
         .possibilities(lambda_type, &context)

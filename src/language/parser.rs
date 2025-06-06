@@ -62,12 +62,12 @@ const RESERVED_KEYWORDS: [&str; 11] = [
 
 impl<'src> ParseTree<'src> {
     fn add_to_pool(
-        &'src self,
-        pool: &mut LambdaPool<Expr<'src>>,
+        &self,
+        pool: &mut LambdaPool<'src, Expr<'src>>,
         variable_names: &mut VariableContext<'src>,
         lambda_depth: usize,
     ) -> Result<LambdaExprRef, LambdaParseError> {
-        let expr: LambdaExpr<Expr<'src>> = match &self {
+        let expr: LambdaExpr<'src, Expr<'src>> = match &self {
             ParseTree::Constant(c) => LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(*c)),
             ParseTree::Entity(e) => LambdaExpr::LanguageOfThoughtExpr(match e {
                 Entity::Actor(a) => Expr::Actor(a),
@@ -138,14 +138,12 @@ impl<'src> ParseTree<'src> {
         Ok(pool.add(expr))
     }
 
-    fn to_pool(&self) -> Result<RootedLambdaPool<Expr<'src>>, LambdaParseError> {
-        /*
-        let mut pool: LambdaPool<Expr<'src>> = LambdaPool::new();
+    fn to_pool(&self) -> Result<RootedLambdaPool<'src, Expr<'src>>, LambdaParseError> {
+        let mut pool = LambdaPool::new();
 
-        let mut var_labels: VariableContext<'src> = VariableContext::default();
+        let mut var_labels = VariableContext::default();
         let root = self.add_to_pool(&mut pool, &mut var_labels, 0)?;
-        Ok(RootedLambdaPool::new(pool, root))*/
-        todo!()
+        Ok(RootedLambdaPool::new(pool, root))
     }
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -163,7 +161,7 @@ impl<'src> VariableContext<'src> {
         variable: &'src str,
         lambda_type: Option<LambdaType>,
         lambda_depth: usize,
-    ) -> Result<LambdaExpr<Expr<'src>>, LambdaParseError> {
+    ) -> Result<LambdaExpr<'src, Expr<'src>>, LambdaParseError> {
         Ok(match self.0.get(variable) {
             Some(vars) => match vars
                 .last()
@@ -178,7 +176,7 @@ impl<'src> VariableContext<'src> {
             },
             //Do free var
             None => match lambda_type {
-                Some(x) => todo!(),
+                Some(lambda_type) => LambdaExpr::FreeVariable(variable, lambda_type),
                 None => {
                     return Err(LambdaParseError::UnTypedFreeVariable(variable.to_string()));
                 }
@@ -217,7 +215,7 @@ enum ParseTree<'src> {
     Lambda {
         body: Box<ParseTree<'src>>,
         lambda_type: LambdaType,
-        var: String,
+        var: &'src str,
     },
     Variable(&'src str),
     FreeVariable(&'src str, LambdaType),
@@ -448,9 +446,9 @@ where
             .then_ignore(inline_whitespace().at_least(1))
             .then(text::ident().padded().labelled("lambda variable"))
             .then(expr.clone().delimited_by(just('('), just(')')))
-            .map(|((lambda_type, var_name), body)| ParseTree::Lambda {
+            .map(|((lambda_type, var), body)| ParseTree::Lambda {
                 body: Box::new(body),
-                var: var_name.to_string(),
+                var,
                 lambda_type,
             })
             .labelled("lambda expression");
@@ -475,7 +473,7 @@ where
 pub struct UnprocessedParseTree<'a>(ParseTree<'a>);
 
 impl<'a> UnprocessedParseTree<'a> {
-    pub fn to_pool(&self) -> Result<RootedLambdaPool<Expr<'a>>, LambdaParseError> {
+    pub fn to_pool(&self) -> Result<RootedLambdaPool<'a, Expr<'a>>, LambdaParseError> {
         self.0.to_pool()
     }
 }

@@ -17,7 +17,7 @@ impl Serialize for LambdaType {
     }
 }
 
-impl RootedLambdaPool<Expr<'_>> {
+impl RootedLambdaPool<'_, Expr<'_>> {
     pub(super) fn tokens<'a, 'b: 'a>(
         &'a self,
         expr: LambdaExprRef,
@@ -145,7 +145,7 @@ pub(super) enum Token<'a> {
     CloseDelim,
 }
 
-impl Serialize for RootedLambdaPool<Expr<'_>> {
+impl Serialize for RootedLambdaPool<'_, Expr<'_>> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
