@@ -257,19 +257,19 @@ mod test {
         let scenarios = vec![
             Scenario {
                 question: None,
-                actors: vec!["0"],
+                actors: vec!["John"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
             },
             Scenario {
                 question: None,
-                actors: vec!["1"],
+                actors: vec!["Mary"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
             },
             Scenario {
                 question: None,
-                actors: vec!["0"],
+                actors: vec!["John"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
             },
@@ -286,30 +286,30 @@ mod test {
         let scenarios = vec![
             Scenario {
                 question: None,
-                actors: vec!["0"],
+                actors: vec!["John"],
                 thematic_relations: vec![ThetaRoles {
-                    agent: Some("0"),
+                    agent: Some("John"),
                     patient: None,
                 }],
-                properties: HashMap::from_iter([("0", vec![Entity::Event(0)])]),
+                properties: HashMap::from_iter([("run", vec![Entity::Event(0)])]),
             },
             Scenario {
                 question: None,
-                actors: vec!["1"],
+                actors: vec!["Mary"],
                 thematic_relations: vec![ThetaRoles {
-                    agent: Some("1"),
+                    agent: Some("Mary"),
                     patient: None,
                 }],
-                properties: HashMap::from_iter([("0", vec![Entity::Event(0)])]),
+                properties: HashMap::from_iter([("run", vec![Entity::Event(0)])]),
             },
             Scenario {
                 question: None,
-                actors: vec!["1", "0"],
+                actors: vec!["Mary", "John"],
                 thematic_relations: vec![ThetaRoles {
-                    agent: Some("0"),
-                    patient: Some("1"),
+                    agent: Some("John"),
+                    patient: Some("Mary"),
                 }],
-                properties: HashMap::from_iter([("1", vec![Entity::Event(0)])]),
+                properties: HashMap::from_iter([("see", vec![Entity::Event(0)])]),
             },
         ];
 
@@ -326,7 +326,7 @@ mod test {
     #[test]
     fn parse_scenarios_with_questions() -> anyhow::Result<()> {
         let scenarios = scenario_parser()
-                .parse("\"John runs\" <John; {A: John (run)}> lambda a x (x)\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>  a0")
+                .parse("\"John runs\" <John; {A: John (run)}> lambda a x (x)\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>  a_0")
                 .unwrap()?;
 
         assert_eq!(
@@ -344,7 +344,7 @@ mod test {
                 .as_ref()
                 .unwrap()
                 .to_string(),
-            "a0"
+            "a_0"
         );
 
         Ok(())
@@ -354,7 +354,7 @@ mod test {
     fn parse_scenario() -> anyhow::Result<()> {
         let scenario = Scenario {
             question: None,
-            actors: vec!["0"],
+            actors: vec!["John"],
             thematic_relations: vec![],
             properties: HashMap::default(),
         };
@@ -389,7 +389,7 @@ mod test {
 
         let scenario = Scenario {
             question: None,
-            actors: vec!["0"],
+            actors: vec!["john"],
             thematic_relations: vec![ThetaRoles {
                 agent: None,
                 patient: None,
@@ -408,19 +408,19 @@ mod test {
 
         let scenario = Scenario {
             question: None,
-            actors: vec!["0", "1", "2"],
+            actors: vec!["john", "mary", "phil"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some("0"),
-                    patient: Some("1"),
+                    agent: Some("john"),
+                    patient: Some("mary"),
                 },
                 ThetaRoles {
-                    agent: Some("1"),
+                    agent: Some("mary"),
                     patient: None,
                 },
                 ThetaRoles {
                     agent: None,
-                    patient: Some("2"),
+                    patient: Some("phil"),
                 },
             ],
             properties: HashMap::default(),
@@ -438,25 +438,25 @@ mod test {
 
         let scenario = Scenario {
             question: None,
-            actors: vec!["0", "1", "2"],
+            actors: vec!["a", "b", "c"],
             thematic_relations: vec![
                 ThetaRoles {
                     agent: None,
                     patient: None,
                 },
                 ThetaRoles {
-                    agent: Some("0"),
+                    agent: Some("a"),
                     patient: None,
                 },
                 ThetaRoles {
                     agent: None,
-                    patient: Some("2"),
+                    patient: Some("c"),
                 },
             ],
             properties: HashMap::from_iter([
-                ("2", vec![Entity::Actor("0"), Entity::Actor("2")]),
-                ("1", vec![Entity::Event(0)]),
-                ("0", vec![Entity::Actor("2"), Entity::Event(2)]),
+                ("Red", vec![Entity::Actor("a"), Entity::Actor("c")]),
+                ("Green", vec![Entity::Event(0)]),
+                ("Blue", vec![Entity::Actor("c"), Entity::Event(2)]),
             ]),
         };
 

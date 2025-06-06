@@ -760,16 +760,15 @@ impl<'a, T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<'a, T>>>> for
 mod test {
 
     use super::*;
-    use crate::{
-        LabelledScenarios,
-        language::{ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
+    use crate::language::{
+        ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp,
     };
 
     #[test]
     fn stats() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
         for (expr, constant_lambda) in [
-            ("a0", false),
+            ("a_0", false),
             ("lambda a x (pa_man(x))", false),
             ("lambda a x (pa_man(a_m))", true),
             (
@@ -1105,7 +1104,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "every(x,pa0(x),some_e(y,all_e,(AgentOf(x,y) & pe1(y))))",
+            "every(x,pa_man(x),some_e(y,all_e,(AgentOf(x,y) & pe_sleep(y))))",
             pool.to_string()
         );
         let phi = man.merge(every).unwrap();
@@ -1113,7 +1112,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "every(x,pa0(x),some_e(y,all_e,(AgentOf(x,y) & pe1(y))))",
+            "every(x,pa_man(x),some_e(y,all_e,(AgentOf(x,y) & pe_sleep(y))))",
             pool.to_string()
         );
         Ok(())
@@ -1128,11 +1127,11 @@ mod test {
         assert_eq!("(False & True)", pool.into_pool()?.to_string());
 
         let input = parser
-            .parse("lambda a x (every_e(y,pe4,AgentOf(x,y)))")
+            .parse("lambda a x (every_e(y,pe_4,AgentOf(x,y)))")
             .unwrap()
             .to_pool()?;
         let mut a = parser
-            .parse("(P#<a,t>(a3) & ~P#<a,t>(a1))")
+            .parse("(P#<a,t>(a_3) & ~P#<a,t>(a_1))")
             .unwrap()
             .to_pool()?;
 
@@ -1140,7 +1139,7 @@ mod test {
         a.reduce()?;
         assert_eq!(
             a.to_string(),
-            "(every_e(x,pe4,AgentOf(a3,x)) & ~(every_e(x,pe4,AgentOf(a1,x))))"
+            "(every_e(x,pe_4,AgentOf(a_3,x)) & ~(every_e(x,pe_4,AgentOf(a_1,x))))"
         );
         Ok(())
     }
@@ -1227,7 +1226,7 @@ mod test {
     fn could_time_out_if_swapping_instead_of_cloning() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
         let mut x = p
-            .parse("(lambda a x_l (PatientOf(x_l,x_l)))((lambda a x_l (a1))(a0))")
+            .parse("(lambda a x_l (PatientOf(x_l,x_l)))((lambda a x_l (a_1))(a_0))")
             .unwrap()
             .to_pool()?;
 
@@ -1240,9 +1239,9 @@ mod test {
     #[test]
     fn lambda_abstraction_reduction() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut a = p.parse("a1").unwrap().to_pool()?;
+        let mut a = p.parse("a_1").unwrap().to_pool()?;
         let mut b = p
-            .parse("(lambda t x_l (a1))(pa0(free_var#a))")
+            .parse("(lambda t x_l (a_1))(pa_0(free_var#a))")
             .unwrap()
             .to_pool()?;
 
@@ -1260,13 +1259,13 @@ mod test {
         let p = lot_parser::<extra::Err<Rich<_>>>();
         let mut a = p
             .parse(
-                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a0)))",
+                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a_0)))",
             )
             .unwrap().to_pool()?;
         a.reduce()?;
 
         let mut a = p
-            .parse("(lambda <a,t> P (P(a3) & ~P(a1)))(lambda a x (every_e(y,pe4,AgentOf(x,y))))")
+            .parse("(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))")
             .unwrap()
             .to_pool()?;
 
@@ -1276,14 +1275,14 @@ mod test {
         dbg!(&a);
 
         let mut a = p
-            .parse("(lambda <a,t> P (P(a3) & ~P(a1)))(lambda a x (every_e(y,pe4,AgentOf(x,y))))")
+            .parse("(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))")
             .unwrap()
             .to_pool()?;
 
         a.reduce()?;
         assert_eq!(
             a.to_string(),
-            "(every_e(x,pe4,AgentOf(a3,x)) & ~(every_e(x,pe4,AgentOf(a1,x))))"
+            "(every_e(x,pe_4,AgentOf(a_3,x)) & ~(every_e(x,pe_4,AgentOf(a_1,x))))"
         );
 
         Ok(())
@@ -1294,7 +1293,7 @@ mod test {
         let p = lot_parser::<extra::Err<Rich<_>>>();
         let a = p
             .parse(
-                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a0)))",
+                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a_0)))",
             )
             .unwrap().to_pool()?;
         assert_eq!(

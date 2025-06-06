@@ -255,32 +255,32 @@ mod test {
     fn prune_quantifier_test() -> anyhow::Result<()> {
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let mut pool = parser
-            .parse("some_e(x0,all_e,AgentOf(a2,a1) & PatientOf(a0,a0))")
+            .parse("some_e(x0,all_e,AgentOf(a_2,a_1) & PatientOf(a_0,a_0))")
             .unwrap()
             .to_pool()?;
 
         pool.prune_quantifiers();
-        assert_eq!(pool.to_string(), "(AgentOf(a2,a1) & PatientOf(a0,a0))");
+        assert_eq!(pool.to_string(), "(AgentOf(a_2,a_1) & PatientOf(a_0,a_0))");
 
         let mut pool = parser
-            .parse("some_e(x0,all_e,some(z, all_a, AgentOf(z,e1) & PatientOf(a0,e0)))")
+            .parse("some_e(x0,all_e,some(z, all_a, AgentOf(z,e_1) & PatientOf(a_0,e_0)))")
             .unwrap()
             .to_pool()?;
 
         pool.prune_quantifiers();
         assert_eq!(
             pool.to_string(),
-            "some(x,all_a,(AgentOf(x,e1) & PatientOf(a0,e0)))"
+            "some(x,all_a,(AgentOf(x,e_1) & PatientOf(a_0,e_0)))"
         );
 
         let mut pool = parser
-            .parse("~(every_e(z,pe1,pa2(a0)))")
+            .parse("~(every_e(z,pe_1,pa_2(a_0)))")
             .unwrap()
             .to_pool()?;
 
         pool.prune_quantifiers();
 
-        assert_eq!(pool.to_string(), "~(pa2(a0))");
+        assert_eq!(pool.to_string(), "~(pa_2(a_0))");
 
         Ok(())
     }

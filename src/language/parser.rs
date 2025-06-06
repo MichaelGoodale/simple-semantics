@@ -307,12 +307,13 @@ where
     choice((
         just("all_a").to(Constant::Everyone),
         just("all_e").to(Constant::EveryEvent),
-        just("p_")
+        just("p")
             .ignore_then(
                 just("a")
                     .to(ActorOrEvent::Actor)
                     .or(just("e").to(ActorOrEvent::Event)),
             )
+            .then_ignore(just("_"))
             .then(text::ident())
             .map(|(a, p): (_, &str)| Constant::Property(p, a)),
     ))
@@ -328,13 +329,7 @@ where
 {
     text::ident::<&'src str, E>()
         .and_is(choice(RESERVED_KEYWORDS.map(|x| just(x))).not())
-        .and_is(one_of("ae").ignore_then(text::int(10)).not())
-        .and_is(
-            just("p")
-                .ignore_then(one_of("ae"))
-                .ignore_then(text::int(10))
-                .not(),
-        )
+        .and_is(just("e_").ignore_then(text::int(10)).not())
         .and_is(just("a_").ignore_then(text::ident()).not())
         .and_is(just("pa_").ignore_then(text::ident()).not())
         .and_is(just("pe_").ignore_then(text::ident()).not())
@@ -504,9 +499,8 @@ pub fn parse_executable<'a>(s: &'a str) -> Result<LanguageExpression<'a>, Lambda
 mod tests {
     use super::*;
     use crate::language::{ExprPool, LanguageResult, VariableBuffer};
-    use crate::{LabelledScenarios, Scenario, ThetaRoles};
+    use crate::{Scenario, ThetaRoles};
     use std::collections::HashMap;
-    use std::env::set_current_dir;
 
     #[test]
     fn parse_entity() {
@@ -528,8 +522,6 @@ mod tests {
 
     #[test]
     fn parse_bin_op() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
-
         for (s, result) in [
             (
                 "AgentOf(a_32, e_2)",
@@ -774,18 +766,18 @@ mod tests {
         };
 
         for statement in [
-            "~AgentOf(a_John, e0)",
+            "~AgentOf(a_John, e_0)",
             "pa_Red(a_John) & ~pa_Red(a_Mary)",
             "pa_Red(a_John) & ~pa_Red(a_Mary) & pa_Red(a_John)",
             "~(pa_Red(a_John) & ~(True & pa_Red(a_John)))",
             "every(x0, all_a, pa_Blue(x0))",
             "every(x0, pa_Blue, pa_Blue(x0))",
-            "every(x, pa1, pa4(x))",
+            "every(x, pa_1, pa_4(x))",
             "every(x0, pa_Red, pa_Blue(x0))",
             "every_e(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
             "every_e(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
             "every_e(x0, all_e, PatientOf(a_Mary, x0))",
-            "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), pa_Blue(x0))",
+            "some(x0, (PatientOf(x0, e_0) & PatientOf(x0, e_1)), pa_Blue(x0))",
         ] {
             println!("{statement}");
             let expression = parse_executable(statement)?;
@@ -831,27 +823,27 @@ mod tests {
         for statement in [
             "True",
             "~~~False",
-            "~AgentOf(a_John, e0)",
+            "~AgentOf(a_John, e_0)",
             "~(True & False)",
             "True | False",
             "(True & False) | True",
             "~(True & False) | False",
-            "pa1(a_John) & ~pa1(a_Mary)",
-            "pa1(a_John) & ~pa1(a_Mary) & pa1(a_John)",
-            "~(pa1(a_John) & ~(True & pa1(a_John)))",
-            "every(x0, all_a, pa4(x0))",
-            "every(x0, pa4, pa4(x0))",
+            "pa_1(a_John) & ~pa_1(a_Mary)",
+            "pa_1(a_John) & ~pa_1(a_Mary) & pa_1(a_John)",
+            "~(pa_1(a_John) & ~(True & pa_1(a_John)))",
+            "every(x0, all_a, pa_4(x0))",
+            "every(x0, pa_4, pa_4(x0))",
             "every_e(x0, all_e, (some(x1, all_a, AgentOf(x1, x0))))",
             "every_e(x0, all_e, (some(x1, all_a, PatientOf(x1, x0))))",
             "every_e(x0, all_e, PatientOf(a_Mary, x0))",
-            "some(x0, (PatientOf(x0, e0) & PatientOf(x0, e1)), pa4(x0))",
+            "some(x0, (PatientOf(x0, e_0) & PatientOf(x0, e_1)), pa_4(x0))",
         ] {
             println!("{statement}");
             assert_eq!(get_parse(statement, &scenario), LanguageResult::Bool(true));
         }
         for (statement, result) in [
             ("a_Mary", LanguageResult::Actor("Mary")),
-            ("e0", LanguageResult::Event(0)),
+            ("e_0", LanguageResult::Event(0)),
             ("all_e", LanguageResult::EventSet(vec![0, 1])),
             ("all_a", LanguageResult::ActorSet(vec!["Mary", "John"])),
             ("pa_Red", LanguageResult::ActorSet(vec!["John"])),

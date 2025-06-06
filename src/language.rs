@@ -1055,7 +1055,7 @@ mod tests {
         let p = lot_parser::<extra::Err<Rich<_>>>();
 
         let expr = p
-            .parse("some_e(y,pe1,PatientOf(a1,y))")
+            .parse("some_e(y,pe_1,PatientOf(a_1,y))")
             .unwrap()
             .to_pool()?
             .into_pool()?;

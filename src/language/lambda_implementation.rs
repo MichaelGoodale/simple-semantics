@@ -461,20 +461,20 @@ mod test {
     #[test]
     fn type_checking() -> anyhow::Result<()> {
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let john = parser.parse("a_j").unwrap().to_pool()?;
+        let john = parser.parse("a_John").unwrap().to_pool()?;
         let likes = parser
             .parse(
                 "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
             )
             .unwrap().to_pool()?;
 
-        let mary = parser.parse("a_m").unwrap().to_pool()?;
+        let mary = parser.parse("a_Mary").unwrap().to_pool()?;
         let phi = mary.clone().merge(likes.clone()).unwrap();
         let mut phi = phi.merge(john.clone()).unwrap();
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))",
+            "some_e(x,all_e,((AgentOf(x,a_Mary) & PatientOf(x,a_John)) & pe_likes(x)))",
             pool.to_string()
         );
         let phi = likes.merge(mary).unwrap();
@@ -482,7 +482,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))",
+            "some_e(x,all_e,((AgentOf(x,a_Mary) & PatientOf(x,a_John)) & pe_likes(x)))",
             pool.to_string()
         );
         Ok(())
