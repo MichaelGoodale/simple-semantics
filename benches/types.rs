@@ -93,3 +93,26 @@ fn lambda_string(bencher: divan::Bencher, s: &str) {
     let a = RootedLambdaPool::parse(s, &mut labels).unwrap();
     bencher.bench(|| a.to_string());
 }
+
+#[divan::bench]
+fn scenarios(bencher: divan::Bencher) {
+    let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
+
+    let mut labels = LabelledScenarios::parse(scenario).unwrap();
+
+    let a =
+        LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))", &mut labels).unwrap();
+    let b =
+        LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))", &mut labels).unwrap();
+    let c = LanguageExpression::parse(
+        "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))",
+        &mut labels,
+    )
+    .unwrap();
+    let scenario = labels.iter_scenarios().next().unwrap();
+    bencher.bench(|| {
+        a.run(scenario).unwrap();
+        b.run(scenario).unwrap();
+        c.run(scenario).unwrap();
+    });
+}
