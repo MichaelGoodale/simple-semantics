@@ -157,46 +157,10 @@ impl Serialize for RootedLambdaPool<'_, Expr<'_>> {
 #[cfg(test)]
 mod test {
 
-    use crate::{Entity, LabelledScenarios, Scenario, ThetaRoles, lambda::RootedLambdaPool};
-
-    use ahash::HashMap;
+    use crate::lambda::RootedLambdaPool;
 
     #[test]
     fn serializing() -> anyhow::Result<()> {
-        let mut properties = HashMap::default();
-
-        properties.insert(1, vec![Entity::Actor(1)]);
-        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
-
-        let simple_scenario = Scenario {
-            question: None,
-            actors: vec![0, 1],
-            thematic_relations: vec![
-                ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
-                },
-                ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
-                },
-            ],
-            properties,
-        };
-
-        let actor_labels =
-            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
-        let property_labels =
-            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
-        let mut labels = LabelledScenarios {
-            scenarios: vec![simple_scenario.clone()],
-            actor_labels,
-            property_labels,
-            free_variables: HashMap::default(),
-            sentences: vec![],
-            lemmas: vec![],
-        };
-
         for (statement, json) in [
             (
                 "~(AgentOf(a_John,e0))",
@@ -231,11 +195,8 @@ mod test {
                 "[\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"bad\",\"t\":\"<a,t>\"}}},\"CloseDelim\",\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"man\",\"t\":\"a\"}}},\"CloseDelim\"]",
             ),
         ] {
-            let expression = RootedLambdaPool::parse(statement, &mut labels)?;
-            assert_eq!(
-                json,
-                serde_json::to_string(&expression.serialize_with_labels(&labels))?
-            );
+            let expression = RootedLambdaPool::parse(statement)?;
+            assert_eq!(json, serde_json::to_string(&expression)?);
         }
 
         Ok(())

@@ -249,16 +249,15 @@ mod test {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
-    use crate::{LabelledScenarios, language::lot_parser};
+    use crate::language::lot_parser;
 
     #[test]
     fn prune_quantifier_test() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let mut pool = parser
             .parse("some_e(x0,all_e,AgentOf(a2,a1) & PatientOf(a0,a0))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         pool.prune_quantifiers();
         assert_eq!(pool.to_string(), "(AgentOf(a2,a1) & PatientOf(a0,a0))");
@@ -266,7 +265,7 @@ mod test {
         let mut pool = parser
             .parse("some_e(x0,all_e,some(z, all_a, AgentOf(z,e1) & PatientOf(a0,e0)))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         pool.prune_quantifiers();
         assert_eq!(
@@ -277,7 +276,7 @@ mod test {
         let mut pool = parser
             .parse("~(every_e(z,pe1,pa2(a0)))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         pool.prune_quantifiers();
 
@@ -289,9 +288,9 @@ mod test {
     #[test]
     fn randomn_swap() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = [0, 1];
-        let available_actor_properties = [0, 1, 2];
-        let available_event_properties = [2, 3, 4];
+        let actors = ["0", "1"];
+        let available_actor_properties = ["0", "1", "2"];
+        let available_event_properties = ["2", "3", "4"];
         for _ in 0..200 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
@@ -320,9 +319,9 @@ mod test {
     #[test]
     fn randomness() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = [0, 1];
-        let available_actor_properties = [0, 1, 2];
-        let available_event_properties = [2, 3, 4];
+        let actors = ["0", "1"];
+        let available_actor_properties = ["0", "1", "2"];
+        let available_event_properties = ["2", "3", "4"];
         let mut lengths = vec![];
         for _ in 0..200 {
             let t = LambdaType::random_no_e(&mut rng);

@@ -510,22 +510,17 @@ mod tests {
     #[test]
     fn parse_entity() {
         for n in [1, 6, 3, 4, 5, 100, 40] {
-            let str = format!("a{n}");
+            let str = format!("e_{n}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Entity(LabeledEntity::Unlabeled(Entity::Actor(n.into())))
-            );
-            let str = format!("e{n}");
-            assert_eq!(
-                entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Entity(LabeledEntity::Unlabeled(Entity::Event(n)))
+                ParseTree::Entity(Entity::Event(n))
             );
         }
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("a_{keyword}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Entity(LabeledEntity::LabeledActor(keyword))
+                ParseTree::Entity(Entity::Actor(keyword))
             );
         }
     }
@@ -555,7 +550,7 @@ mod tests {
             let (pool, root) = binary_operation::<extra::Err<Simple<_>>>(entity(), entity())
                 .parse(s)
                 .unwrap()
-                .to_pool(&mut labels)?
+                .to_pool()?
                 .into();
             let pool = pool.into_pool(root)?;
             assert_eq!(pool.pool.0, result);
@@ -620,11 +615,10 @@ mod tests {
     }
 
     fn get_pool(s: &str) -> (ExprPool, ExprRef) {
-        let mut labels = LabelledScenarios::default();
         let (parse, root) = language_parser::<extra::Err<Rich<char>>>()
             .parse(s)
             .unwrap()
-            .to_pool(&mut labels)
+            .to_pool()
             .unwrap()
             .into();
         let LanguageExpression { pool, start } = parse.into_pool(root).unwrap();
@@ -688,7 +682,7 @@ mod tests {
                         .join("\n"),
                 )
             })?
-            .to_pool(&mut labels)?
+            .to_pool()?
             .into();
 
         assert_eq!(

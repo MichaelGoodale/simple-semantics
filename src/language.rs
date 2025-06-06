@@ -627,6 +627,7 @@ mod serializations;
 
 #[cfg(test)]
 mod tests {
+    use crate::LabelledScenarios;
     use std::collections::HashMap;
 
     use ahash::RandomState;
@@ -640,16 +641,16 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(0),
+                agent: Some("0"),
                 patient: None,
             }],
             properties: HashMap::default(),
         };
 
         let simple_expr = ExprPool(vec![
-            Expr::Actor(0),
+            Expr::Actor("0"),
             Expr::Event(0),
             Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
         ]);
@@ -660,7 +661,7 @@ mod tests {
         );
 
         let simple_expr = ExprPool(vec![
-            Expr::Actor(0),
+            Expr::Actor("0"),
             Expr::Event(0),
             Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
         ]);
@@ -678,15 +679,15 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
+                    agent: Some("0"),
+                    patient: Some("0"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
+                    agent: Some("1"),
+                    patient: Some("0"),
                 },
             ],
             properties: HashMap::default(),
@@ -749,15 +750,15 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
+                    agent: Some("0"),
+                    patient: Some("0"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
+                    agent: Some("1"),
+                    patient: Some("0"),
                 },
             ],
             properties: HashMap::default(),
@@ -858,19 +859,19 @@ mod tests {
     fn properties() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
-        properties.insert(1, vec![Entity::Actor(0), Entity::Actor(1)]);
-        properties.insert(534, vec![Entity::Actor(1)]);
+        properties.insert("1", vec![Entity::Actor("0"), Entity::Actor("1")]);
+        properties.insert("534", vec![Entity::Actor("1")]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
+                    agent: Some("0"),
+                    patient: Some("0"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
+                    agent: Some("1"),
+                    patient: Some("0"),
                 },
             ],
             properties,
@@ -885,7 +886,7 @@ mod tests {
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
-            Expr::Unary(MonOp::Property(1, ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("1", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
         assert_eq!(
@@ -901,7 +902,7 @@ mod tests {
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
-            Expr::Unary(MonOp::Property(534, ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("534", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
         assert_eq!(
@@ -915,15 +916,15 @@ mod tests {
     fn complicated_restrictors() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
-        properties.insert(534, vec![Entity::Actor(1)]);
-        properties.insert(235, vec![Entity::Event(0)]);
-        properties.insert(2, vec![Entity::Actor(0)]);
+        properties.insert("534", vec![Entity::Actor("1")]);
+        properties.insert("235", vec![Entity::Event(0)]);
+        properties.insert("2", vec![Entity::Actor("0")]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(1),
-                patient: Some(0),
+                agent: Some("1"),
+                patient: Some("0"),
             }],
             properties,
         };
@@ -936,14 +937,14 @@ mod tests {
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
-            Expr::Constant(Constant::Property(534, ActorOrEvent::Actor)),
+            Expr::Constant(Constant::Property("534", ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var: Variable::Event(1),
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
-            Expr::Constant(Constant::Property(235, ActorOrEvent::Event)),
+            Expr::Constant(Constant::Property("235", ActorOrEvent::Event)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
@@ -960,14 +961,14 @@ mod tests {
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
-            Expr::Constant(Constant::Property(2, ActorOrEvent::Actor)),
+            Expr::Constant(Constant::Property("2", ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var: Variable::Event(1),
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
-            Expr::Constant(Constant::Property(235, ActorOrEvent::Event)),
+            Expr::Constant(Constant::Property("235", ActorOrEvent::Event)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
@@ -978,15 +979,15 @@ mod tests {
         );
 
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
-        properties.insert(3, vec![Entity::Actor(1), Entity::Actor(2)]);
-        properties.insert(2, vec![Entity::Actor(1), Entity::Actor(3)]);
-        properties.insert(4, vec![Entity::Event(0)]);
+        properties.insert("3", vec![Entity::Actor("1"), Entity::Actor("2")]);
+        properties.insert("2", vec![Entity::Actor("1"), Entity::Actor("3")]);
+        properties.insert("4", vec![Entity::Event(0)]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1, 2, 3, 4],
+            actors: vec!["0", "1", "2", "3", "4"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(1),
-                patient: Some(0),
+                agent: Some("1"),
+                patient: Some("0"),
             }],
             properties,
         };
@@ -999,9 +1000,9 @@ mod tests {
                 subformula: ExprRef(6),
             },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
-            Expr::Unary(MonOp::Property(2, ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("2", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
-            Expr::Unary(MonOp::Property(3, ActorOrEvent::Actor), ExprRef(5)),
+            Expr::Unary(MonOp::Property("3", ActorOrEvent::Actor), ExprRef(5)),
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
@@ -1027,9 +1028,9 @@ mod tests {
                 subformula: ExprRef(6),
             },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
-            Expr::Unary(MonOp::Property(2, ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("2", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
-            Expr::Unary(MonOp::Property(3, ActorOrEvent::Actor), ExprRef(5)),
+            Expr::Unary(MonOp::Property("3", ActorOrEvent::Actor), ExprRef(5)),
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
@@ -1052,39 +1053,31 @@ mod tests {
     #[test]
     fn error_handling() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut labels = crate::LabelledScenarios {
-            scenarios: vec![],
-            sentences: vec![],
-            lemmas: vec![],
-            property_labels: HashMap::default(),
-            actor_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
 
         let expr = p
             .parse("some_e(y,pe1,PatientOf(a1,y))")
             .unwrap()
-            .to_pool(&mut labels)?
+            .to_pool()?
             .into_pool()?;
 
         let a = Scenario {
             question: None,
-            actors: vec![1, 0],
+            actors: vec!["1", "0"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(0),
-                patient: Some(1),
+                agent: Some("0"),
+                patient: Some("1"),
             }],
-            properties: vec![(1, vec![Entity::Event(0)])].into_iter().collect(),
+            properties: vec![("1", vec![Entity::Event(0)])].into_iter().collect(),
         };
 
         let b = Scenario {
             question: None,
-            actors: vec![1],
+            actors: vec!["1"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(1),
+                agent: Some("1"),
                 patient: None,
             }],
-            properties: vec![(0, vec![Entity::Event(0)])].into_iter().collect(),
+            properties: vec![("0", vec![Entity::Event(0)])].into_iter().collect(),
         };
         assert_eq!(expr.run(&b), Err(LanguageTypeError::PresuppositionError));
         expr.run(&a)?;
@@ -1096,13 +1089,12 @@ mod tests {
     fn weird_and_not_behaviour() -> anyhow::Result<()> {
         let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
 
-        let mut labels = LabelledScenarios::parse(scenario)?;
+        let labels = LabelledScenarios::parse(scenario)?;
 
-        let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))", &mut labels)?;
-        let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))", &mut labels)?;
+        let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))")?;
+        let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))")?;
         let c = LanguageExpression::parse(
             "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))",
-            &mut labels,
         )?;
         let scenario = labels.iter_scenarios().next().unwrap();
         assert_eq!(a.run(scenario)?, LanguageResult::Bool(true));
