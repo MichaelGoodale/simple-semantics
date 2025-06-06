@@ -55,9 +55,9 @@ fn random_types() {
 #[divan::bench]
 fn random_exprs() {
     let mut rng = ChaCha8Rng::seed_from_u64(32);
-    let actors = &[1, 2, 3, 4, 5];
-    let actor_properties = &[1, 2, 3, 4, 5];
-    let event_properties = &[1, 2, 3, 4, 5];
+    let actors = &["1", "2", "3", "4", "5"];
+    let actor_properties = &["1", "2", "3", "4", "5"];
+    let event_properties = &["1", "2", "3", "4", "5"];
 
     for _ in 0..100 {
         RootedLambdaPool::random_expr(
@@ -76,10 +76,7 @@ fn random_exprs() {
 "every_e(x,pe_dance,AgentOf(a_Mary,x))",
 "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))"])]
 fn to_string(bencher: divan::Bencher, s: &str) {
-    let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
-
-    let mut labels = LabelledScenarios::parse(scenario).unwrap();
-    let a = LanguageExpression::parse(s, &mut labels).unwrap();
+    let a = LanguageExpression::parse(s).unwrap();
     bencher.bench(|| a.to_string());
 }
 
@@ -87,10 +84,7 @@ fn to_string(bencher: divan::Bencher, s: &str) {
 "lambda <a,<a,t>> P (every_e(x,pe_dance, (P(a_Mary))(x)))",
 "lambda a r ((every_e(x,pe_dance,AgentOf(r,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x))))"])]
 fn lambda_string(bencher: divan::Bencher, s: &str) {
-    let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
-
-    let mut labels = LabelledScenarios::parse(scenario).unwrap();
-    let a = RootedLambdaPool::parse(s, &mut labels).unwrap();
+    let a = RootedLambdaPool::parse(s).unwrap();
     bencher.bench(|| a.to_string());
 }
 
@@ -98,15 +92,12 @@ fn lambda_string(bencher: divan::Bencher, s: &str) {
 fn scenarios(bencher: divan::Bencher) {
     let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
 
-    let mut labels = LabelledScenarios::parse(scenario).unwrap();
+    let labels = LabelledScenarios::parse(scenario).unwrap();
 
-    let a =
-        LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))", &mut labels).unwrap();
-    let b =
-        LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))", &mut labels).unwrap();
+    let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))").unwrap();
+    let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))").unwrap();
     let c = LanguageExpression::parse(
         "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))",
-        &mut labels,
     )
     .unwrap();
     let scenario = labels.iter_scenarios().next().unwrap();
