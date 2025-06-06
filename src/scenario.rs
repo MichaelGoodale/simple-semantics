@@ -1,29 +1,16 @@
 use ahash::{HashSet, RandomState};
 use chumsky::{prelude::*, text::inline_whitespace};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use crate::language::{LambdaParseError, lot_parser};
-use crate::{
-    Actor, Entity, Event, LabelledScenarios, PropertyLabel, Scenario, ThetaRoles, lambda::Fvar,
-};
-
-struct StringThetaRole<'a> {
-    agent: Option<&'a str>,
-    patient: Option<&'a str>,
-}
-
-struct StringEvents<'a> {
-    events: Vec<StringThetaRole<'a>>,
-    event_props: ahash::HashMap<&'a str, Vec<Entity>>,
-}
+use crate::{Actor, Entity, Event, Scenario, ScenarioDataset, ThetaRoles};
 
 pub fn scenario_parser<'a>()
--> impl Parser<'a, &'a str, Result<LabelledScenarios, LambdaParseError>, extra::Err<Rich<'a, char>>>
+-> impl Parser<'a, &'a str, Result<ScenarioDataset<'a>, LambdaParseError>, extra::Err<Rich<'a, char>>>
 {
     let string = none_of("\"")
         .repeated()
         .to_slice()
-        .map(ToString::to_string)
         .delimited_by(just('"'), just('"'));
 
     let properties = text::ident()
@@ -37,7 +24,7 @@ pub fn scenario_parser<'a>()
 
     let actors = actor
         .map(|(a, p)| {
-            let mut properties: HashMap<&str, Vec<&str>, RandomState> = HashMap::default();
+            let mut properties: HashMap<&str, Vec<_>, RandomState> = HashMap::default();
             if let Some(property_labels) = p {
                 for property in property_labels {
                     properties.insert(property, vec![a]);
@@ -74,26 +61,26 @@ pub fn scenario_parser<'a>()
         theta_role('A')
             .then_ignore(just(','))
             .then(theta_role('P'))
-            .map(|(a, p)| StringThetaRole {
+            .map(|(a, p)| ThetaRoles {
                 agent: Some(a),
                 patient: Some(p),
             }),
         theta_role('P')
             .then_ignore(just(','))
             .then(theta_role('A'))
-            .map(|(p, a)| StringThetaRole {
+            .map(|(p, a)| ThetaRoles {
                 agent: Some(a),
                 patient: Some(p),
             }),
-        theta_role('P').map(|n| StringThetaRole {
+        theta_role('P').map(|n| ThetaRoles {
             agent: None,
             patient: Some(n),
         }),
-        theta_role('A').map(|n| StringThetaRole {
+        theta_role('A').map(|n| ThetaRoles {
             agent: Some(n),
             patient: None,
         }),
-        empty().map(|_| StringThetaRole {
+        empty().map(|_| ThetaRoles {
             agent: None,
             patient: None,
         }),
@@ -121,25 +108,21 @@ pub fn scenario_parser<'a>()
                 None => vec![],
             };
 
-            StringEvents {
-                events,
-                event_props: properties,
-            }
+            (events, properties)
         })
         .foldl(
             just(',').ignore_then(event).repeated().enumerate(),
-            |mut string_events, (i, (event, event_props))| {
-                string_events.events.push(event);
+            |(mut acc_event, mut acc_props), (i, (event, event_props))| {
+                acc_event.push(event);
                 if let Some(event_props) = event_props {
                     for property_label in event_props {
-                        string_events
-                            .event_props
+                        acc_props
                             .entry(property_label)
                             .and_modify(|x| x.push(Entity::Event((i + 1) as Event)))
                             .or_insert(vec![Entity::Event((i + 1) as Event)]);
                     }
                 }
-                string_events
+                (acc_event, acc_props)
             },
         );
 
@@ -160,7 +143,7 @@ pub fn scenario_parser<'a>()
     scenario
         .clone()
         .map(|((s, actors, actor_props, events), lot)| {
-            let mut dataset = (LabelledScenarios::default(), HashSet::default());
+            let mut dataset = (ScenarioDataset::default(), HashSet::default());
             add_scenario(&mut dataset, s, actors, actor_props, events);
             (dataset, vec![lot])
         })
@@ -181,7 +164,7 @@ pub fn scenario_parser<'a>()
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, x)| {
-                    x.map(|x| match x.to_pool(&mut data) {
+                    x.map(|x| match x.to_pool() {
                         Ok(x) => Ok((i, x)),
                         Err(e) => Err(e),
                     })
@@ -200,123 +183,43 @@ pub fn scenario_parser<'a>()
         })
 }
 
+type EventParseType<'a> = Option<(
+    Vec<ThetaRoles<'a>>,
+    HashMap<&'a str, Vec<Entity<'a>>, ahash::RandomState>,
+)>;
+
 fn add_scenario<'a>(
-    training_dataset: &mut (LabelledScenarios, HashSet<String>),
-    s: String,
-    actors: Vec<&'a str>,
+    training_dataset: &mut (ScenarioDataset<'a>, HashSet<&'a str>),
+    s: &'a str,
+    actors: Vec<Actor<'a>>,
     actor_props: HashMap<&'a str, Vec<&'a str>, RandomState>,
-    events: Option<StringEvents>,
+    events: EventParseType<'a>,
 ) {
-    let actors: Vec<Actor> = actors
+    let (events, event_props) = events.unwrap_or_else(|| (Vec::default(), HashMap::default()));
+
+    let mut properties: HashMap<&str, Vec<Entity>, _> = actor_props
         .into_iter()
-        .map(|x| {
-            let n = training_dataset.0.actor_labels.len();
-            *training_dataset
-                .0
-                .actor_labels
-                .entry(x.to_string())
-                .or_insert(n as u16)
-        })
+        .map(|(k, v)| (k, v.into_iter().map(Entity::Actor).collect()))
         .collect();
 
-    let events = events.unwrap_or_else(|| StringEvents {
-        events: Vec::default(),
-        event_props: HashMap::default(),
-    });
-
-    let mut properties: BTreeMap<&str, Vec<Entity>> = actor_props
-        .into_iter()
-        .map(|(k, v)| {
-            (
-                k,
-                v.into_iter()
-                    .map(|x| Entity::Actor(training_dataset.0.get_actor_label(x)))
-                    .collect(),
-            )
-        })
-        .collect();
-
-    for (k, mut v) in events.event_props.into_iter() {
+    for (k, mut v) in event_props.into_iter() {
         properties
             .entry(k)
             .and_modify(|value| value.append(&mut v))
             .or_insert(v);
     }
 
-    let thematic_relations = events
-        .events
-        .into_iter()
-        .map(|x| ThetaRoles {
-            agent: x.agent.map(|x| training_dataset.0.get_actor_label(x)),
-            patient: x.patient.map(|x| training_dataset.0.get_actor_label(x)),
-        })
-        .collect();
-
-    let properties = properties
-        .into_iter()
-        .map(|(k, v)| (training_dataset.0.get_property_label(k), v))
-        .collect();
-
     training_dataset.0.scenarios.push(Scenario {
         question: None,
         actors,
-        thematic_relations,
+        thematic_relations: events,
         properties,
     });
 
-    let s: Vec<String> = s.split(" ").map(ToString::to_string).collect();
+    let s: Vec<&str> = s.split(" ").collect();
 
     training_dataset.1.extend(s.clone());
     training_dataset.0.sentences.push(s);
-}
-
-impl LabelledScenarios {
-    pub fn get_free_variable(&mut self, label: &str) -> Fvar {
-        let n = self.free_variables.len();
-        *self
-            .free_variables
-            .entry(label.to_string())
-            .or_insert(n as Fvar)
-    }
-
-    pub fn get_property_label(&mut self, label: &str) -> PropertyLabel {
-        let n = self.property_labels.len();
-        *self
-            .property_labels
-            .entry(label.to_string())
-            .or_insert(n as u32)
-    }
-
-    pub fn get_actor_label(&mut self, label: &str) -> Actor {
-        let n = self.actor_labels.len();
-        *self
-            .actor_labels
-            .entry(label.to_string())
-            .or_insert(n as Actor)
-    }
-
-    //These probably could be made faster in O(n) terms with a Bimap but the scales are so small
-    //that its probably not worth the overhead.
-
-    pub fn from_actor(&self, actor: Actor) -> Option<&str> {
-        self.actor_labels
-            .iter()
-            .find(|(_, a)| **a == actor)
-            .map(|(s, _)| s.as_str())
-    }
-
-    pub fn from_prop(&self, prop: PropertyLabel) -> Option<&str> {
-        self.property_labels
-            .iter()
-            .find(|(_, p)| **p == prop)
-            .map(|(s, _)| s.as_str())
-    }
-    pub fn from_fvar(&self, fvar: Fvar) -> Option<&str> {
-        self.free_variables
-            .iter()
-            .find(|(_, v)| **v == fvar)
-            .map(|(s, _)| s.as_str())
-    }
 }
 
 #[cfg(test)]
@@ -354,19 +257,19 @@ mod test {
         let scenarios = vec![
             Scenario {
                 question: None,
-                actors: vec![0],
+                actors: vec!["John"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
             },
             Scenario {
                 question: None,
-                actors: vec![1],
+                actors: vec!["Mary"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
             },
             Scenario {
                 question: None,
-                actors: vec![0],
+                actors: vec!["John"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
             },
@@ -383,30 +286,30 @@ mod test {
         let scenarios = vec![
             Scenario {
                 question: None,
-                actors: vec![0],
+                actors: vec!["John"],
                 thematic_relations: vec![ThetaRoles {
-                    agent: Some(0),
+                    agent: Some("John"),
                     patient: None,
                 }],
-                properties: HashMap::from_iter([(0, vec![Entity::Event(0)])]),
+                properties: HashMap::from_iter([("run", vec![Entity::Event(0)])]),
             },
             Scenario {
                 question: None,
-                actors: vec![1],
+                actors: vec!["Mary"],
                 thematic_relations: vec![ThetaRoles {
-                    agent: Some(1),
+                    agent: Some("Mary"),
                     patient: None,
                 }],
-                properties: HashMap::from_iter([(0, vec![Entity::Event(0)])]),
+                properties: HashMap::from_iter([("run", vec![Entity::Event(0)])]),
             },
             Scenario {
                 question: None,
-                actors: vec![1, 0],
+                actors: vec!["Mary", "John"],
                 thematic_relations: vec![ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(1),
+                    agent: Some("John"),
+                    patient: Some("Mary"),
                 }],
-                properties: HashMap::from_iter([(1, vec![Entity::Event(0)])]),
+                properties: HashMap::from_iter([("see", vec![Entity::Event(0)])]),
             },
         ];
 
@@ -423,7 +326,7 @@ mod test {
     #[test]
     fn parse_scenarios_with_questions() -> anyhow::Result<()> {
         let scenarios = scenario_parser()
-                .parse("\"John runs\" <John; {A: John (run)}> lambda a x (x)\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>  a0")
+                .parse("\"John runs\" <John; {A: John (run)}> lambda a x (x)\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>  a_0")
                 .unwrap()?;
 
         assert_eq!(
@@ -441,7 +344,7 @@ mod test {
                 .as_ref()
                 .unwrap()
                 .to_string(),
-            "a0"
+            "a_0"
         );
 
         Ok(())
@@ -451,7 +354,7 @@ mod test {
     fn parse_scenario() -> anyhow::Result<()> {
         let scenario = Scenario {
             question: None,
-            actors: vec![0],
+            actors: vec!["John"],
             thematic_relations: vec![],
             properties: HashMap::default(),
         };
@@ -486,7 +389,7 @@ mod test {
 
         let scenario = Scenario {
             question: None,
-            actors: vec![0],
+            actors: vec!["john"],
             thematic_relations: vec![ThetaRoles {
                 agent: None,
                 patient: None,
@@ -505,19 +408,19 @@ mod test {
 
         let scenario = Scenario {
             question: None,
-            actors: vec![0, 1, 2],
+            actors: vec!["john", "mary", "phil"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(1),
+                    agent: Some("john"),
+                    patient: Some("mary"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
+                    agent: Some("mary"),
                     patient: None,
                 },
                 ThetaRoles {
                     agent: None,
-                    patient: Some(2),
+                    patient: Some("phil"),
                 },
             ],
             properties: HashMap::default(),
@@ -535,25 +438,25 @@ mod test {
 
         let scenario = Scenario {
             question: None,
-            actors: vec![0, 1, 2],
+            actors: vec!["a", "b", "c"],
             thematic_relations: vec![
                 ThetaRoles {
                     agent: None,
                     patient: None,
                 },
                 ThetaRoles {
-                    agent: Some(0),
+                    agent: Some("a"),
                     patient: None,
                 },
                 ThetaRoles {
                     agent: None,
-                    patient: Some(2),
+                    patient: Some("c"),
                 },
             ],
             properties: HashMap::from_iter([
-                (2, vec![Entity::Actor(0), Entity::Actor(2)]),
-                (1, vec![Entity::Event(0)]),
-                (0, vec![Entity::Actor(2), Entity::Event(2)]),
+                ("Red", vec![Entity::Actor("a"), Entity::Actor("c")]),
+                ("Green", vec![Entity::Event(0)]),
+                ("Blue", vec![Entity::Actor("c"), Entity::Event(2)]),
             ]),
         };
 

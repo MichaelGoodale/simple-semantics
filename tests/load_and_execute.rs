@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use simple_semantics::{Entity, LabelledScenarios, LanguageResult, Scenario, ThetaRoles};
+use simple_semantics::{Entity, LanguageResult, Scenario, ScenarioDataset, ThetaRoles};
 
 fn get_resource_path() -> anyhow::Result<PathBuf> {
     let cargo_path = std::env::var("CARGO_MANIFEST_DIR")?;
@@ -13,53 +13,48 @@ fn get_resource_path() -> anyhow::Result<PathBuf> {
 #[test]
 fn load_dataset() -> anyhow::Result<()> {
     let path = get_resource_path()?.join("testfile.scenario");
-    let mut parsed_data = LabelledScenarios::from_file(path)?;
+    let file = std::fs::read_to_string(path)?;
+    let parsed_data = ScenarioDataset::parse(&file)?;
 
     let scenarios = vec![
         Scenario::new(
-            vec![0],
+            vec!["John"],
             vec![ThetaRoles {
-                agent: Some(0),
+                agent: Some("John"),
                 patient: None,
             }],
-            HashMap::from_iter([(0, vec![Entity::Event(0)])]),
+            HashMap::from_iter([("run", vec![Entity::Event(0)])]),
         ),
         Scenario::new(
-            vec![1],
+            vec!["Mary"],
             vec![ThetaRoles {
-                agent: Some(1),
+                agent: Some("Mary"),
                 patient: None,
             }],
-            HashMap::from_iter([(0, vec![Entity::Event(0)])]),
+            HashMap::from_iter([("run", vec![Entity::Event(0)])]),
         ),
         Scenario::new(
-            vec![1, 0],
+            vec!["Mary", "John"],
             vec![ThetaRoles {
-                agent: Some(0),
-                patient: Some(1),
+                agent: Some("John"),
+                patient: Some("Mary"),
             }],
-            HashMap::from_iter([(1, vec![Entity::Event(0)])]),
+            HashMap::from_iter([("see", vec![Entity::Event(0)])]),
         ),
     ];
 
-    let data = LabelledScenarios::new(
+    let data = ScenarioDataset::new(
         scenarios,
         ["John ran", "Mary ran", "John saw Mary"]
-            .map(|x| x.split(" ").map(ToString::to_string).collect::<Vec<_>>())
+            .map(|x| x.split(" ").collect::<Vec<_>>())
             .into_iter()
             .collect::<Vec<_>>(),
-        ["John", "Mary", "ran", "saw"]
-            .map(ToString::to_string)
-            .into_iter()
-            .collect(),
-        HashMap::from_iter([("run", 0), ("see", 1)].map(|(x, y)| (x.to_string(), y))),
-        HashMap::from_iter([("John", 0), ("Mary", 1)].map(|(x, y)| (x.to_string(), y))),
-        HashMap::default(),
+        ["John", "Mary", "ran", "saw"].into_iter().collect(),
     );
 
     assert_eq!(data, parsed_data);
 
-    let executable = simple_semantics::parse_executable("AgentOf(a_John, e0)", &mut parsed_data)?;
+    let executable = simple_semantics::parse_executable("AgentOf(a_John, e_0)")?;
     assert_eq!(
         parsed_data
             .iter_scenarios()
@@ -74,11 +69,11 @@ fn load_dataset() -> anyhow::Result<()> {
 #[test]
 fn lambda_stuff() -> anyhow::Result<()> {
     let path = get_resource_path()?.join("men.scenario");
-    let mut parsed_data = LabelledScenarios::from_file(path)?;
+    let file = std::fs::read_to_string(path)?;
+    let parsed_data = ScenarioDataset::parse(&file)?;
 
     let executable = simple_semantics::parse_executable(
         "every(x,pa_man, some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
-        &mut parsed_data,
     )?;
     assert_eq!(
         parsed_data
@@ -99,8 +94,7 @@ fn lambda_stuff() -> anyhow::Result<()> {
 
     let every_man_sleeps = format!("(({every})({man}))({sleeps})");
     println!("{every_man_sleeps}");
-    let executable =
-        simple_semantics::parse_executable(every_man_sleeps.as_str(), &mut parsed_data)?;
+    let executable = simple_semantics::parse_executable(every_man_sleeps.as_str())?;
     assert_eq!(
         parsed_data
             .iter_scenarios()
@@ -114,7 +108,7 @@ fn lambda_stuff() -> anyhow::Result<()> {
     let not_every_woman_sleeps = format!("({not})((({every})({woman}))({sleeps}))");
     let statement = format!("(({and})({every_man_sleeps}))({not_every_woman_sleeps})");
     println!("{statement}");
-    let executable = simple_semantics::parse_executable(statement.as_str(), &mut parsed_data)?;
+    let executable = simple_semantics::parse_executable(statement.as_str())?;
     println!("{executable}");
     assert_eq!(
         parsed_data

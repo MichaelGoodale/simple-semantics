@@ -2,19 +2,19 @@ use super::*;
 
 //Need to add applications
 #[derive(Debug, Clone)]
-pub enum UnbuiltExpr<'t> {
+pub enum UnbuiltExpr<'src, 't> {
     Quantifier(Quantifier, ActorOrEvent),
     Variable(Variable),
-    Actor(Actor),
+    Actor(Actor<'src>),
     Event(Event),
     Binary(BinOp),
-    Unary(MonOp),
-    Constant(Constant),
+    Unary(MonOp<'src>),
+    Constant(Constant<'src>),
     Lambda(&'t LambdaType, &'t LambdaType),
     BoundVariable(Bvar, &'t LambdaType),
 }
 
-impl UnbuiltExpr<'_> {
+impl UnbuiltExpr<'_, '_> {
     pub fn get_expression_type(&self) -> ExpressionType {
         match self {
             UnbuiltExpr::Quantifier(_, actor_or_event) => ExpressionType {
@@ -80,12 +80,12 @@ impl UnbuiltExpr<'_> {
     }
 }
 
-pub fn add_expr<'pool>(
-    e: UnbuiltExpr<'pool>,
+pub fn add_expr<'src, 'pool>(
+    e: UnbuiltExpr<'src, 'pool>,
     pos: u32,
     mut context: Context<'pool>,
     fresher: &mut Fresher,
-    pool: &mut Vec<Option<LambdaExpr<Expr>>>,
+    pool: &mut Vec<Option<LambdaExpr<Expr<'src>>>>,
 ) -> Vec<(u32, &'pool LambdaType, Context<'pool>)> {
     let cur_size = pool.len() as u32 - 1;
     let mut children = vec![];

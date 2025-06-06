@@ -1,9 +1,8 @@
 use serde::Serialize;
 
 use crate::{
-    LabelledScenarios,
     lambda::{LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
-    language::{BinOp, Constant, Expr, MonOp, Variable},
+    language::{BinOp, Expr, Variable},
 };
 
 use crate::language::lambda_implementation::VarContext;
@@ -17,13 +16,12 @@ impl Serialize for LambdaType {
     }
 }
 
-impl RootedLambdaPool<Expr> {
+impl RootedLambdaPool<'_, Expr<'_>> {
     pub(super) fn tokens<'a, 'b: 'a>(
         &'a self,
         expr: LambdaExprRef,
         c: VarContext,
         v: &mut Vec<Token<'a>>,
-        labels: Option<&'b LabelledScenarios>,
     ) {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
@@ -33,21 +31,17 @@ impl RootedLambdaPool<Expr> {
                     var: TokenVar::Lambda(var),
                 });
                 v.push(Token::OpenDelim);
-                self.tokens(*child, c, v, labels);
+                self.tokens(*child, c, v);
                 v.push(Token::CloseDelim);
             }
             LambdaExpr::BoundVariable(bvar, _) => {
                 v.push(Token::Var(TokenVar::Lambda(c.lambda_var(*bvar))))
             }
             LambdaExpr::FreeVariable(fvar, t) => {
-                let f = if let Some(x) = labels {
-                    x.from_fvar(*fvar)
-                        .map(|x| x.to_string())
-                        .unwrap_or_else(|| fvar.to_string())
-                } else {
-                    fvar.to_string()
-                };
-                v.push(Token::Var(TokenVar::Free { label: f, t }));
+                v.push(Token::Var(TokenVar::Free {
+                    label: fvar.to_string(),
+                    t,
+                }));
             }
 
             LambdaExpr::Application {
@@ -55,10 +49,10 @@ impl RootedLambdaPool<Expr> {
                 argument,
             } => {
                 v.push(Token::OpenDelim);
-                self.tokens(*subformula, c.clone(), v, labels);
+                self.tokens(*subformula, c.clone(), v);
                 v.push(Token::CloseDelim);
                 v.push(Token::OpenDelim);
-                self.tokens(*argument, c.clone(), v, labels);
+                self.tokens(*argument, c.clone(), v);
                 v.push(Token::CloseDelim);
             }
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
@@ -79,65 +73,53 @@ impl RootedLambdaPool<Expr> {
                         var: TokenVar::Quantifier(var_string),
                     });
                     v.push(Token::OpenDelim);
-                    self.tokens(LambdaExprRef(restrictor.0), c.clone(), v, labels);
+                    self.tokens(LambdaExprRef(restrictor.0), c.clone(), v);
                     v.push(Token::CloseDelim);
                     v.push(Token::OpenDelim);
-                    self.tokens(LambdaExprRef(subformula.0), c, v, labels);
+                    self.tokens(LambdaExprRef(subformula.0), c, v);
                     v.push(Token::CloseDelim);
                 }
                 Expr::Variable(variable) => {
                     v.push(Token::Var(TokenVar::Quantifier(c.q_var(*variable))))
                 }
-                Expr::Actor(a) => {
-                    let s = {
-                        if let Some(x) = labels {
-                            x.from_actor(*a)
-                                .map(|x| x.to_string())
-                                .unwrap_or_else(|| a.to_string())
-                        } else {
-                            a.to_string()
-                        }
-                    };
-                    v.push(Token::Actor(s))
-                }
+                Expr::Actor(a) => v.push(Token::Actor(a.to_string())),
                 Expr::Event(e) => v.push(Token::Event(e.to_string())),
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {
                         v.push(Token::Func(bin_op.to_string()));
                         v.push(Token::OpenDelim);
-                        self.tokens(LambdaExprRef(x.0), c.clone(), v, labels);
-                        self.tokens(LambdaExprRef(y.0), c, v, labels);
+                        self.tokens(LambdaExprRef(x.0), c.clone(), v);
+                        self.tokens(LambdaExprRef(y.0), c, v);
                         v.push(Token::CloseDelim);
                     }
 
                     BinOp::And | BinOp::Or => {
                         v.push(Token::OpenDelim);
-                        self.tokens(LambdaExprRef(x.0), c.clone(), v, labels);
+                        self.tokens(LambdaExprRef(x.0), c.clone(), v);
                         v.push(Token::Func(bin_op.to_string()));
-                        self.tokens(LambdaExprRef(y.0), c, v, labels);
+                        self.tokens(LambdaExprRef(y.0), c, v);
                         v.push(Token::CloseDelim);
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
-                    let mon_s = match (mon_op, labels) {
-                        (MonOp::Property(p, t), Some(labels)) => labels
-                            .from_prop(*p)
-                            .map(|x| x.to_string())
-                            .unwrap_or_else(|| format!("{}", MonOp::Property(*p, *t))),
-                        _ => mon_op.to_string(),
+                    let s = match mon_op {
+                        super::MonOp::Property(s, _) => s.to_string(),
+                        super::MonOp::Tautology
+                        | super::MonOp::Not
+                        | super::MonOp::Contradiction => mon_op.to_string(),
                     };
-                    v.push(Token::Func(mon_s));
+                    v.push(Token::Func(s));
                     v.push(Token::OpenDelim);
-                    self.tokens(LambdaExprRef(arg.0), c, v, labels);
+                    self.tokens(LambdaExprRef(arg.0), c, v);
                     v.push(Token::CloseDelim);
                 }
                 Expr::Constant(constant) => {
-                    let s = match (constant, labels) {
-                        (Constant::Property(p, t), Some(labels)) => labels
-                            .from_prop(*p)
-                            .map(|x| x.to_string())
-                            .unwrap_or_else(|| format!("{}", Constant::Property(*p, *t))),
-                        _ => format!("{constant}"),
+                    let s = match constant {
+                        super::Constant::Everyone
+                        | super::Constant::EveryEvent
+                        | super::Constant::Tautology
+                        | super::Constant::Contradiction => constant.to_string(),
+                        super::Constant::Property(s, _) => s.to_string(),
                     };
                     v.push(Token::Const(s));
                 }
@@ -174,35 +156,13 @@ pub(super) enum Token<'a> {
     CloseDelim,
 }
 
-///Special struct for serialization; you shouldn't use this normally.
-pub struct PoolForSerialization<'a>(Vec<Token<'a>>);
-
-impl RootedLambdaPool<Expr> {
-    pub fn serialize_with_labels<'a, 'b: 'a>(
-        &'a self,
-        labels: &'a LabelledScenarios,
-    ) -> PoolForSerialization<'a> {
-        let mut v = vec![];
-        self.tokens(self.root, VarContext::default(), &mut v, Some(labels));
-        PoolForSerialization(v)
-    }
-}
-impl Serialize for PoolForSerialization<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.serialize(serializer)
-    }
-}
-
-impl Serialize for RootedLambdaPool<Expr> {
+impl Serialize for RootedLambdaPool<'_, Expr<'_>> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         let mut v: Vec<Token> = vec![];
-        self.tokens(self.root, VarContext::default(), &mut v, None);
+        self.tokens(self.root, VarContext::default(), &mut v);
         v.serialize(serializer)
     }
 }
@@ -210,49 +170,13 @@ impl Serialize for RootedLambdaPool<Expr> {
 #[cfg(test)]
 mod test {
 
-    use crate::{Entity, LabelledScenarios, Scenario, ThetaRoles, lambda::RootedLambdaPool};
-
-    use ahash::HashMap;
+    use crate::lambda::RootedLambdaPool;
 
     #[test]
     fn serializing() -> anyhow::Result<()> {
-        let mut properties = HashMap::default();
-
-        properties.insert(1, vec![Entity::Actor(1)]);
-        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
-
-        let simple_scenario = Scenario {
-            question: None,
-            actors: vec![0, 1],
-            thematic_relations: vec![
-                ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
-                },
-                ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
-                },
-            ],
-            properties,
-        };
-
-        let actor_labels =
-            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
-        let property_labels =
-            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
-        let mut labels = LabelledScenarios {
-            scenarios: vec![simple_scenario.clone()],
-            actor_labels,
-            property_labels,
-            free_variables: HashMap::default(),
-            sentences: vec![],
-            lemmas: vec![],
-        };
-
         for (statement, json) in [
             (
-                "~(AgentOf(a_John,e0))",
+                "~(AgentOf(a_John,e_0))",
                 "[{\"Func\":\"~\"},\"OpenDelim\",{\"Func\":\"AgentOf\"},\"OpenDelim\",{\"Actor\":\"John\"},{\"Event\":\"0\"},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
@@ -268,8 +192,8 @@ mod test {
                 "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"Blue\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
-                "every(x,pa5,pa10(a59))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"pa5\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"pa10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
+                "every(x,pa_5,pa_10(a_59))",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"5\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "every_e(x,all_e,PatientOf(a_Mary,x))",
@@ -284,11 +208,8 @@ mod test {
                 "[\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"bad\",\"t\":\"<a,t>\"}}},\"CloseDelim\",\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"man\",\"t\":\"a\"}}},\"CloseDelim\"]",
             ),
         ] {
-            let expression = RootedLambdaPool::parse(statement, &mut labels)?;
-            assert_eq!(
-                json,
-                serde_json::to_string(&expression.serialize_with_labels(&labels))?
-            );
+            let expression = RootedLambdaPool::parse(statement)?;
+            assert_eq!(json, serde_json::to_string(&expression)?);
         }
 
         Ok(())

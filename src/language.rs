@@ -1,6 +1,5 @@
 use std::fmt::Display;
 
-use crate::LabelledScenarios;
 use crate::lambda::RootedLambdaPool;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 use lambda_implementation::to_var;
@@ -31,19 +30,19 @@ impl Display for BinOp {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum MonOp {
+pub enum MonOp<'a> {
     Not,
-    Property(PropertyLabel, ActorOrEvent),
+    Property(PropertyLabel<'a>, ActorOrEvent),
     Tautology,
     Contradiction,
 }
 
-impl Display for MonOp {
+impl<'a> Display for MonOp<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MonOp::Not => write!(f, "~"),
-            MonOp::Property(x, ActorOrEvent::Actor) => write!(f, "pa{x}"),
-            MonOp::Property(x, ActorOrEvent::Event) => write!(f, "pe{x}"),
+            MonOp::Property(x, ActorOrEvent::Actor) => write!(f, "pa_{x}"),
+            MonOp::Property(x, ActorOrEvent::Event) => write!(f, "pe_{x}"),
             MonOp::Tautology => write!(f, "True"),
             MonOp::Contradiction => write!(f, "False"),
         }
@@ -75,23 +74,23 @@ impl ActorOrEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Constant {
+pub enum Constant<'a> {
     Everyone,
     EveryEvent,
     Tautology,
     Contradiction,
-    Property(PropertyLabel, ActorOrEvent),
+    Property(PropertyLabel<'a>, ActorOrEvent),
 }
 
-impl Display for Constant {
+impl Display for Constant<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Constant::Everyone => write!(f, "all_a"),
             Constant::EveryEvent => write!(f, "all_e"),
             Constant::Tautology => write!(f, "True"),
             Constant::Contradiction => write!(f, "False"),
-            Constant::Property(x, ActorOrEvent::Actor) => write!(f, "pa{x}"),
-            Constant::Property(x, ActorOrEvent::Event) => write!(f, "pe{x}"),
+            Constant::Property(x, ActorOrEvent::Actor) => write!(f, "pa_{x}"),
+            Constant::Property(x, ActorOrEvent::Event) => write!(f, "pe_{x}"),
         }
     }
 }
@@ -132,7 +131,7 @@ impl Display for Quantifier {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum Expr {
+pub enum Expr<'a> {
     Quantifier {
         quantifier: Quantifier,
         var: Variable,
@@ -140,55 +139,52 @@ pub enum Expr {
         subformula: ExprRef,
     },
     Variable(Variable),
-    Actor(Actor),
+    Actor(Actor<'a>),
     Event(Event),
     Binary(BinOp, ExprRef, ExprRef),
-    Unary(MonOp, ExprRef),
-    Constant(Constant),
+    Unary(MonOp<'a>, ExprRef),
+    Constant(Constant<'a>),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ExprRef(pub u32);
 
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct ExprPool(Vec<Expr>);
+pub struct ExprPool<'a>(Vec<Expr<'a>>);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct LanguageExpression {
-    pool: ExprPool,
+pub struct LanguageExpression<'a> {
+    pool: ExprPool<'a>,
     start: ExprRef,
 }
 
-impl Display for LanguageExpression {
+impl Display for LanguageExpression<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let x: RootedLambdaPool<Expr> = self.clone().into();
         write!(f, "{x}")
     }
 }
 
-impl LanguageExpression {
-    pub fn run(&self, scenario: &Scenario) -> Result<LanguageResult, LanguageTypeError> {
+impl<'a> LanguageExpression<'a> {
+    pub fn run(&self, scenario: &Scenario<'a>) -> Result<LanguageResult<'a>, LanguageTypeError> {
         let mut variables = VariableBuffer::default();
         self.pool.interp(self.start, scenario, &mut variables)
     }
 
-    pub fn parse(
-        s: &str,
-        labels: &mut LabelledScenarios,
-    ) -> Result<LanguageExpression, LambdaParseError> {
-        Ok(RootedLambdaPool::parse(s, labels)?.into_pool()?)
+    pub fn parse(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
+        Ok(RootedLambdaPool::parse(s)?.into_pool()?)
     }
 
-    pub fn new(pool: ExprPool, start: ExprRef) -> Self {
+    pub fn new(pool: ExprPool<'a>, start: ExprRef) -> Self {
         LanguageExpression { pool, start }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct VariableBuffer(Vec<Option<Entity>>);
+pub struct VariableBuffer<'a>(Vec<Option<Entity<'a>>>);
 
-impl VariableBuffer {
-    fn set(&mut self, v: Variable, x: Entity) {
+impl<'a> VariableBuffer<'a> {
+    fn set(&mut self, v: Variable, x: Entity<'a>) {
         let i = v.id() as usize;
         if self.0.len() <= i {
             self.0.resize(i + 1, None);
@@ -196,10 +192,10 @@ impl VariableBuffer {
         self.0[i] = Some(x);
     }
 
-    fn get(&self, v: Variable) -> Option<LanguageResult> {
+    fn get(&self, v: Variable) -> Option<LanguageResult<'a>> {
         match self.0.get(v.id() as usize) {
             Some(x) => match (v, x) {
-                (Variable::Actor(_), Some(Entity::Actor(a))) => Some(LanguageResult::Actor(*a)),
+                (Variable::Actor(_), Some(Entity::Actor(a))) => Some(LanguageResult::Actor(a)),
                 (Variable::Event(_), Some(Entity::Event(e))) => Some(LanguageResult::Event(*e)),
                 _ => None,
             },
@@ -209,32 +205,32 @@ impl VariableBuffer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LanguageResult {
+pub enum LanguageResult<'a> {
     Bool(bool),
-    Actor(Actor),
+    Actor(Actor<'a>),
     Event(Event),
-    ActorSet(Vec<Actor>),
+    ActorSet(Vec<Actor<'a>>),
     EventSet(Vec<Event>),
 }
 
-impl LanguageResult {
-    fn to_language_result_type(&self) -> Option<LanguageResultType> {
+impl LanguageResult<'_> {
+    fn to_language_result_type(&self) -> LanguageResultType {
         match self {
-            LanguageResult::Bool(_) => Some(LanguageResultType::Bool),
-            LanguageResult::Actor(_) => Some(LanguageResultType::Actor),
-            LanguageResult::Event(_) => Some(LanguageResultType::Event),
-            LanguageResult::ActorSet(_) => Some(LanguageResultType::ActorSet),
-            LanguageResult::EventSet(_) => Some(LanguageResultType::EventSet),
+            LanguageResult::Bool(_) => LanguageResultType::Bool,
+            LanguageResult::Actor(_) => LanguageResultType::Actor,
+            LanguageResult::Event(_) => LanguageResultType::Event,
+            LanguageResult::ActorSet(_) => LanguageResultType::ActorSet,
+            LanguageResult::EventSet(_) => LanguageResultType::EventSet,
         }
     }
 }
 
-impl Display for LanguageResult {
+impl Display for LanguageResult<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LanguageResult::Bool(b) => write!(f, "{b}"),
-            LanguageResult::Actor(a) => write!(f, "a{a}"),
-            LanguageResult::Event(e) => write!(f, "e{e}"),
+            LanguageResult::Actor(a) => write!(f, "a_{a}"),
+            LanguageResult::Event(e) => write!(f, "e_{e}"),
             LanguageResult::ActorSet(items) => {
                 write!(
                     f,
@@ -288,105 +284,105 @@ impl Display for LanguageResultType {
 pub enum LanguageTypeError {
     #[error("The referenced object  does not exist in the current scenario")]
     PresuppositionError,
-    #[error("Can't convert from {} to {output}", input.to_language_result_type().unwrap())]
+    #[error("Can't convert from {input} to {output}")]
     WrongType {
-        input: LanguageResult,
+        input: LanguageResultType,
         output: LanguageResultType,
     },
 }
 
-impl TryFrom<LanguageResult> for Event {
+impl TryFrom<LanguageResult<'_>> for Event {
     type Error = LanguageTypeError;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Event(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
-                input: value,
+                input: value.to_language_result_type(),
                 output: LanguageResultType::Event,
             }),
         }
     }
 }
 
-impl TryFrom<LanguageResult> for Actor {
+impl<'a> TryFrom<LanguageResult<'a>> for Actor<'a> {
     type Error = LanguageTypeError;
 
-    fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
+    fn try_from(value: LanguageResult<'a>) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Actor(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
-                input: value,
+                input: value.to_language_result_type(),
                 output: LanguageResultType::Actor,
             }),
         }
     }
 }
 
-impl TryFrom<LanguageResult> for bool {
+impl TryFrom<LanguageResult<'_>> for bool {
     type Error = LanguageTypeError;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::Bool(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
-                input: value,
+                input: value.to_language_result_type(),
                 output: LanguageResultType::Bool,
             }),
         }
     }
 }
 
-impl TryFrom<LanguageResult> for Vec<Actor> {
+impl<'a> TryFrom<LanguageResult<'a>> for Vec<Actor<'a>> {
     type Error = LanguageTypeError;
 
-    fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
+    fn try_from(value: LanguageResult<'a>) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::ActorSet(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
-                input: value,
+                input: value.to_language_result_type(),
                 output: LanguageResultType::ActorSet,
             }),
         }
     }
 }
 
-impl TryFrom<LanguageResult> for Vec<Event> {
+impl TryFrom<LanguageResult<'_>> for Vec<Event> {
     type Error = LanguageTypeError;
 
     fn try_from(value: LanguageResult) -> Result<Self, Self::Error> {
         match value {
             LanguageResult::EventSet(x) => Ok(x),
             _ => Err(LanguageTypeError::WrongType {
-                input: value,
+                input: value.to_language_result_type(),
                 output: LanguageResultType::EventSet,
             }),
         }
     }
 }
 
-impl ExprPool {
-    pub fn new() -> ExprPool {
+impl<'a> ExprPool<'a> {
+    pub fn new() -> ExprPool<'a> {
         ExprPool(vec![])
     }
 
-    pub fn from(x: Vec<Expr>) -> ExprPool {
+    pub fn from(x: Vec<Expr<'a>>) -> ExprPool<'a> {
         ExprPool(x)
     }
 
-    fn checked_get(&self, expr: ExprRef) -> Option<&Expr> {
+    fn checked_get(&self, expr: ExprRef) -> Option<&Expr<'a>> {
         self.0.get(expr.0 as usize)
     }
 
-    fn get(&self, expr: ExprRef) -> &Expr {
+    fn get(&self, expr: ExprRef) -> &Expr<'a> {
         &self.0[expr.0 as usize]
     }
 
-    fn get_mut(&mut self, expr: ExprRef) -> &mut Expr {
+    fn get_mut(&mut self, expr: ExprRef) -> &mut Expr<'a> {
         &mut self.0[expr.0 as usize]
     }
 
-    pub fn add(&mut self, expr: Expr) -> ExprRef {
+    pub fn add(&mut self, expr: Expr<'a>) -> ExprRef {
         let idx = self.0.len();
         self.0.push(expr);
         ExprRef(idx.try_into().expect("Too many exprs in the pool"))
@@ -420,8 +416,8 @@ impl ExprPool {
         restrictor: ExprRef,
         subformula: ExprRef,
         scenario: &Scenario,
-        variables: &mut VariableBuffer,
-    ) -> Result<LanguageResult, LanguageTypeError> {
+        variables: &mut VariableBuffer<'a>,
+    ) -> Result<LanguageResult<'a>, LanguageTypeError> {
         let mut variables = variables.clone();
         let domain: Vec<Entity> = match self.get_type(restrictor) {
             LanguageResultType::Bool => {
@@ -429,12 +425,12 @@ impl ExprPool {
                 match var {
                     Variable::Actor(_) => {
                         for e in scenario.actors.iter() {
-                            variables.set(*var, Entity::Actor(*e));
+                            variables.set(*var, Entity::Actor(e));
                             let truth_value_for_e: bool = self
                                 .interp(restrictor, scenario, &mut variables)?
                                 .try_into()?;
                             if truth_value_for_e {
-                                domain.push(Entity::Actor(*e))
+                                domain.push(Entity::Actor(e))
                             }
                         }
                     }
@@ -502,9 +498,9 @@ impl ExprPool {
     pub fn interp(
         &self,
         expr: ExprRef,
-        scenario: &Scenario,
-        variables: &mut VariableBuffer,
-    ) -> Result<LanguageResult, LanguageTypeError> {
+        scenario: &Scenario<'a>,
+        variables: &mut VariableBuffer<'a>,
+    ) -> Result<LanguageResult<'a>, LanguageTypeError> {
         Ok(match self.get(expr) {
             Expr::Quantifier {
                 quantifier,
@@ -520,7 +516,7 @@ impl ExprPool {
                 variables,
             )?,
             Expr::Variable(i) => variables.get(*i).unwrap(),
-            Expr::Actor(a) => LanguageResult::Actor(*a),
+            Expr::Actor(a) => LanguageResult::Actor(a),
             Expr::Event(a) => LanguageResult::Event(*a),
             Expr::Binary(bin_op, lhs, rhs) => {
                 let lhs = self.interp(*lhs, scenario, variables)?;
@@ -631,6 +627,7 @@ mod serializations;
 
 #[cfg(test)]
 mod tests {
+    use crate::ScenarioDataset;
     use std::collections::HashMap;
 
     use ahash::RandomState;
@@ -644,16 +641,16 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(0),
+                agent: Some("0"),
                 patient: None,
             }],
             properties: HashMap::default(),
         };
 
         let simple_expr = ExprPool(vec![
-            Expr::Actor(0),
+            Expr::Actor("0"),
             Expr::Event(0),
             Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
         ]);
@@ -664,7 +661,7 @@ mod tests {
         );
 
         let simple_expr = ExprPool(vec![
-            Expr::Actor(0),
+            Expr::Actor("0"),
             Expr::Event(0),
             Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
         ]);
@@ -682,15 +679,15 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
+                    agent: Some("0"),
+                    patient: Some("0"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
+                    agent: Some("1"),
+                    patient: Some("0"),
                 },
             ],
             properties: HashMap::default(),
@@ -753,15 +750,15 @@ mod tests {
         let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
+                    agent: Some("0"),
+                    patient: Some("0"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
+                    agent: Some("1"),
+                    patient: Some("0"),
                 },
             ],
             properties: HashMap::default(),
@@ -862,19 +859,19 @@ mod tests {
     fn properties() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
-        properties.insert(1, vec![Entity::Actor(0), Entity::Actor(1)]);
-        properties.insert(534, vec![Entity::Actor(1)]);
+        properties.insert("1", vec![Entity::Actor("0"), Entity::Actor("1")]);
+        properties.insert("534", vec![Entity::Actor("1")]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
+                    agent: Some("0"),
+                    patient: Some("0"),
                 },
                 ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
+                    agent: Some("1"),
+                    patient: Some("0"),
                 },
             ],
             properties,
@@ -889,7 +886,7 @@ mod tests {
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
-            Expr::Unary(MonOp::Property(1, ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("1", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
         assert_eq!(
@@ -905,7 +902,7 @@ mod tests {
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
-            Expr::Unary(MonOp::Property(534, ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("534", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
         assert_eq!(
@@ -919,15 +916,15 @@ mod tests {
     fn complicated_restrictors() -> anyhow::Result<()> {
         let mut variables = VariableBuffer(vec![]);
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
-        properties.insert(534, vec![Entity::Actor(1)]);
-        properties.insert(235, vec![Entity::Event(0)]);
-        properties.insert(2, vec![Entity::Actor(0)]);
+        properties.insert("534", vec![Entity::Actor("1")]);
+        properties.insert("235", vec![Entity::Event(0)]);
+        properties.insert("2", vec![Entity::Actor("0")]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1],
+            actors: vec!["0", "1"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(1),
-                patient: Some(0),
+                agent: Some("1"),
+                patient: Some("0"),
             }],
             properties,
         };
@@ -940,14 +937,14 @@ mod tests {
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
-            Expr::Constant(Constant::Property(534, ActorOrEvent::Actor)),
+            Expr::Constant(Constant::Property("534", ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var: Variable::Event(1),
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
-            Expr::Constant(Constant::Property(235, ActorOrEvent::Event)),
+            Expr::Constant(Constant::Property("235", ActorOrEvent::Event)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
@@ -964,14 +961,14 @@ mod tests {
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
-            Expr::Constant(Constant::Property(2, ActorOrEvent::Actor)),
+            Expr::Constant(Constant::Property("2", ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var: Variable::Event(1),
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
-            Expr::Constant(Constant::Property(235, ActorOrEvent::Event)),
+            Expr::Constant(Constant::Property("235", ActorOrEvent::Event)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
@@ -982,15 +979,15 @@ mod tests {
         );
 
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
-        properties.insert(3, vec![Entity::Actor(1), Entity::Actor(2)]);
-        properties.insert(2, vec![Entity::Actor(1), Entity::Actor(3)]);
-        properties.insert(4, vec![Entity::Event(0)]);
+        properties.insert("3", vec![Entity::Actor("1"), Entity::Actor("2")]);
+        properties.insert("2", vec![Entity::Actor("1"), Entity::Actor("3")]);
+        properties.insert("4", vec![Entity::Event(0)]);
         let simple_scenario = Scenario {
             question: None,
-            actors: vec![0, 1, 2, 3, 4],
+            actors: vec!["0", "1", "2", "3", "4"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(1),
-                patient: Some(0),
+                agent: Some("1"),
+                patient: Some("0"),
             }],
             properties,
         };
@@ -1003,9 +1000,9 @@ mod tests {
                 subformula: ExprRef(6),
             },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
-            Expr::Unary(MonOp::Property(2, ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("2", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
-            Expr::Unary(MonOp::Property(3, ActorOrEvent::Actor), ExprRef(5)),
+            Expr::Unary(MonOp::Property("3", ActorOrEvent::Actor), ExprRef(5)),
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
@@ -1031,9 +1028,9 @@ mod tests {
                 subformula: ExprRef(6),
             },
             Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
-            Expr::Unary(MonOp::Property(2, ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("2", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
-            Expr::Unary(MonOp::Property(3, ActorOrEvent::Actor), ExprRef(5)),
+            Expr::Unary(MonOp::Property("3", ActorOrEvent::Actor), ExprRef(5)),
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
@@ -1056,39 +1053,31 @@ mod tests {
     #[test]
     fn error_handling() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut labels = crate::LabelledScenarios {
-            scenarios: vec![],
-            sentences: vec![],
-            lemmas: vec![],
-            property_labels: HashMap::default(),
-            actor_labels: HashMap::default(),
-            free_variables: HashMap::default(),
-        };
 
         let expr = p
-            .parse("some_e(y,pe1,PatientOf(a1,y))")
+            .parse("some_e(y,pe_1,PatientOf(a_1,y))")
             .unwrap()
-            .to_pool(&mut labels)?
+            .to_pool()?
             .into_pool()?;
 
         let a = Scenario {
             question: None,
-            actors: vec![1, 0],
+            actors: vec!["1", "0"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(0),
-                patient: Some(1),
+                agent: Some("0"),
+                patient: Some("1"),
             }],
-            properties: vec![(1, vec![Entity::Event(0)])].into_iter().collect(),
+            properties: vec![("1", vec![Entity::Event(0)])].into_iter().collect(),
         };
 
         let b = Scenario {
             question: None,
-            actors: vec![1],
+            actors: vec!["1"],
             thematic_relations: vec![ThetaRoles {
-                agent: Some(1),
+                agent: Some("1"),
                 patient: None,
             }],
-            properties: vec![(0, vec![Entity::Event(0)])].into_iter().collect(),
+            properties: vec![("0", vec![Entity::Event(0)])].into_iter().collect(),
         };
         assert_eq!(expr.run(&b), Err(LanguageTypeError::PresuppositionError));
         expr.run(&a)?;
@@ -1100,13 +1089,12 @@ mod tests {
     fn weird_and_not_behaviour() -> anyhow::Result<()> {
         let scenario = "\"Phil danced\" <John (man), Mary (woman), Susan (woman), Phil (man); {A: Phil (dance)}, {A: Mary (run)}>";
 
-        let mut labels = LabelledScenarios::parse(scenario)?;
+        let labels = ScenarioDataset::parse(scenario)?;
 
-        let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))", &mut labels)?;
-        let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))", &mut labels)?;
+        let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))")?;
+        let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))")?;
         let c = LanguageExpression::parse(
             "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))",
-            &mut labels,
         )?;
         let scenario = labels.iter_scenarios().next().unwrap();
         assert_eq!(a.run(scenario)?, LanguageResult::Bool(true));

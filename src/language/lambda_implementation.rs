@@ -7,12 +7,9 @@ use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LambdaParseError, LanguageExpression,
     MonOp, Variable, lot_parser,
 };
-use crate::{
-    LabelledScenarios,
-    lambda::{
-        LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
-        RootedLambdaPool, types::LambdaType,
-    },
+use crate::lambda::{
+    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
+    RootedLambdaPool, types::LambdaType,
 };
 use chumsky::{error::Rich, extra};
 
@@ -36,8 +33,8 @@ pub enum LambdaConversionError {
     ReductionError(#[from] ReductionError),
 }
 
-impl LambdaLanguageOfThought for Expr {
-    type Pool = LanguageExpression;
+impl<'a> LambdaLanguageOfThought for Expr<'a> {
+    type Pool = LanguageExpression<'a>;
     type ConversionError = LambdaConversionError;
 
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
@@ -127,7 +124,7 @@ impl LambdaLanguageOfThought for Expr {
         mut root: LambdaExprRef,
     ) -> Result<Self::Pool, Self::ConversionError> {
         //Quantifiers can have lambda terms embedded in them, this extracts them!
-        //e.g. some(x, lambda a y (pa0(y) | pa1(y)), pa3(x)) -> some(x, pa0(x) | pa1(x), pa3(x))
+        //e.g. some(x, lambda a y (pa_0(y) | pa_1(y)), pa_3(x)) -> some(x, pa_0(x) | pa_1(x), pa_3(x))
         let quantifier_restrictions = pool
             .0
             .iter()
@@ -227,7 +224,7 @@ impl LambdaLanguageOfThought for Expr {
         }
     }
 
-    fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a> {
+    fn get_arguments<'b>(&'b self) -> Box<dyn Iterator<Item = LambdaType> + 'b> {
         match self {
             Expr::Quantifier {
                 var: Variable::Actor(_),
@@ -264,9 +261,9 @@ impl LambdaLanguageOfThought for Expr {
     }
 }
 
-impl std::fmt::Display for RootedLambdaPool<Expr> {
+impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = self.string(self.root(), VarContext::default(), None);
+        let string = self.string(self.root(), VarContext::default());
         write!(f, "{string}")
     }
 }
@@ -331,8 +328,8 @@ impl VarContext {
     }
 }
 
-impl From<LanguageExpression> for RootedLambdaPool<Expr> {
-    fn from(value: LanguageExpression) -> Self {
+impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<'a, Expr<'a>> {
+    fn from(value: LanguageExpression<'a>) -> Self {
         RootedLambdaPool {
             pool: LambdaPool::from(
                 value
@@ -347,31 +344,15 @@ impl From<LanguageExpression> for RootedLambdaPool<Expr> {
     }
 }
 
-impl LanguageExpression {
-    pub fn to_labeled_string(&self, labels: &LabelledScenarios) -> String {
-        let x: RootedLambdaPool<Expr> = self.clone().into();
-        x.string(x.root(), VarContext::default(), Some(labels))
-    }
-}
-
-impl RootedLambdaPool<Expr> {
-    pub fn parse(s: &str, labels: &mut LabelledScenarios) -> Result<Self, LambdaParseError> {
-        lot_parser::<extra::Err<Rich<_>>>()
+impl<'a> RootedLambdaPool<'a, Expr<'a>> {
+    pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
+        lot_parser::<'a, extra::Err<Rich<_>>>()
             .parse(s)
             .into_result()?
-            .to_pool(labels)
+            .to_pool()
     }
 
-    pub fn to_labeled_string(&self, labels: &LabelledScenarios) -> String {
-        self.string(self.root(), VarContext::default(), Some(labels))
-    }
-
-    fn string(
-        &self,
-        expr: LambdaExprRef,
-        c: VarContext,
-        labels: Option<&LabelledScenarios>,
-    ) -> String {
+    fn string(&self, expr: LambdaExprRef, c: VarContext) -> String {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
                 let (c, var) = c.inc_depth();
@@ -379,18 +360,12 @@ impl RootedLambdaPool<Expr> {
                     "lambda {} {} ({})",
                     lambda_type,
                     var,
-                    self.string(*child, c, labels)
+                    self.string(*child, c)
                 )
             }
             LambdaExpr::BoundVariable(bvar, _) => c.lambda_var(*bvar),
             LambdaExpr::FreeVariable(fvar, t) => {
-                if let Some(x) = labels {
-                    x.from_fvar(*fvar)
-                        .map(|x| format!("{x}#{t}"))
-                        .unwrap_or_else(|| format!("{fvar}#{t}"))
-                } else {
-                    format!("{fvar}#{t}")
-                }
+                format!("{fvar}#{t}")
             }
 
             LambdaExpr::Application {
@@ -398,8 +373,8 @@ impl RootedLambdaPool<Expr> {
                 argument,
             } => format!(
                 "({})({})",
-                self.string(*subformula, c.clone(), labels),
-                self.string(*argument, c, labels)
+                self.string(*subformula, c.clone()),
+                self.string(*argument, c)
             ),
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
                 Expr::Quantifier {
@@ -417,55 +392,36 @@ impl RootedLambdaPool<Expr> {
                             Variable::Event(_) => "_e",
                         },
                         var_string,
-                        self.string(LambdaExprRef(restrictor.0), c.clone(), labels),
-                        self.string(LambdaExprRef(subformula.0), c, labels)
+                        self.string(LambdaExprRef(restrictor.0), c.clone()),
+                        self.string(LambdaExprRef(subformula.0), c)
                     )
                 }
                 Expr::Variable(variable) => c.q_var(*variable),
                 Expr::Actor(a) => {
-                    if let Some(x) = labels {
-                        x.from_actor(*a)
-                            .map(|x| format!("a_{x}"))
-                            .unwrap_or_else(|| format!("a{a}"))
-                    } else {
-                        format!("a{a}")
-                    }
+                    format!("a_{a}")
                 }
-                Expr::Event(e) => format!("e{e}"),
+                Expr::Event(e) => format!("e_{e}"),
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {
                         format!(
                             "{bin_op}({},{})",
-                            self.string(LambdaExprRef(x.0), c.clone(), labels),
-                            self.string(LambdaExprRef(y.0), c, labels)
+                            self.string(LambdaExprRef(x.0), c.clone()),
+                            self.string(LambdaExprRef(y.0), c)
                         )
                     }
 
                     BinOp::And | BinOp::Or => {
                         format!(
                             "({} {bin_op} {})",
-                            self.string(LambdaExprRef(x.0), c.clone(), labels),
-                            self.string(LambdaExprRef(y.0), c, labels)
+                            self.string(LambdaExprRef(x.0), c.clone()),
+                            self.string(LambdaExprRef(y.0), c)
                         )
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
-                    let mon_s = match (mon_op, labels) {
-                        (MonOp::Property(p, t), Some(labels)) => labels
-                            .from_prop(*p)
-                            .map(|x| format!("p{t}_{x}"))
-                            .unwrap_or_else(|| format!("{}", MonOp::Property(*p, *t))),
-                        _ => mon_op.to_string(),
-                    };
-                    format!("{mon_s}({})", self.string(LambdaExprRef(arg.0), c, labels))
+                    format!("{mon_op}({})", self.string(LambdaExprRef(arg.0), c))
                 }
-                Expr::Constant(constant) => match (constant, labels) {
-                    (Constant::Property(p, t), Some(labels)) => labels
-                        .from_prop(*p)
-                        .map(|x| format!("p{t}_{x}"))
-                        .unwrap_or_else(|| format!("{}", Constant::Property(*p, *t))),
-                    _ => format!("{constant}"),
-                },
+                Expr::Constant(constant) => format!("{constant}"),
             },
         }
     }
@@ -475,63 +431,28 @@ mod test {
     use super::to_var;
 
     use crate::{
-        Entity, LabelledScenarios, Scenario, ThetaRoles, lambda::RootedLambdaPool,
-        language::lot_parser, parse_executable,
+        Entity, Scenario, ThetaRoles, lambda::RootedLambdaPool, language::lot_parser,
+        parse_executable,
     };
 
-    use ahash::HashMap;
     use chumsky::prelude::*;
 
     #[test]
     fn fancy_printing() -> anyhow::Result<()> {
-        let mut properties = HashMap::default();
-
-        properties.insert(1, vec![Entity::Actor(1)]);
-        properties.insert(4, vec![Entity::Actor(0), Entity::Actor(1)]);
-
-        let simple_scenario = Scenario {
-            question: None,
-            actors: vec![0, 1],
-            thematic_relations: vec![
-                ThetaRoles {
-                    agent: Some(0),
-                    patient: Some(0),
-                },
-                ThetaRoles {
-                    agent: Some(1),
-                    patient: Some(0),
-                },
-            ],
-            properties,
-        };
-
-        let actor_labels =
-            HashMap::from_iter([("John", 1), ("Mary", 0)].map(|(x, y)| (x.to_string(), y)));
-        let property_labels =
-            HashMap::from_iter([("Red", 1), ("Blue", 4)].map(|(x, y)| (x.to_string(), y)));
-        let mut labels = LabelledScenarios {
-            scenarios: vec![simple_scenario.clone()],
-            actor_labels,
-            property_labels,
-            free_variables: HashMap::default(),
-            sentences: vec![],
-            lemmas: vec![],
-        };
-
         for statement in [
-            "~(AgentOf(a_John,e0))",
+            "~(AgentOf(a_John,e_0))",
             "(pa_Red(a_John) & ~(pa_Red(a_Mary)))",
             "every(x,all_a,pa_Blue(x))",
             "every(x,pa_Blue,pa_Blue(x))",
-            "every(x,pa5,pa10(a59))",
+            "every(x,pa_5,pa_10(a_59))",
             "every_e(x,all_e,PatientOf(a_Mary,x))",
         ] {
-            let expression = parse_executable(statement, &mut labels)?;
-            assert_eq!(expression.to_labeled_string(&labels), statement);
+            let expression = parse_executable(statement)?;
+            assert_eq!(expression.to_string(), statement);
         }
         for s in ["(cool#<a,t>)(a_John)", "(bad#<a,t>)(man#a)"] {
-            let p = RootedLambdaPool::parse(s, &mut labels)?;
-            assert_eq!(p.to_labeled_string(&labels), s);
+            let p = RootedLambdaPool::parse(s)?;
+            assert_eq!(p.to_string(), s);
         }
 
         Ok(())
@@ -539,22 +460,21 @@ mod test {
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let john = parser.parse("a_j").unwrap().to_pool(&mut labels)?;
+        let john = parser.parse("a_John").unwrap().to_pool()?;
         let likes = parser
             .parse(
                 "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
             )
-            .unwrap().to_pool(&mut labels)?;
+            .unwrap().to_pool()?;
 
-        let mary = parser.parse("a_m").unwrap().to_pool(&mut labels)?;
+        let mary = parser.parse("a_Mary").unwrap().to_pool()?;
         let phi = mary.clone().merge(likes.clone()).unwrap();
         let mut phi = phi.merge(john.clone()).unwrap();
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))",
+            "some_e(x,all_e,((AgentOf(x,a_Mary) & PatientOf(x,a_John)) & pe_likes(x)))",
             pool.to_string()
         );
         let phi = likes.merge(mary).unwrap();
@@ -562,7 +482,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))",
+            "some_e(x,all_e,((AgentOf(x,a_Mary) & PatientOf(x,a_John)) & pe_likes(x)))",
             pool.to_string()
         );
         Ok(())
@@ -581,26 +501,24 @@ mod test {
 
     #[test]
     fn printing() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let pool = parser
-            .parse("some_e(x0,all_e,((AgentOf(x0,a1) & PatientOf(x0,a0)) & pe0(x0)))")
+            .parse("some_e(x0,all_e,((AgentOf(x0,a_1) & PatientOf(x0,a_0)) & pe_0(x0)))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
         assert_eq!(
             pool.to_string(),
-            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))"
+            "some_e(x,all_e,((AgentOf(x,a_1) & PatientOf(x,a_0)) & pe_0(x)))"
         );
         let likes = parser
             .parse(
                 "lambda e x ((lambda e y (some(e, all_e, AgentOf(x, e) & PatientOf(y,e) & pe_likes(e)))))",
             )
-            .unwrap().to_pool(&mut labels)?;
+            .unwrap().to_pool()?;
 
-        let s =
-            "lambda e x (lambda e y (some(z,all_e,((AgentOf(x,z) & PatientOf(y,z)) & pe0(z)))))";
+        let s = "lambda e x (lambda e y (some(z,all_e,((AgentOf(x,z) & PatientOf(y,z)) & pe_likes(z)))))";
         assert_eq!(likes.to_string(), s,);
-        let likes2 = parser.parse(s).unwrap().to_pool(&mut labels)?;
+        let likes2 = parser.parse(s).unwrap().to_pool()?;
         assert_eq!(likes, likes2);
 
         Ok(())
@@ -608,19 +526,18 @@ mod test {
 
     #[test]
     fn fancy_quantification_reduction() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let pool = parser
-            .parse("every_e(x0,pe0(x0) & pe1(x0), pe2(x0))")
+            .parse("every_e(x0,pe_0(x0) & pe_1(x0), pe_2(x0))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
         let scenario = Scenario::new(
             vec![],
             vec![ThetaRoles::default(); 5],
             [
-                (0, vec![Entity::Event(1), Entity::Event(2)]),
-                (1, vec![Entity::Event(0), Entity::Event(1)]),
-                (2, vec![Entity::Event(1)]),
+                ("0", vec![Entity::Event(1), Entity::Event(2)]),
+                ("1", vec![Entity::Event(0), Entity::Event(1)]),
+                ("2", vec![Entity::Event(1)]),
             ]
             .into_iter()
             .collect(),
@@ -629,17 +546,17 @@ mod test {
         assert!(pool.into_pool()?.run(&scenario)?.try_into()?);
 
         let pool = parser
-            .parse("every_e(x0, lambda e x (pe0(x) & pe1(x)), pe2(x0))")
+            .parse("every_e(x0, lambda e x (pe_0(x) & pe_1(x)), pe_2(x0))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         let scenario = Scenario::new(
             vec![],
             vec![ThetaRoles::default(); 5],
             [
-                (0, vec![Entity::Event(1), Entity::Event(2)]),
-                (1, vec![Entity::Event(0), Entity::Event(1)]),
-                (2, vec![Entity::Event(1)]),
+                ("0", vec![Entity::Event(1), Entity::Event(2)]),
+                ("1", vec![Entity::Event(0), Entity::Event(1)]),
+                ("2", vec![Entity::Event(1)]),
             ]
             .into_iter()
             .collect(),

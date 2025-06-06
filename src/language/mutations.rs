@@ -26,7 +26,7 @@ pub enum MutationError {
     InvalidType,
 }
 
-impl RootedLambdaPool<Expr> {
+impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     fn get_context_for_expr(&self, position: LambdaExprRef) -> Option<Context> {
         let mut pos_context = None;
 
@@ -41,9 +41,9 @@ impl RootedLambdaPool<Expr> {
 
     pub fn resample_from_expr(
         self,
-        available_actors: &[Actor],
-        available_actor_properties: &[PropertyLabel],
-        available_event_properties: &[PropertyLabel],
+        available_actors: &[Actor<'src>],
+        available_actor_properties: &[PropertyLabel<'src>],
+        available_event_properties: &[PropertyLabel<'src>],
         config: Option<RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> Self {
@@ -90,9 +90,9 @@ impl RootedLambdaPool<Expr> {
 
     pub fn random_expr(
         lambda_type: &LambdaType,
-        available_actors: &[Actor],
-        available_actor_properties: &[PropertyLabel],
-        available_event_properties: &[PropertyLabel],
+        available_actors: &[Actor<'src>],
+        available_actor_properties: &[PropertyLabel<'src>],
+        available_event_properties: &[PropertyLabel<'src>],
         config: Option<RandomExprConfig>,
         rng: &mut impl Rng,
     ) -> Result<Self, MutationError> {
@@ -152,9 +152,9 @@ impl RootedLambdaPool<Expr> {
 
     pub fn swap_expr(
         &mut self,
-        available_actors: &[Actor],
-        available_actor_properties: &[PropertyLabel],
-        available_event_properties: &[PropertyLabel],
+        available_actors: &[Actor<'src>],
+        available_actor_properties: &[PropertyLabel<'src>],
+        available_event_properties: &[PropertyLabel<'src>],
         rng: &mut impl Rng,
     ) {
         let config = RandomExprConfig::default();
@@ -216,14 +216,14 @@ impl RootedLambdaPool<Expr> {
     }
 }
 
-fn build_out_pool<'typ>(
-    mut pool: Vec<Option<LambdaExpr<Expr>>>,
+fn build_out_pool<'src, 'typ>(
+    mut pool: Vec<Option<LambdaExpr<'src, Expr<'src>>>>,
     lambda_type: &'typ LambdaType,
     start_pos: u32,
     context: Context<'typ>,
-    possible_expressions: PossibleExpressions<'typ, '_>,
+    possible_expressions: PossibleExpressions<'src, 'typ, '_>,
     rng: &mut impl Rng,
-) -> LambdaPool<Expr> {
+) -> LambdaPool<'src, Expr<'src>> {
     let mut fresher = Fresher::new(&pool);
     let e = possible_expressions
         .possibilities(lambda_type, &context)
@@ -249,39 +249,38 @@ mod test {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
-    use crate::{LabelledScenarios, language::lot_parser};
+    use crate::language::lot_parser;
 
     #[test]
     fn prune_quantifier_test() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let mut pool = parser
-            .parse("some_e(x0,all_e,AgentOf(a2,a1) & PatientOf(a0,a0))")
+            .parse("some_e(x0,all_e,AgentOf(a_2,a_1) & PatientOf(a_0,a_0))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         pool.prune_quantifiers();
-        assert_eq!(pool.to_string(), "(AgentOf(a2,a1) & PatientOf(a0,a0))");
+        assert_eq!(pool.to_string(), "(AgentOf(a_2,a_1) & PatientOf(a_0,a_0))");
 
         let mut pool = parser
-            .parse("some_e(x0,all_e,some(z, all_a, AgentOf(z,e1) & PatientOf(a0,e0)))")
+            .parse("some_e(x0,all_e,some(z, all_a, AgentOf(z,e_1) & PatientOf(a_0,e_0)))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         pool.prune_quantifiers();
         assert_eq!(
             pool.to_string(),
-            "some(x,all_a,(AgentOf(x,e1) & PatientOf(a0,e0)))"
+            "some(x,all_a,(AgentOf(x,e_1) & PatientOf(a_0,e_0)))"
         );
 
         let mut pool = parser
-            .parse("~(every_e(z,pe1,pa2(a0)))")
+            .parse("~(every_e(z,pe_1,pa_2(a_0)))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         pool.prune_quantifiers();
 
-        assert_eq!(pool.to_string(), "~(pa2(a0))");
+        assert_eq!(pool.to_string(), "~(pa_2(a_0))");
 
         Ok(())
     }
@@ -289,9 +288,9 @@ mod test {
     #[test]
     fn randomn_swap() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = [0, 1];
-        let available_actor_properties = [0, 1, 2];
-        let available_event_properties = [2, 3, 4];
+        let actors = ["0", "1"];
+        let available_actor_properties = ["0", "1", "2"];
+        let available_event_properties = ["2", "3", "4"];
         for _ in 0..200 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
@@ -320,9 +319,9 @@ mod test {
     #[test]
     fn randomness() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = [0, 1];
-        let available_actor_properties = [0, 1, 2];
-        let available_event_properties = [2, 3, 4];
+        let actors = ["0", "1"];
+        let available_actor_properties = ["0", "1", "2"];
+        let available_event_properties = ["2", "3", "4"];
         let mut lengths = vec![];
         for _ in 0..200 {
             let t = LambdaType::random_no_e(&mut rng);

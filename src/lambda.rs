@@ -9,7 +9,7 @@ pub mod types;
 use types::{LambdaType, TypeError};
 
 pub type Bvar = usize;
-pub type Fvar = usize;
+pub type Fvar<'a> = &'a str;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaError {
@@ -106,10 +106,10 @@ impl LambdaLanguageOfThought for () {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum LambdaExpr<T> {
+pub enum LambdaExpr<'a, T> {
     Lambda(LambdaExprRef, LambdaType),
     BoundVariable(Bvar, LambdaType),
-    FreeVariable(Fvar, LambdaType),
+    FreeVariable(Fvar<'a>, LambdaType),
     Application {
         subformula: LambdaExprRef,
         argument: LambdaExprRef,
@@ -118,8 +118,8 @@ pub enum LambdaExpr<T> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct RootedLambdaPool<T: LambdaLanguageOfThought> {
-    pub(crate) pool: LambdaPool<T>,
+pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
+    pub(crate) pool: LambdaPool<'src, T>,
     pub(crate) root: LambdaExprRef,
 }
 
@@ -137,7 +137,7 @@ impl ExpressionType {
     }
 }
 
-impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
+impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'src, T> {
     pub(crate) fn get_expression_type(
         &self,
         i: LambdaExprRef,
@@ -188,7 +188,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         self.pool.0.len()
     }
 
-    pub fn get_mut(&mut self, x: LambdaExprRef) -> &mut LambdaExpr<T> {
+    pub fn get_mut(&mut self, x: LambdaExprRef) -> &mut LambdaExpr<'src, T> {
         self.pool.get_mut(x)
     }
 
@@ -196,11 +196,11 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         self.pool.get_type(self.root)
     }
 
-    pub fn new(pool: LambdaPool<T>, root: LambdaExprRef) -> Self {
+    pub fn new(pool: LambdaPool<'src, T>, root: LambdaExprRef) -> Self {
         RootedLambdaPool { pool, root }
     }
 
-    pub fn into(self) -> (LambdaPool<T>, LambdaExprRef) {
+    pub fn into(self) -> (LambdaPool<'src, T>, LambdaExprRef) {
         (self.pool, self.root)
     }
 
@@ -253,8 +253,8 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
 
     pub fn bind_free_variable(
         &mut self,
-        fvar: Fvar,
-        replacement: RootedLambdaPool<T>,
+        fvar: Fvar<'src>,
+        replacement: RootedLambdaPool<'src, T>,
     ) -> Result<(), LambdaError> {
         let (other_pool, other_root) = replacement.into();
         let other_root = self.pool.extend_pool(other_root, other_pool);
@@ -265,7 +265,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
 
     pub fn lambda_abstract_free_variable(
         &mut self,
-        fvar: Fvar,
+        fvar: Fvar<'src>,
         lambda_type: LambdaType,
         always_abstract: bool,
     ) -> Result<(), LambdaError> {
@@ -298,7 +298,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
         Ok(())
     }
 
-    pub fn apply_new_free_variable(&mut self, fvar: Fvar) -> Result<LambdaType, LambdaError> {
+    pub fn apply_new_free_variable(&mut self, fvar: Fvar<'src>) -> Result<LambdaType, LambdaError> {
         let pool_type = self.pool.get_type(self.root)?;
         let var_type = pool_type.lhs()?;
         let argument = self
@@ -314,13 +314,13 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
-pub struct LambdaPool<T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<T>>);
+pub struct LambdaPool<'a, T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<'a, T>>);
 
-impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
+impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
     fn extend_pool(
         &mut self,
         mut other_root: LambdaExprRef,
-        mut other_pool: LambdaPool<T>,
+        mut other_pool: LambdaPool<'src, T>,
     ) -> LambdaExprRef {
         let shift_n = self.0.len();
         let remap: Vec<_> = (0..other_pool.0.len()).map(|x| x + shift_n).collect();
@@ -334,43 +334,43 @@ impl<T: LambdaLanguageOfThought + Sized> LambdaPool<T> {
         T::to_pool(self, root)
     }
 
-    pub fn from(x: Vec<LambdaExpr<T>>) -> Self {
+    pub fn from(x: Vec<LambdaExpr<'src, T>>) -> Self {
         LambdaPool(x)
     }
 
-    pub fn new() -> LambdaPool<T> {
+    pub fn new<'c>() -> LambdaPool<'c, T> {
         LambdaPool(vec![])
     }
 
-    fn checked_get(&self, expr: LambdaExprRef) -> Option<&LambdaExpr<T>> {
+    fn checked_get(&self, expr: LambdaExprRef) -> Option<&LambdaExpr<'src, T>> {
         self.0.get(expr.0 as usize)
     }
 
-    pub fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<T> {
+    pub fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<'src, T> {
         &self.0[expr.0 as usize]
     }
 
-    pub fn get_mut(&mut self, expr: LambdaExprRef) -> &mut LambdaExpr<T> {
+    pub fn get_mut(&mut self, expr: LambdaExprRef) -> &mut LambdaExpr<'src, T> {
         &mut self.0[expr.0 as usize]
     }
 
-    pub fn add(&mut self, expr: LambdaExpr<T>) -> LambdaExprRef {
+    pub fn add(&mut self, expr: LambdaExpr<'src, T>) -> LambdaExprRef {
         let idx = self.0.len();
         self.0.push(expr);
         LambdaExprRef(idx.try_into().expect("Too many exprs in the pool"))
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut LambdaExpr<T>> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut LambdaExpr<'src, T>> {
         self.0.iter_mut()
     }
 }
 
-pub struct LambdaPoolBFSIterator<'a, T: LambdaLanguageOfThought> {
-    pool: &'a LambdaPool<T>,
+pub struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
+    pool: &'a LambdaPool<'src, T>,
     queue: VecDeque<(LambdaExprRef, Bvar)>,
 }
 
-impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
+impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
     pub(crate) fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaExprRef> + 'a> {
         match self {
             LambdaExpr::Lambda(x, _) => Box::new([x].into_iter().copied()),
@@ -386,7 +386,7 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
     }
 }
 
-impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, T> {
+impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, '_, T> {
     type Item = (LambdaExprRef, Bvar);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -412,7 +412,7 @@ impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, T> {
     }
 }
 
-impl<T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<T>
+impl<'src, T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<'src, T>
 where
     T: Clone,
 {
@@ -455,7 +455,7 @@ where
     fn bind_free_variable(
         &mut self,
         root: LambdaExprRef,
-        fvar: Fvar,
+        fvar: Fvar<'src>,
         replacement_root: LambdaExprRef,
     ) -> Result<(), LambdaError> {
         let arg_t = self.get_type(replacement_root)?;
@@ -481,7 +481,7 @@ where
         Ok(())
     }
 
-    fn clone_section_return_expr(&mut self, source: LambdaExprRef) -> LambdaExpr<T> {
+    fn clone_section_return_expr(&mut self, source: LambdaExprRef) -> LambdaExpr<'src, T> {
         let mut expr = self.get(source).clone();
         let new_children: Vec<_> = expr
             .get_children()
@@ -622,7 +622,7 @@ where
     }
 }
 
-impl<T: LambdaLanguageOfThought> LambdaExpr<T> {
+impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
     fn change_children(&mut self, children: &[LambdaExprRef]) {
         match self {
             LambdaExpr::Lambda(lambda_expr_ref, _) => *lambda_expr_ref = children[0],
@@ -666,7 +666,7 @@ pub enum LambdaSummaryStats {
     Malformed,
 }
 
-impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
+impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'src, T> {
     pub fn stats(&self) -> LambdaSummaryStats {
         let lambda_type = self.get_type();
         if lambda_type.is_err() {
@@ -739,16 +739,16 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<T> {
     }
 }
 
-impl<T: LambdaLanguageOfThought> From<LambdaPool<T>> for Vec<Option<LambdaExpr<T>>> {
-    fn from(value: LambdaPool<T>) -> Self {
+impl<'a, T: LambdaLanguageOfThought> From<LambdaPool<'a, T>> for Vec<Option<LambdaExpr<'a, T>>> {
+    fn from(value: LambdaPool<'a, T>) -> Self {
         value.0.into_iter().map(Some).collect()
     }
 }
 
-impl<T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<T>>>> for LambdaPool<T> {
+impl<'a, T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<'a, T>>>> for LambdaPool<'a, T> {
     type Error = LambdaTryFromError;
 
-    fn try_from(value: Vec<Option<LambdaExpr<T>>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Vec<Option<LambdaExpr<'a, T>>>) -> Result<Self, Self::Error> {
         match value.into_iter().collect::<Option<Vec<_>>>() {
             Some(x) => Ok(LambdaPool(x)),
             None => Err(LambdaTryFromError::HasNone),
@@ -760,17 +760,15 @@ impl<T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<T>>>> for LambdaP
 mod test {
 
     use super::*;
-    use crate::{
-        LabelledScenarios,
-        language::{ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp},
+    use crate::language::{
+        ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp,
     };
 
     #[test]
     fn stats() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut labels = LabelledScenarios::default();
         for (expr, constant_lambda) in [
-            ("a0", false),
+            ("a_0", false),
             ("lambda a x (pa_man(x))", false),
             ("lambda a x (pa_man(a_m))", true),
             (
@@ -784,7 +782,7 @@ mod test {
             ("lambda a y (pa_woman(a_m))", true),
             ("lambda a y (lambda a x (y))", true),
         ] {
-            let expr = p.parse(expr).unwrap().to_pool(&mut labels)?;
+            let expr = p.parse(expr).unwrap().to_pool()?;
             match expr.stats() {
                 LambdaSummaryStats::WellFormed {
                     constant_function, ..
@@ -795,7 +793,7 @@ mod test {
         Ok(())
     }
 
-    fn k<T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<T>; 3]> {
+    fn k<'a, T: Default>(pos: u32) -> anyhow::Result<[LambdaExpr<'a, T>; 3]> {
         Ok([
             LambdaExpr::Lambda(LambdaExprRef(pos + 1), LambdaType::e().clone()),
             LambdaExpr::Lambda(LambdaExprRef(pos + 2), LambdaType::e().clone()),
@@ -813,11 +811,11 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                MonOp::Property(32, ActorOrEvent::Actor),
+                MonOp::Property("32", ActorOrEvent::Actor),
                 ExprRef(3),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3)),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3")),
         ]);
         pool.reduce(LambdaExprRef(0))?;
 
@@ -825,10 +823,10 @@ mod test {
             pool.clone(),
             LambdaPool(vec![
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property(32, ActorOrEvent::Actor),
+                    MonOp::Property("32", ActorOrEvent::Actor),
                     ExprRef(1)
                 )),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3))
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3"))
             ]),
         );
 
@@ -843,10 +841,10 @@ mod test {
                 argument: LambdaExprRef(4),
             },
             LambdaExpr::BoundVariable(0, LambdaType::et().clone()),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
             LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                MonOp::Property(36, ActorOrEvent::Actor),
+                MonOp::Property("36", ActorOrEvent::Actor),
                 ExprRef(7),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
@@ -856,10 +854,10 @@ mod test {
             pool,
             LambdaPool(vec![
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property(36, ActorOrEvent::Actor),
+                    MonOp::Property("36", ActorOrEvent::Actor),
                     ExprRef(1)
                 )),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
             ])
         );
 
@@ -880,11 +878,11 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                MonOp::Property(36, ActorOrEvent::Actor),
+                MonOp::Property("36", ActorOrEvent::Actor),
                 ExprRef(9),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
         ]);
         pool.reduce(LambdaExprRef(0))?;
 
@@ -894,11 +892,11 @@ mod test {
                 LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::t().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3))),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property(36, ActorOrEvent::Actor),
+                    MonOp::Property("36", ActorOrEvent::Actor),
                     ExprRef(4)
                 )),
                 LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
             ])
         );
 
@@ -915,11 +913,11 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                MonOp::Property(32, ActorOrEvent::Actor),
+                MonOp::Property("32", ActorOrEvent::Actor),
                 ExprRef(4),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3)),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3")),
             // 6
             //\lambda x. Mary sings and
             LambdaExpr::Application {
@@ -938,27 +936,27 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(14), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                MonOp::Property(36, ActorOrEvent::Actor),
+                MonOp::Property("36", ActorOrEvent::Actor),
                 ExprRef(15),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2)),
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
         ]);
         let root = pool.reduce(LambdaExprRef(0))?;
         assert_eq!(
             pool,
             LambdaPool(vec![
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3))),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(3)),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3")),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property(36, ActorOrEvent::Actor),
+                    MonOp::Property("36", ActorOrEvent::Actor),
                     ExprRef(4)
                 )),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property(32, ActorOrEvent::Actor),
+                    MonOp::Property("32", ActorOrEvent::Actor),
                     ExprRef(1)
                 )),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(2))
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2"))
             ])
         );
 
@@ -967,10 +965,10 @@ mod test {
             LanguageExpression::new(
                 ExprPool::from(vec![
                     Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3)),
-                    Expr::Actor(3),
-                    Expr::Unary(MonOp::Property(36, ActorOrEvent::Actor), ExprRef(4)),
-                    Expr::Unary(MonOp::Property(32, ActorOrEvent::Actor), ExprRef(1)),
-                    Expr::Actor(2)
+                    Expr::Actor("3"),
+                    Expr::Unary(MonOp::Property("36", ActorOrEvent::Actor), ExprRef(4)),
+                    Expr::Unary(MonOp::Property("32", ActorOrEvent::Actor), ExprRef(1)),
+                    Expr::Actor("2")
                 ]),
                 ExprRef(root.0)
             )
@@ -987,7 +985,7 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
             LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
-            LambdaExpr::FreeVariable(0, LambdaType::t().clone()),
+            LambdaExpr::FreeVariable("0", LambdaType::t().clone()),
         ]);
         assert_eq!(
             pool.reduce(LambdaExprRef(0)).unwrap_err(),
@@ -1004,7 +1002,7 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
             LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
-            LambdaExpr::FreeVariable(0, LambdaType::a().clone()),
+            LambdaExpr::FreeVariable("0", LambdaType::a().clone()),
         ]);
         assert!(pool.reduce(LambdaExprRef(0)).is_ok());
         Ok(())
@@ -1024,8 +1022,8 @@ mod test {
                 argument: LambdaExprRef(4),
             },
             LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::e().clone()),
-            LambdaExpr::FreeVariable(0, LambdaType::t().clone()),
-            LambdaExpr::FreeVariable(2, LambdaType::t().clone()),
+            LambdaExpr::FreeVariable("0", LambdaType::t().clone()),
+            LambdaExpr::FreeVariable("2", LambdaType::t().clone()),
             // 5
             //\lambda x. Mary sings and
             LambdaExpr::Application {
@@ -1041,14 +1039,14 @@ mod test {
                 argument: LambdaExprRef(12),
             },
             LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::e().clone()),
-            LambdaExpr::FreeVariable(1337, LambdaType::t().clone()),
-            LambdaExpr::FreeVariable(5, LambdaType::e().clone()),
+            LambdaExpr::FreeVariable("1337", LambdaType::t().clone()),
+            LambdaExpr::FreeVariable("5", LambdaType::e().clone()),
         ]);
         pool.reduce(LambdaExprRef(0))?;
         assert_eq!(
             pool,
             LambdaPool(vec![LambdaExpr::FreeVariable(
-                1337,
+                "1337",
                 LambdaType::t().clone()
             )])
         );
@@ -1061,7 +1059,7 @@ mod test {
             k(0)?
                 .into_iter()
                 .chain([
-                    LambdaExpr::FreeVariable(32, LambdaType::e().clone()),
+                    LambdaExpr::FreeVariable("32", LambdaType::e().clone()),
                     LambdaExpr::Application {
                         subformula: LambdaExprRef(0),
                         argument: LambdaExprRef(3),
@@ -1076,7 +1074,7 @@ mod test {
         assert_eq!(
             pool,
             LambdaPool(vec![
-                LambdaExpr::FreeVariable(32, LambdaType::e().clone()),
+                LambdaExpr::FreeVariable("32", LambdaType::e().clone()),
                 LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::e().clone())
             ])
         );
@@ -1088,21 +1086,17 @@ mod test {
 
     #[test]
     fn test_root_and_merger() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let man = parser
-            .parse("lambda a x (pa_man(x))")
-            .unwrap()
-            .to_pool(&mut labels)?;
+        let man = parser.parse("lambda a x (pa_man(x))").unwrap().to_pool()?;
 
         let sleeps = parser
             .parse("lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
         let every = parser
             .parse("lambda <a,t> p(lambda <a,t> q(every(x, p(x), q(x))))")
             .unwrap()
-            .to_pool(&mut labels)
+            .to_pool()
             .unwrap();
 
         let phi = every.clone().merge(man.clone()).unwrap();
@@ -1110,7 +1104,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "every(x,pa0(x),some_e(y,all_e,(AgentOf(x,y) & pe1(y))))",
+            "every(x,pa_man(x),some_e(y,all_e,(AgentOf(x,y) & pe_sleep(y))))",
             pool.to_string()
         );
         let phi = man.merge(every).unwrap();
@@ -1118,7 +1112,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "every(x,pa0(x),some_e(y,all_e,(AgentOf(x,y) & pe1(y))))",
+            "every(x,pa_man(x),some_e(y,all_e,(AgentOf(x,y) & pe_sleep(y))))",
             pool.to_string()
         );
         Ok(())
@@ -1126,48 +1120,43 @@ mod test {
 
     #[test]
     fn bind_free_variable() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let mut pool = parser
-            .parse("phi_t#t & True")
-            .unwrap()
-            .to_pool(&mut labels)?;
+        let mut pool = parser.parse("phi#t & True").unwrap().to_pool()?;
 
-        pool.bind_free_variable(0, parser.parse("False").unwrap().to_pool(&mut labels)?)?;
+        pool.bind_free_variable("phi", parser.parse("False").unwrap().to_pool()?)?;
         assert_eq!("(False & True)", pool.into_pool()?.to_string());
 
         let input = parser
-            .parse("lambda a x (every_e(y,pe4,AgentOf(x,y)))")
+            .parse("lambda a x (every_e(y,pe_4,AgentOf(x,y)))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
         let mut a = parser
-            .parse("(P#<a,t>(a3) & ~P#<a,t>(a1))")
+            .parse("(P#<a,t>(a_3) & ~P#<a,t>(a_1))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
-        a.bind_free_variable(1, input)?;
+        a.bind_free_variable("P", input)?;
         a.reduce()?;
         assert_eq!(
             a.to_string(),
-            "(every_e(x,pe4,AgentOf(a3,x)) & ~(every_e(x,pe4,AgentOf(a1,x))))"
+            "(every_e(x,pe_4,AgentOf(a_3,x)) & ~(every_e(x,pe_4,AgentOf(a_1,x))))"
         );
         Ok(())
     }
 
     #[test]
     fn apply_new_free_variable() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let mut pool = parser
             .parse("lambda <e,t> P (lambda <e,t> Q (lambda e x (P(x) & Q(x))))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
-        pool.apply_new_free_variable(0)?;
+        pool.apply_new_free_variable("X")?;
 
         let gold_pool = RootedLambdaPool {
             pool: LambdaPool(vec![
-                LambdaExpr::FreeVariable(0, LambdaType::et().clone()),
+                LambdaExpr::FreeVariable("X", LambdaType::et().clone()),
                 LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
@@ -1191,14 +1180,13 @@ mod test {
 
     #[test]
     fn lambda_abstraction() -> anyhow::Result<()> {
-        let mut labels = LabelledScenarios::default();
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let mut pool = parser
             .parse("lambda <e,t> P (lambda <e,t> Q (lambda e x (Z#<e,t>(x) & P(x) & Q(x))))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
-        pool.lambda_abstract_free_variable(0, LambdaType::et().clone(), false)?;
+        pool.lambda_abstract_free_variable("Z", LambdaType::et().clone(), false)?;
 
         let gold_pool = RootedLambdaPool {
             pool: LambdaPool(vec![
@@ -1237,11 +1225,10 @@ mod test {
     #[test]
     fn could_time_out_if_swapping_instead_of_cloning() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut labels = LabelledScenarios::default();
         let mut x = p
-            .parse("(lambda a x_l (PatientOf(x_l,x_l)))((lambda a x_l (a1))(a0))")
+            .parse("(lambda a x (PatientOf(x,x)))((lambda a x (a_1))(a_0))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         println!("{x}");
         x.reduce()?;
@@ -1252,15 +1239,14 @@ mod test {
     #[test]
     fn lambda_abstraction_reduction() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut labels = LabelledScenarios::default();
-        let mut a = p.parse("a1").unwrap().to_pool(&mut labels)?;
+        let mut a = p.parse("a_1").unwrap().to_pool()?;
         let mut b = p
-            .parse("(lambda t x_l (a1))(pa0(free_var#a))")
+            .parse("(lambda t x (a_1))(pa_0(freeVar#a))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
-        a.lambda_abstract_free_variable(0, LambdaType::a().clone(), false)?;
-        b.lambda_abstract_free_variable(0, LambdaType::a().clone(), false)?;
+        a.lambda_abstract_free_variable("freeVar", LambdaType::a().clone(), false)?;
+        b.lambda_abstract_free_variable("freeVar", LambdaType::a().clone(), false)?;
         println!("A:\t{a}");
         println!("B:\t{b}");
 
@@ -1271,18 +1257,17 @@ mod test {
     #[test]
     fn reduction_test() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut labels = LabelledScenarios::default();
         let mut a = p
             .parse(
-                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a0)))",
+                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a_0)))",
             )
-            .unwrap().to_pool(&mut labels)?;
+            .unwrap().to_pool()?;
         a.reduce()?;
 
         let mut a = p
-            .parse("(lambda <a,t> P (P(a3) & ~P(a1)))(lambda a x (every_e(y,pe4,AgentOf(x,y))))")
+            .parse("(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         a.pool.beta_reduce(a.root)?;
         a.root = a.pool.cleanup(a.root);
@@ -1290,14 +1275,14 @@ mod test {
         dbg!(&a);
 
         let mut a = p
-            .parse("(lambda <a,t> P (P(a3) & ~P(a1)))(lambda a x (every_e(y,pe4,AgentOf(x,y))))")
+            .parse("(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))")
             .unwrap()
-            .to_pool(&mut labels)?;
+            .to_pool()?;
 
         a.reduce()?;
         assert_eq!(
             a.to_string(),
-            "(every_e(x,pe4,AgentOf(a3,x)) & ~(every_e(x,pe4,AgentOf(a1,x))))"
+            "(every_e(x,pe_4,AgentOf(a_3,x)) & ~(every_e(x,pe_4,AgentOf(a_1,x))))"
         );
 
         Ok(())
@@ -1306,12 +1291,11 @@ mod test {
     #[test]
     fn expr_type_checks() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut labels = LabelledScenarios::default();
         let a = p
             .parse(
-                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a0)))",
+                "lambda a x (every_e(z, all_e, AgentOf((lambda e y ((lambda e w (w))(y)))(z), a_0)))",
             )
-            .unwrap().to_pool(&mut labels)?;
+            .unwrap().to_pool()?;
         assert_eq!(
             a.get_expression_type(a.root)?,
             ExpressionType {

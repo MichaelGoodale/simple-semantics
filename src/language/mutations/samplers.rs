@@ -54,19 +54,19 @@ impl Default for RandomExprConfig {
         }
     }
 }
-pub enum ExprDistribution<'a, 'typ, 'conf> {
+pub enum ExprDistribution<'a, 'src, 'typ, 'conf> {
     KnownChildren {
-        exprs: Vec<Cow<'a, UnbuiltExpr<'typ>>>,
+        exprs: Vec<Cow<'a, UnbuiltExpr<'src, 'typ>>>,
     },
     UnknownChildren {
-        exprs: Vec<(Cow<'a, UnbuiltExpr<'typ>>, SampleDetails)>,
+        exprs: Vec<(Cow<'a, UnbuiltExpr<'src, 'typ>>, SampleDetails)>,
         depth: usize,
         config: &'conf RandomExprConfig,
     },
 }
 
-impl<'typ> ExprDistribution<'_, 'typ, '_> {
-    pub fn choose(self, rng: &mut impl Rng) -> UnbuiltExpr<'typ> {
+impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
+    pub fn choose(self, rng: &mut impl Rng) -> UnbuiltExpr<'src, 'typ> {
         match self {
             ExprDistribution::KnownChildren { exprs } => {
                 let e = exprs.choose(rng).unwrap();
@@ -112,16 +112,16 @@ impl<'typ> ExprDistribution<'_, 'typ, '_> {
 }
 
 #[derive(Debug, Clone)]
-pub struct PossibleExpressions<'typ, 'conf> {
-    expressions: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<UnbuiltExpr<'typ>>>>,
+pub struct PossibleExpressions<'src, 'typ, 'conf> {
+    expressions: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<UnbuiltExpr<'src, 'typ>>>>,
     config: &'conf RandomExprConfig,
 }
 
-impl<'typ, 'conf> PossibleExpressions<'typ, 'conf> {
+impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
     pub fn new(
-        actors: &[Actor],
-        actor_properties: &[PropertyLabel],
-        event_properties: &[PropertyLabel],
+        actors: &[Actor<'src>],
+        actor_properties: &[PropertyLabel<'src>],
+        event_properties: &[PropertyLabel<'src>],
         config: &'conf RandomExprConfig,
     ) -> Self {
         let mut all_expressions: Vec<UnbuiltExpr> = vec![
@@ -138,18 +138,18 @@ impl<'typ, 'conf> PossibleExpressions<'typ, 'conf> {
             UnbuiltExpr::Binary(BinOp::PatientOf),
         ];
 
-        all_expressions.extend(actors.iter().map(|x| UnbuiltExpr::Actor(*x)));
+        all_expressions.extend(actors.iter().map(|x| UnbuiltExpr::Actor(x)));
 
         all_expressions.extend(actor_properties.iter().flat_map(|i| {
             [
-                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Actor)),
-                UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Actor)),
+                UnbuiltExpr::Unary(MonOp::Property(i, ActorOrEvent::Actor)),
+                UnbuiltExpr::Constant(Constant::Property(i, ActorOrEvent::Actor)),
             ]
         }));
         all_expressions.extend(event_properties.iter().flat_map(|i| {
             [
-                UnbuiltExpr::Unary(MonOp::Property(*i, ActorOrEvent::Event)),
-                UnbuiltExpr::Constant(Constant::Property(*i, ActorOrEvent::Event)),
+                UnbuiltExpr::Unary(MonOp::Property(i, ActorOrEvent::Event)),
+                UnbuiltExpr::Constant(Constant::Property(i, ActorOrEvent::Event)),
             ]
         }));
 
@@ -185,8 +185,8 @@ impl<'typ, 'conf> PossibleExpressions<'typ, 'conf> {
         lambda_type: &'typ LambdaType,
         arguments: &'typ [LambdaType],
         context: &Context<'typ>,
-    ) -> ExprDistribution<'a, 'typ, 'conf> {
-        let mut possibilities: Vec<Cow<UnbuiltExpr<'typ>>> = self
+    ) -> ExprDistribution<'a, 'src, 'typ, 'conf> {
+        let mut possibilities: Vec<Cow<'a, UnbuiltExpr<'src, 'typ>>> = self
             .expressions
             .get(lambda_type)
             .map(|x| {
@@ -220,7 +220,7 @@ impl<'typ, 'conf> PossibleExpressions<'typ, 'conf> {
         &'a self,
         lambda_type: &'typ LambdaType,
         context: &Context<'typ>,
-    ) -> ExprDistribution<'a, 'typ, 'conf> {
+    ) -> ExprDistribution<'a, 'src, 'typ, 'conf> {
         let mut possibilities: Vec<_> = self
             .expressions
             .get(lambda_type)
