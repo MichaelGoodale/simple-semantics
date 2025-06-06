@@ -102,13 +102,26 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
-                    v.push(Token::Func(mon_op.to_string()));
+                    let s = match mon_op {
+                        super::MonOp::Property(s, _) => s.to_string(),
+                        super::MonOp::Tautology
+                        | super::MonOp::Not
+                        | super::MonOp::Contradiction => mon_op.to_string(),
+                    };
+                    v.push(Token::Func(s));
                     v.push(Token::OpenDelim);
                     self.tokens(LambdaExprRef(arg.0), c, v);
                     v.push(Token::CloseDelim);
                 }
                 Expr::Constant(constant) => {
-                    v.push(Token::Const(constant.to_string()));
+                    let s = match constant {
+                        super::Constant::Everyone
+                        | super::Constant::EveryEvent
+                        | super::Constant::Tautology
+                        | super::Constant::Contradiction => constant.to_string(),
+                        super::Constant::Property(s, _) => s.to_string(),
+                    };
+                    v.push(Token::Const(s));
                 }
             },
         }
@@ -163,7 +176,7 @@ mod test {
     fn serializing() -> anyhow::Result<()> {
         for (statement, json) in [
             (
-                "~(AgentOf(a_John,e0))",
+                "~(AgentOf(a_John,e_0))",
                 "[{\"Func\":\"~\"},\"OpenDelim\",{\"Func\":\"AgentOf\"},\"OpenDelim\",{\"Actor\":\"John\"},{\"Event\":\"0\"},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
@@ -179,8 +192,8 @@ mod test {
                 "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"Blue\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
-                "every(x,pa5,pa10(a59))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"pa5\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"pa10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
+                "every(x,pa_5,pa_10(a_59))",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"5\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "every_e(x,all_e,PatientOf(a_Mary,x))",

@@ -54,7 +54,7 @@ fn load_dataset() -> anyhow::Result<()> {
 
     assert_eq!(data, parsed_data);
 
-    let executable = simple_semantics::parse_executable("AgentOf(a_John, e0)")?;
+    let executable = simple_semantics::parse_executable("AgentOf(a_John, e_0)")?;
     assert_eq!(
         parsed_data
             .iter_scenarios()

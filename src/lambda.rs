@@ -1226,7 +1226,7 @@ mod test {
     fn could_time_out_if_swapping_instead_of_cloning() -> anyhow::Result<()> {
         let p = lot_parser::<extra::Err<Rich<_>>>();
         let mut x = p
-            .parse("(lambda a x_l (PatientOf(x_l,x_l)))((lambda a x_l (a_1))(a_0))")
+            .parse("(lambda a x (PatientOf(x,x)))((lambda a x (a_1))(a_0))")
             .unwrap()
             .to_pool()?;
 
@@ -1241,12 +1241,12 @@ mod test {
         let p = lot_parser::<extra::Err<Rich<_>>>();
         let mut a = p.parse("a_1").unwrap().to_pool()?;
         let mut b = p
-            .parse("(lambda t x_l (a_1))(pa_0(free_var#a))")
+            .parse("(lambda t x (a_1))(pa_0(freeVar#a))")
             .unwrap()
             .to_pool()?;
 
-        a.lambda_abstract_free_variable("free_var", LambdaType::a().clone(), false)?;
-        b.lambda_abstract_free_variable("free_var", LambdaType::a().clone(), false)?;
+        a.lambda_abstract_free_variable("freeVar", LambdaType::a().clone(), false)?;
+        b.lambda_abstract_free_variable("freeVar", LambdaType::a().clone(), false)?;
         println!("A:\t{a}");
         println!("B:\t{b}");
 
