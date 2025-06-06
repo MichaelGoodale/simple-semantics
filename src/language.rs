@@ -229,8 +229,8 @@ impl Display for LanguageResult<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LanguageResult::Bool(b) => write!(f, "{b}"),
-            LanguageResult::Actor(a) => write!(f, "a{a}"),
-            LanguageResult::Event(e) => write!(f, "e{e}"),
+            LanguageResult::Actor(a) => write!(f, "a_{a}"),
+            LanguageResult::Event(e) => write!(f, "e_{e}"),
             LanguageResult::ActorSet(items) => {
                 write!(
                     f,

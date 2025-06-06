@@ -236,6 +236,16 @@ enum ParseTree<'src> {
     Entity(Entity<'src>),
 }
 
+fn keyword<'src, E>() -> impl Parser<'src, &'src str, &'src str, E> + Copy
+where
+    E: ParserExtra<'src, &'src str>,
+{
+    one_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        .repeated()
+        .at_least(1)
+        .to_slice()
+}
+
 fn entity<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
@@ -247,7 +257,7 @@ where
         .ignore_then(text::int(10))
         .map(|num: &str| Entity::Event(num.parse().unwrap()));
 
-    let actor = just("a_").ignore_then(text::ident()).map(Entity::Actor);
+    let actor = just("a_").ignore_then(keyword()).map(Entity::Actor);
 
     choice((actor, event))
         .map(ParseTree::Entity)
@@ -285,7 +295,7 @@ where
                     .or(just("e").to(ActorOrEvent::Event)),
             )
             .then_ignore(just("_"))
-            .then(text::ident())
+            .then(keyword())
             .map(|(a, s)| MonOp::Property(s, a))
             .then(entity_or_var.clone())
             .map(|(x, arg)| ParseTree::Unary(x, Box::new(arg))),
@@ -314,7 +324,7 @@ where
                     .or(just("e").to(ActorOrEvent::Event)),
             )
             .then_ignore(just("_"))
-            .then(text::ident())
+            .then(keyword())
             .map(|(a, p): (_, &str)| Constant::Property(p, a)),
     ))
     .map(ParseTree::Constant)
@@ -327,12 +337,12 @@ where
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    text::ident::<&'src str, E>()
+    keyword()
         .and_is(choice(RESERVED_KEYWORDS.map(|x| just(x))).not())
         .and_is(just("e_").ignore_then(text::int(10)).not())
-        .and_is(just("a_").ignore_then(text::ident()).not())
-        .and_is(just("pa_").ignore_then(text::ident()).not())
-        .and_is(just("pe_").ignore_then(text::ident()).not())
+        .and_is(just("a_").ignore_then(keyword()).not())
+        .and_is(just("pa_").ignore_then(keyword()).not())
+        .and_is(just("pe_").ignore_then(keyword()).not())
         .labelled("variable")
     //This is a stupid way to do it, but I can't get one_of to work for the life of me.
 }
@@ -439,7 +449,7 @@ where
             .then(inline_whitespace().at_least(1))
             .ignore_then(core_type_parser().labelled("type label"))
             .then_ignore(inline_whitespace().at_least(1))
-            .then(text::ident().padded().labelled("lambda variable"))
+            .then(keyword().padded().labelled("lambda variable"))
             .then(expr.clone().delimited_by(just('('), just(')')))
             .map(|((lambda_type, var), body)| ParseTree::Lambda {
                 body: Box::new(body),

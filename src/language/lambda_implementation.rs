@@ -124,7 +124,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         mut root: LambdaExprRef,
     ) -> Result<Self::Pool, Self::ConversionError> {
         //Quantifiers can have lambda terms embedded in them, this extracts them!
-        //e.g. some(x, lambda a y (pa0(y) | pa1(y)), pa3(x)) -> some(x, pa0(x) | pa1(x), pa3(x))
+        //e.g. some(x, lambda a y (pa_0(y) | pa_1(y)), pa_3(x)) -> some(x, pa_0(x) | pa_1(x), pa_3(x))
         let quantifier_restrictions = pool
             .0
             .iter()
@@ -400,7 +400,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                 Expr::Actor(a) => {
                     format!("a_{a}")
                 }
-                Expr::Event(e) => format!("e{e}"),
+                Expr::Event(e) => format!("e_{e}"),
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {
                         format!(
@@ -440,11 +440,11 @@ mod test {
     #[test]
     fn fancy_printing() -> anyhow::Result<()> {
         for statement in [
-            "~(AgentOf(a_John,e0))",
+            "~(AgentOf(a_John,e_0))",
             "(pa_Red(a_John) & ~(pa_Red(a_Mary)))",
             "every(x,all_a,pa_Blue(x))",
             "every(x,pa_Blue,pa_Blue(x))",
-            "every(x,pa5,pa10(a59))",
+            "every(x,pa_5,pa_10(a_59))",
             "every_e(x,all_e,PatientOf(a_Mary,x))",
         ] {
             let expression = parse_executable(statement)?;
@@ -503,12 +503,12 @@ mod test {
     fn printing() -> anyhow::Result<()> {
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let pool = parser
-            .parse("some_e(x0,all_e,((AgentOf(x0,a1) & PatientOf(x0,a0)) & pe0(x0)))")
+            .parse("some_e(x0,all_e,((AgentOf(x0,a_1) & PatientOf(x0,a_0)) & pe_0(x0)))")
             .unwrap()
             .to_pool()?;
         assert_eq!(
             pool.to_string(),
-            "some_e(x,all_e,((AgentOf(x,a1) & PatientOf(x,a0)) & pe0(x)))"
+            "some_e(x,all_e,((AgentOf(x,a_1) & PatientOf(x,a_0)) & pe_0(x)))"
         );
         let likes = parser
             .parse(
@@ -516,8 +516,7 @@ mod test {
             )
             .unwrap().to_pool()?;
 
-        let s =
-            "lambda e x (lambda e y (some(z,all_e,((AgentOf(x,z) & PatientOf(y,z)) & pe0(z)))))";
+        let s = "lambda e x (lambda e y (some(z,all_e,((AgentOf(x,z) & PatientOf(y,z)) & pe_likes(z)))))";
         assert_eq!(likes.to_string(), s,);
         let likes2 = parser.parse(s).unwrap().to_pool()?;
         assert_eq!(likes, likes2);
