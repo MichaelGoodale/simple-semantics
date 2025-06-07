@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::{
-    lambda::{LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
+    lambda::{FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
     language::{BinOp, Expr, MonOp, Variable, lambda_implementation::AssociativityData},
 };
 
@@ -52,6 +52,10 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                 v.push(Token::Var(TokenVar::Free {
                     label: fvar.to_string(),
                     t,
+                    anon: match fvar {
+                        FreeVar::Named(_) => false,
+                        FreeVar::Anonymous(_) => true,
+                    },
                 }));
                 AssociativityData::IsMonop
             }
@@ -173,7 +177,11 @@ impl RootedLambdaPool<'_, Expr<'_>> {
 pub(super) enum TokenVar<'a> {
     Lambda(String),
     Quantifier(String),
-    Free { label: String, t: &'a LambdaType },
+    Free {
+        label: String,
+        t: &'a LambdaType,
+        anon: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -243,11 +251,11 @@ mod test {
             ),
             (
                 "(cool#<a,t>)(a_John)",
-                "[{\"Var\":{\"Free\":{\"label\":\"cool\",\"t\":\"<a,t>\"}}},\"OpenDelim\",{\"Actor\":\"John\"},\"CloseDelim\"]",
+                "[{\"Var\":{\"Free\":{\"label\":\"cool\",\"t\":\"<a,t>\",\"anon\":false}}},\"OpenDelim\",{\"Actor\":\"John\"},\"CloseDelim\"]",
             ),
             (
                 "(bad#<a,t>)(man#a)",
-                "[{\"Var\":{\"Free\":{\"label\":\"bad\",\"t\":\"<a,t>\"}}},\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"man\",\"t\":\"a\"}}},\"CloseDelim\"]",
+                "[{\"Var\":{\"Free\":{\"label\":\"bad\",\"t\":\"<a,t>\",\"anon\":false}}},\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"man\",\"t\":\"a\",\"anon\":false}}},\"CloseDelim\"]",
             ),
         ] {
             let expression = RootedLambdaPool::parse(statement)?;

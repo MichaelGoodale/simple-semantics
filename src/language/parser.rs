@@ -224,7 +224,7 @@ impl<'src> VariableContext<'src> {
             },
             //Do free var
             _ => match lambda_type {
-                Some(lambda_type) => LambdaExpr::FreeVariable(variable, lambda_type),
+                Some(lambda_type) => LambdaExpr::FreeVariable(variable.into(), lambda_type),
                 None => {
                     return Err(LambdaParseError::UnTypedFreeVariable(variable.to_string()));
                 }
@@ -747,8 +747,8 @@ mod tests {
             "~hey#<e,t>(lol#e)",
             "t",
             LambdaPool::from(vec![
-                LambdaExpr::FreeVariable("hey", LambdaType::et().clone()),
-                LambdaExpr::FreeVariable("lol", LambdaType::e().clone()),
+                LambdaExpr::FreeVariable("hey".into(), LambdaType::et().clone()),
+                LambdaExpr::FreeVariable("lol".into(), LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
                     argument: LambdaExprRef(1),

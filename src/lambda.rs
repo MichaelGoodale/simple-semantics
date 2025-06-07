@@ -1,6 +1,6 @@
 use std::{
     collections::{HashSet, VecDeque},
-    fmt::Debug,
+    fmt::{Debug, Display},
     iter::empty,
 };
 use thiserror::Error;
@@ -9,7 +9,6 @@ pub mod types;
 use types::{LambdaType, TypeError};
 
 pub type Bvar = usize;
-pub type Fvar<'a> = &'a str;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaError {
@@ -105,11 +104,38 @@ impl LambdaLanguageOfThought for () {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum FreeVar<'a> {
+    Named(&'a str),
+    Anonymous(usize),
+}
+
+impl Display for FreeVar<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FreeVar::Named(s) => write!(f, "{s}"),
+            FreeVar::Anonymous(t) => write!(f, "{t}"),
+        }
+    }
+}
+
+impl<'a> From<&'a str> for FreeVar<'a> {
+    fn from(value: &'a str) -> Self {
+        FreeVar::Named(value)
+    }
+}
+
+impl<'a> From<usize> for FreeVar<'a> {
+    fn from(value: usize) -> Self {
+        FreeVar::Anonymous(value)
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum LambdaExpr<'a, T> {
     Lambda(LambdaExprRef, LambdaType),
     BoundVariable(Bvar, LambdaType),
-    FreeVariable(Fvar<'a>, LambdaType),
+    FreeVariable(FreeVar<'a>, LambdaType),
     Application {
         subformula: LambdaExprRef,
         argument: LambdaExprRef,
@@ -253,7 +279,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
 
     pub fn bind_free_variable(
         &mut self,
-        fvar: Fvar<'src>,
+        fvar: FreeVar<'src>,
         replacement: RootedLambdaPool<'src, T>,
     ) -> Result<(), LambdaError> {
         let (other_pool, other_root) = replacement.into();
@@ -265,7 +291,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
 
     pub fn lambda_abstract_free_variable(
         &mut self,
-        fvar: Fvar<'src>,
+        fvar: FreeVar<'src>,
         lambda_type: LambdaType,
         always_abstract: bool,
     ) -> Result<(), LambdaError> {
@@ -298,7 +324,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
         Ok(())
     }
 
-    pub fn apply_new_free_variable(&mut self, fvar: Fvar<'src>) -> Result<LambdaType, LambdaError> {
+    pub fn apply_new_free_variable(
+        &mut self,
+        fvar: FreeVar<'src>,
+    ) -> Result<LambdaType, LambdaError> {
         let pool_type = self.pool.get_type(self.root)?;
         let var_type = pool_type.lhs()?;
         let argument = self
@@ -455,7 +484,7 @@ where
     fn bind_free_variable(
         &mut self,
         root: LambdaExprRef,
-        fvar: Fvar<'src>,
+        fvar: FreeVar<'src>,
         replacement_root: LambdaExprRef,
     ) -> Result<(), LambdaError> {
         let arg_t = self.get_type(replacement_root)?;
@@ -985,7 +1014,7 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
             LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
-            LambdaExpr::FreeVariable("0", LambdaType::t().clone()),
+            LambdaExpr::FreeVariable("0".into(), LambdaType::t().clone()),
         ]);
         assert_eq!(
             pool.reduce(LambdaExprRef(0)).unwrap_err(),
@@ -1002,7 +1031,7 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
             LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
-            LambdaExpr::FreeVariable("0", LambdaType::a().clone()),
+            LambdaExpr::FreeVariable("0".into(), LambdaType::a().clone()),
         ]);
         assert!(pool.reduce(LambdaExprRef(0)).is_ok());
         Ok(())
@@ -1022,8 +1051,8 @@ mod test {
                 argument: LambdaExprRef(4),
             },
             LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::e().clone()),
-            LambdaExpr::FreeVariable("0", LambdaType::t().clone()),
-            LambdaExpr::FreeVariable("2", LambdaType::t().clone()),
+            LambdaExpr::FreeVariable("0".into(), LambdaType::t().clone()),
+            LambdaExpr::FreeVariable("2".into(), LambdaType::t().clone()),
             // 5
             //\lambda x. Mary sings and
             LambdaExpr::Application {
@@ -1039,14 +1068,14 @@ mod test {
                 argument: LambdaExprRef(12),
             },
             LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::e().clone()),
-            LambdaExpr::FreeVariable("1337", LambdaType::t().clone()),
-            LambdaExpr::FreeVariable("5", LambdaType::e().clone()),
+            LambdaExpr::FreeVariable("1337".into(), LambdaType::t().clone()),
+            LambdaExpr::FreeVariable("5".into(), LambdaType::e().clone()),
         ]);
         pool.reduce(LambdaExprRef(0))?;
         assert_eq!(
             pool,
             LambdaPool(vec![LambdaExpr::FreeVariable(
-                "1337",
+                "1337".into(),
                 LambdaType::t().clone()
             )])
         );
@@ -1059,7 +1088,7 @@ mod test {
             k(0)?
                 .into_iter()
                 .chain([
-                    LambdaExpr::FreeVariable("32", LambdaType::e().clone()),
+                    LambdaExpr::FreeVariable("32".into(), LambdaType::e().clone()),
                     LambdaExpr::Application {
                         subformula: LambdaExprRef(0),
                         argument: LambdaExprRef(3),
@@ -1074,7 +1103,7 @@ mod test {
         assert_eq!(
             pool,
             LambdaPool(vec![
-                LambdaExpr::FreeVariable("32", LambdaType::e().clone()),
+                LambdaExpr::FreeVariable("32".into(), LambdaType::e().clone()),
                 LambdaExpr::Lambda(LambdaExprRef(0), LambdaType::e().clone())
             ])
         );
@@ -1123,7 +1152,7 @@ mod test {
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let mut pool = parser.parse("phi#t & True").unwrap().to_pool()?;
 
-        pool.bind_free_variable("phi", parser.parse("False").unwrap().to_pool()?)?;
+        pool.bind_free_variable("phi".into(), parser.parse("False").unwrap().to_pool()?)?;
         assert_eq!("False & True", pool.into_pool()?.to_string());
 
         let input = parser
@@ -1135,7 +1164,7 @@ mod test {
             .unwrap()
             .to_pool()?;
 
-        a.bind_free_variable("P", input)?;
+        a.bind_free_variable("P".into(), input)?;
         a.reduce()?;
         assert_eq!(
             a.to_string(),
@@ -1152,11 +1181,11 @@ mod test {
             .unwrap()
             .to_pool()?;
 
-        pool.apply_new_free_variable("X")?;
+        pool.apply_new_free_variable("X".into())?;
 
         let gold_pool = RootedLambdaPool {
             pool: LambdaPool(vec![
-                LambdaExpr::FreeVariable("X", LambdaType::et().clone()),
+                LambdaExpr::FreeVariable("X".into(), LambdaType::et().clone()),
                 LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(0),
@@ -1186,7 +1215,7 @@ mod test {
             .unwrap()
             .to_pool()?;
 
-        pool.lambda_abstract_free_variable("Z", LambdaType::et().clone(), false)?;
+        pool.lambda_abstract_free_variable("Z".into(), LambdaType::et().clone(), false)?;
 
         let gold_pool = RootedLambdaPool {
             pool: LambdaPool(vec![
@@ -1245,8 +1274,8 @@ mod test {
             .unwrap()
             .to_pool()?;
 
-        a.lambda_abstract_free_variable("freeVar", LambdaType::a().clone(), false)?;
-        b.lambda_abstract_free_variable("freeVar", LambdaType::a().clone(), false)?;
+        a.lambda_abstract_free_variable("freeVar".into(), LambdaType::a().clone(), false)?;
+        b.lambda_abstract_free_variable("freeVar".into(), LambdaType::a().clone(), false)?;
         println!("A:\t{a}");
         println!("B:\t{b}");
 
