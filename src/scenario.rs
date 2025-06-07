@@ -335,7 +335,7 @@ mod test {
                 .as_ref()
                 .unwrap()
                 .to_string(),
-            "lambda a x (x)"
+            "lambda a x x"
         );
         assert_eq!(scenarios.scenarios[1].question, None);
         assert_eq!(

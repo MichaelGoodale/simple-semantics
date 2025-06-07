@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use crate::lambda::RootedLambdaPool;
+use crate::lambda::types::LambdaType;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 use lambda_implementation::to_var;
 
@@ -29,12 +30,31 @@ impl Display for BinOp {
     }
 }
 
+impl BinOp {
+    fn get_argument_type(&self) -> [&LambdaType; 2] {
+        match self {
+            BinOp::AgentOf | BinOp::PatientOf => [LambdaType::a(), LambdaType::e()],
+            BinOp::And | BinOp::Or => [LambdaType::t(), LambdaType::t()],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum MonOp<'a> {
     Not,
     Property(PropertyLabel<'a>, ActorOrEvent),
     Tautology,
     Contradiction,
+}
+
+impl MonOp<'_> {
+    fn get_argument_type(&self) -> &LambdaType {
+        match self {
+            MonOp::Property(_, ActorOrEvent::Actor) => LambdaType::a(),
+            MonOp::Property(_, ActorOrEvent::Event) => LambdaType::e(),
+            MonOp::Tautology | MonOp::Contradiction | MonOp::Not => LambdaType::t(),
+        }
+    }
 }
 
 impl<'a> Display for MonOp<'a> {
@@ -237,7 +257,7 @@ impl Display for LanguageResult<'_> {
                     "{{{}}}",
                     items
                         .iter()
-                        .map(|x| format!("a{x}"))
+                        .map(|x| format!("a_{x}"))
                         .collect::<Vec<_>>()
                         .join(", ")
                 )

@@ -81,7 +81,7 @@ fn to_string(bencher: divan::Bencher, s: &str) {
 }
 
 #[divan::bench(args = ["lambda a z (every_e(x,pe_dance,AgentOf(z,x)))",
-"lambda <a,<a,t>> P (every_e(x,pe_dance, (P(a_Mary))(x)))",
+"lambda <a,<e,t>> P (every_e(x,pe_dance, (P(a_Mary))(x)))",
 "lambda a r ((every_e(x,pe_dance,AgentOf(r,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x))))"])]
 fn lambda_string(bencher: divan::Bencher, s: &str) {
     let a = RootedLambdaPool::parse(s).unwrap();

@@ -234,36 +234,20 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
                 var: Variable::Event(_),
                 ..
             } => Box::new([LambdaType::et().clone(), LambdaType::t().clone()].into_iter()),
+            Expr::Binary(b, _, _) => Box::new(b.get_argument_type().into_iter().cloned()),
+            Expr::Unary(mon_op, _) => Box::new([mon_op.get_argument_type().clone()].into_iter()),
             Expr::Variable(Variable::Event(_))
             | Expr::Variable(Variable::Actor(_))
             | Expr::Actor(_)
             | Expr::Event(_)
             | Expr::Constant(_) => Box::new(empty()),
-            Expr::Binary(BinOp::AgentOf, ..) | Expr::Binary(BinOp::PatientOf, ..) => {
-                Box::new([LambdaType::a().clone(), LambdaType::e().clone()].into_iter())
-            }
-            Expr::Binary(BinOp::Or, ..) | Expr::Binary(BinOp::And, ..) => {
-                Box::new([LambdaType::t().clone(), LambdaType::t().clone()].into_iter())
-            }
-            Expr::Unary(mon_op, _) => match mon_op {
-                MonOp::Property(_, ActorOrEvent::Actor) => {
-                    Box::new([LambdaType::a().clone()].into_iter())
-                }
-                MonOp::Property(_, ActorOrEvent::Event) => {
-                    Box::new([LambdaType::a().clone()].into_iter())
-                }
-
-                MonOp::Tautology | MonOp::Contradiction | MonOp::Not => {
-                    Box::new([LambdaType::t().clone()].into_iter())
-                }
-            },
         }
     }
 }
 
 impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = self.string(self.root(), VarContext::default());
+        let (string, _) = self.string(self.root(), VarContext::default());
         write!(f, "{string}")
     }
 }
@@ -344,6 +328,12 @@ impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<'a, Expr<'a>> {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+enum AssociativityData {
+    IsBinom,
+    IsMonop,
+}
+
 impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         lot_parser::<'a, extra::Err<Rich<_>>>()
@@ -352,30 +342,46 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
             .to_pool()
     }
 
-    fn string(&self, expr: LambdaExprRef, c: VarContext) -> String {
+    fn string(&self, expr: LambdaExprRef, c: VarContext) -> (String, AssociativityData) {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
                 let (c, var) = c.inc_depth();
-                format!(
-                    "lambda {} {} ({})",
-                    lambda_type,
-                    var,
-                    self.string(*child, c)
+                let (child, child_asso) = self.string(*child, c);
+                (
+                    format!(
+                        "lambda {} {} {}",
+                        lambda_type,
+                        var,
+                        match child_asso {
+                            AssociativityData::IsBinom => format!("({child})"),
+                            AssociativityData::IsMonop => child,
+                        }
+                    ),
+                    AssociativityData::IsBinom,
                 )
             }
-            LambdaExpr::BoundVariable(bvar, _) => c.lambda_var(*bvar),
+            LambdaExpr::BoundVariable(bvar, _) => (c.lambda_var(*bvar), AssociativityData::IsMonop),
             LambdaExpr::FreeVariable(fvar, t) => {
-                format!("{fvar}#{t}")
+                (format!("{fvar}#{t}"), AssociativityData::IsMonop)
             }
 
             LambdaExpr::Application {
                 subformula,
                 argument,
-            } => format!(
-                "({})({})",
-                self.string(*subformula, c.clone()),
-                self.string(*argument, c)
-            ),
+            } => {
+                let (sub, associative) = self.string(*subformula, c.clone());
+                let (arg, _) = self.string(*argument, c);
+
+                match associative {
+                    AssociativityData::IsBinom => {
+                        (format!("({sub})({arg})"), AssociativityData::IsBinom)
+                    }
+                    AssociativityData::IsMonop => {
+                        (format!("{sub}({arg})"), AssociativityData::IsMonop)
+                    }
+                }
+            }
+
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
                 Expr::Quantifier {
                     quantifier,
@@ -384,44 +390,47 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     subformula,
                 } => {
                     let (c, var_string) = c.add_qvar(*var);
-                    format!(
-                        "{}{}({},{},{})",
-                        quantifier,
-                        match var {
-                            Variable::Actor(_) => "",
-                            Variable::Event(_) => "_e",
-                        },
-                        var_string,
-                        self.string(LambdaExprRef(restrictor.0), c.clone()),
-                        self.string(LambdaExprRef(subformula.0), c)
+                    let (restrictor, _) = self.string(LambdaExprRef(restrictor.0), c.clone());
+                    let (subformula, _) = self.string(LambdaExprRef(subformula.0), c);
+                    (
+                        format!(
+                            "{}{}({}, {restrictor}, {subformula})",
+                            quantifier,
+                            match var {
+                                Variable::Actor(_) => "",
+                                Variable::Event(_) => "_e",
+                            },
+                            var_string,
+                        ),
+                        AssociativityData::IsMonop,
                     )
                 }
-                Expr::Variable(variable) => c.q_var(*variable),
-                Expr::Actor(a) => {
-                    format!("a_{a}")
-                }
-                Expr::Event(e) => format!("e_{e}"),
-                Expr::Binary(bin_op, x, y) => match bin_op {
-                    BinOp::AgentOf | BinOp::PatientOf => {
-                        format!(
-                            "{bin_op}({},{})",
-                            self.string(LambdaExprRef(x.0), c.clone()),
-                            self.string(LambdaExprRef(y.0), c)
-                        )
-                    }
+                Expr::Variable(variable) => (c.q_var(*variable), AssociativityData::IsMonop),
+                Expr::Actor(a) => (format!("a_{a}"), AssociativityData::IsMonop),
+                Expr::Event(e) => (format!("e_{e}"), AssociativityData::IsMonop),
+                Expr::Binary(bin_op, x, y) => {
+                    let (x, _) = self.string(LambdaExprRef(x.0), c.clone());
+                    let (y, _) = self.string(LambdaExprRef(y.0), c);
+                    match bin_op {
+                        BinOp::AgentOf | BinOp::PatientOf => {
+                            (format!("{bin_op}({x}, {y})",), AssociativityData::IsMonop)
+                        }
 
-                    BinOp::And | BinOp::Or => {
-                        format!(
-                            "({} {bin_op} {})",
-                            self.string(LambdaExprRef(x.0), c.clone()),
-                            self.string(LambdaExprRef(y.0), c)
-                        )
+                        BinOp::And | BinOp::Or => {
+                            (format!("{x} {bin_op} {y}"), AssociativityData::IsBinom)
+                        }
                     }
-                },
-                Expr::Unary(mon_op, arg) => {
-                    format!("{mon_op}({})", self.string(LambdaExprRef(arg.0), c))
                 }
-                Expr::Constant(constant) => format!("{constant}"),
+                Expr::Unary(mon_op, arg) => {
+                    let (arg, arg_binom) = self.string(LambdaExprRef(arg.0), c);
+                    match (mon_op, arg_binom) {
+                        (MonOp::Not, AssociativityData::IsMonop) => {
+                            (format!("{mon_op}{arg}"), AssociativityData::IsMonop)
+                        }
+                        _ => (format!("{mon_op}({arg})"), AssociativityData::IsMonop),
+                    }
+                }
+                Expr::Constant(constant) => (format!("{constant}"), AssociativityData::IsMonop),
             },
         }
     }
@@ -440,17 +449,23 @@ mod test {
     #[test]
     fn fancy_printing() -> anyhow::Result<()> {
         for statement in [
-            "~(AgentOf(a_John,e_0))",
-            "(pa_Red(a_John) & ~(pa_Red(a_Mary)))",
-            "every(x,all_a,pa_Blue(x))",
-            "every(x,pa_Blue,pa_Blue(x))",
-            "every(x,pa_5,pa_10(a_59))",
-            "every_e(x,all_e,PatientOf(a_Mary,x))",
+            "~AgentOf(a_John, e_0)",
+            "pa_Red(a_John) & ~pa_Red(a_Mary)",
+            "every(x, all_a, pa_Blue(x))",
+            "every(x, pa_Blue, pa_Blue(x))",
+            "every(x, pa_5, pa_10(a_59))",
+            "every_e(x, all_e, PatientOf(a_Mary, x))",
         ] {
+            println!("{statement}");
             let expression = parse_executable(statement)?;
             assert_eq!(expression.to_string(), statement);
         }
-        for s in ["(cool#<a,t>)(a_John)", "(bad#<a,t>)(man#a)"] {
+        for s in [
+            "cool#<a,t>(a_John)",
+            "bad#<a,t>(man#a)",
+            "woah#<<e,t>,t>(lambda e x pe_wow(x))",
+        ] {
+            println!("{s}");
             let p = RootedLambdaPool::parse(s)?;
             assert_eq!(p.to_string(), s);
         }
@@ -464,7 +479,7 @@ mod test {
         let john = parser.parse("a_John").unwrap().to_pool()?;
         let likes = parser
             .parse(
-                "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(e, x) & PatientOf(e,y) & pe_likes(e)))))",
+                "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(x, e) & PatientOf(y, e) & pe_likes(e)))))",
             )
             .unwrap().to_pool()?;
 
@@ -474,7 +489,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some_e(x,all_e,((AgentOf(x,a_Mary) & PatientOf(x,a_John)) & pe_likes(x)))",
+            "some_e(x, all_e, AgentOf(a_Mary, x) & PatientOf(a_John, x) & pe_likes(x))",
             pool.to_string()
         );
         let phi = likes.merge(mary).unwrap();
@@ -482,7 +497,7 @@ mod test {
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(
-            "some_e(x,all_e,((AgentOf(x,a_Mary) & PatientOf(x,a_John)) & pe_likes(x)))",
+            "some_e(x, all_e, AgentOf(a_Mary, x) & PatientOf(a_John, x) & pe_likes(x))",
             pool.to_string()
         );
         Ok(())
@@ -503,20 +518,21 @@ mod test {
     fn printing() -> anyhow::Result<()> {
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let pool = parser
-            .parse("some_e(x0,all_e,((AgentOf(x0,a_1) & PatientOf(x0,a_0)) & pe_0(x0)))")
+            .parse("some_e(x0, all_e, AgentOf(a_1, x0) & PatientOf(a_0, x0) & pe_0(x0))")
             .unwrap()
             .to_pool()?;
         assert_eq!(
             pool.to_string(),
-            "some_e(x,all_e,((AgentOf(x,a_1) & PatientOf(x,a_0)) & pe_0(x)))"
+            "some_e(x, all_e, AgentOf(a_1, x) & PatientOf(a_0, x) & pe_0(x))"
         );
         let likes = parser
             .parse(
-                "lambda e x ((lambda e y (some(e, all_e, AgentOf(x, e) & PatientOf(y,e) & pe_likes(e)))))",
+                "lambda e x ((lambda e y (some(e, all_a, AgentOf(e, x) & PatientOf(e, y) & pe_likes(y)))))",
             )
             .unwrap().to_pool()?;
 
-        let s = "lambda e x (lambda e y (some(z,all_e,((AgentOf(x,z) & PatientOf(y,z)) & pe_likes(z)))))";
+        let s =
+            "lambda e x (lambda e y some(z, all_a, AgentOf(z, x) & PatientOf(z, y) & pe_likes(y)))";
         assert_eq!(likes.to_string(), s,);
         let likes2 = parser.parse(s).unwrap().to_pool()?;
         assert_eq!(likes, likes2);

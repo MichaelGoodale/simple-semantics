@@ -4,9 +4,9 @@ use crate::{
     Entity,
     lambda::{
         Bvar, LambdaExpr, LambdaExprRef, LambdaPool, ReductionError, RootedLambdaPool,
-        types::{LambdaType, core_type_parser},
+        types::{LambdaType, TypeError, core_type_parser},
     },
-    language::{Constant, Expr, ExprRef, MonOp, lambda_implementation::LambdaConversionError},
+    language::{Constant, Expr, MonOp, lambda_implementation::LambdaConversionError},
 };
 use chumsky::prelude::*;
 use chumsky::{
@@ -29,6 +29,12 @@ pub enum LambdaParseError {
 
     #[error("Reduction Error: {0}")]
     ReductionError(#[from] ReductionError),
+
+    #[error("{0}")]
+    TypeError(String),
+
+    #[error("Type error: {0}")]
+    InnerTypeError(#[from] TypeError),
 
     #[error("{0}")]
     ConversionError(#[from] LambdaConversionError),
@@ -60,6 +66,9 @@ const RESERVED_KEYWORDS: [&str; 11] = [
     "PatientOf",
 ];
 
+//TODO: Richer errors that reference where the type error is.
+//TODO: Type errors elsewhere
+
 impl<'src> ParseTree<'src> {
     fn add_to_pool(
         &self,
@@ -74,39 +83,67 @@ impl<'src> ParseTree<'src> {
                 Entity::Event(e) => Expr::Event(*e),
             }),
             ParseTree::Unary(m, x) => {
-                let x = ExprRef(x.add_to_pool(pool, variable_names, lambda_depth)?.0);
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(*m, x))
+                let x = x.add_to_pool(pool, variable_names, lambda_depth)?;
+                let x_type = pool.get_type(x)?;
+                if m.get_argument_type() != &x_type {
+                    return Err(LambdaParseError::TypeError(format!(
+                        "Can't apply {x_type} to {m} which takes type {}",
+                        m.get_argument_type(),
+                    )));
+                }
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(*m, x.into()))
             }
             ParseTree::Binary(b, x, y) => {
-                let x = ExprRef(x.add_to_pool(pool, variable_names, lambda_depth)?.0);
-                let y = ExprRef(y.add_to_pool(pool, variable_names, lambda_depth)?.0);
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x, y))
+                let x = x.add_to_pool(pool, variable_names, lambda_depth)?;
+                let y = y.add_to_pool(pool, variable_names, lambda_depth)?;
+
+                let x_type = pool.get_type(x)?;
+                let y_type = pool.get_type(y)?;
+                let b_type = b.get_argument_type();
+                if b_type != [&x_type, &y_type] {
+                    return Err(LambdaParseError::TypeError(format!(
+                        "Can't apply [{x_type}, {y_type}] to {b} which takes type [{}, {}]",
+                        b_type[0], b_type[1]
+                    )));
+                }
+
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x.into(), y.into()))
             }
             ParseTree::Quantifier {
                 quantifier,
-                lambda_type,
+                lambda_type: actor_or_event,
                 variable,
                 restrictor,
                 subformula,
             } => {
-                let var = variable_names.bind_fresh_quantifier(variable, *lambda_type);
-                let restrictor = ExprRef(
-                    restrictor
-                        .add_to_pool(pool, variable_names, lambda_depth)?
-                        .0,
-                );
+                let var = variable_names.bind_fresh_quantifier(variable, *actor_or_event);
+                let restrictor = restrictor.add_to_pool(pool, variable_names, lambda_depth)?;
 
-                let subformula = ExprRef(
-                    subformula
-                        .add_to_pool(pool, variable_names, lambda_depth)?
-                        .0,
-                );
+                let r_type = pool.get_type(restrictor)?;
+                let required_type = match actor_or_event {
+                    ActorOrEvent::Actor => LambdaType::at(),
+                    ActorOrEvent::Event => LambdaType::et(),
+                };
+                if &r_type != required_type && &r_type != LambdaType::t() {
+                    return Err(LambdaParseError::TypeError(format!(
+                        "Quantifier restrictor is {r_type} and not of type {required_type} or t",
+                    )));
+                }
+
+                let subformula = subformula.add_to_pool(pool, variable_names, lambda_depth)?;
+                let sub_type = pool.get_type(subformula)?;
+                if &sub_type != LambdaType::t() {
+                    return Err(LambdaParseError::TypeError(format!(
+                        "Quantifier body is {sub_type} and not of t",
+                    )));
+                }
                 variable_names.unbind(variable);
+
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: *quantifier,
                     var,
-                    restrictor,
-                    subformula,
+                    restrictor: restrictor.into(),
+                    subformula: subformula.into(),
                 })
             }
             ParseTree::Application {
@@ -115,6 +152,16 @@ impl<'src> ParseTree<'src> {
             } => {
                 let subformula = subformula.add_to_pool(pool, variable_names, lambda_depth)?;
                 let argument = argument.add_to_pool(pool, variable_names, lambda_depth)?;
+
+                let f = pool.get_type(subformula)?;
+                let arg = pool.get_type(argument)?;
+
+                if !f.can_apply(&arg) {
+                    return Err(LambdaParseError::TypeError(
+                        "Can't apply subformula to argument".to_string(),
+                    ));
+                }
+
                 LambdaExpr::Application {
                     subformula,
                     argument,
@@ -162,8 +209,9 @@ impl<'src> VariableContext<'src> {
         lambda_type: Option<LambdaType>,
         lambda_depth: usize,
     ) -> Result<LambdaExpr<'src, Expr<'src>>, LambdaParseError> {
+        //dbg!(&self, variable);
         Ok(match self.0.get(variable) {
-            Some(vars) => match vars
+            Some(vars) if !vars.is_empty() => match vars
                 .last()
                 .expect("There should never be an empty vec in the VariableContext")
             {
@@ -175,7 +223,7 @@ impl<'src> VariableContext<'src> {
                 }
             },
             //Do free var
-            None => match lambda_type {
+            _ => match lambda_type {
                 Some(lambda_type) => LambdaExpr::FreeVariable(variable, lambda_type),
                 None => {
                     return Err(LambdaParseError::UnTypedFreeVariable(variable.to_string()));
@@ -276,14 +324,16 @@ where
     .map(ParseTree::Constant)
 }
 
-fn properties<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
+fn properties<'src, E>(
+    expr: impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone,
+) -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    let entity_or_var = choice((entity(), variable()))
+    let entity_or_var = choice((entity(), variable(), expr))
         .padded()
         .delimited_by(just('('), just(')'));
 
@@ -399,24 +449,6 @@ where
     let true_or_false = bool_literal();
     let possible_sets = sets();
     recursive(|expr| {
-        let atom = true_or_false
-            .or(binary_operation(expr.clone(), expr.clone()))
-            .or(properties())
-            .or(variable())
-            .or(expr.clone().delimited_by(just('('), just(')')));
-
-        let neg = just("~")
-            .repeated()
-            .foldr(atom, |_, b| ParseTree::Unary(MonOp::Not, Box::new(b)));
-
-        let non_quantified = neg.clone().foldl(
-            choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
-                .padded()
-                .then(neg.clone())
-                .repeated(),
-            |lhs, (op, rhs)| ParseTree::Binary(op, Box::new(lhs), Box::new(rhs)),
-        );
-
         let quantified = choice((
             just("every").to(Quantifier::Universal),
             just("some").to(Quantifier::Existential),
@@ -449,14 +481,35 @@ where
             .then(inline_whitespace().at_least(1))
             .ignore_then(core_type_parser().labelled("type label"))
             .then_ignore(inline_whitespace().at_least(1))
-            .then(keyword().padded().labelled("lambda variable"))
-            .then(expr.clone().delimited_by(just('('), just(')')))
+            .then(keyword().labelled("lambda variable"))
+            .then_ignore(inline_whitespace().at_least(1))
+            .then(expr.clone())
             .map(|((lambda_type, var), body)| ParseTree::Lambda {
                 body: Box::new(body),
                 var,
                 lambda_type,
             })
             .labelled("lambda expression");
+
+        let atom = true_or_false
+            .or(binary_operation(expr.clone(), expr.clone()))
+            .or(properties(lambda.clone()))
+            .or(variable())
+            .or(lambda)
+            .or(quantified)
+            .or(expr.clone().delimited_by(just('('), just(')')));
+
+        let neg = just("~")
+            .repeated()
+            .foldr(atom, |_, b| ParseTree::Unary(MonOp::Not, Box::new(b)));
+
+        let non_quantified = neg.clone().foldl(
+            choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
+                .padded()
+                .then(neg.clone())
+                .repeated(),
+            |lhs, (op, rhs)| ParseTree::Binary(op, Box::new(lhs), Box::new(rhs)),
+        );
 
         choice((
             expr.clone()
@@ -466,9 +519,7 @@ where
                     subformula: Box::new(a),
                     argument: Box::new(b),
                 }),
-            lambda,
             non_quantified,
-            quantified,
             possible_sets,
             entity_or_variable,
         ))
@@ -508,7 +559,7 @@ pub fn parse_executable<'a>(s: &'a str) -> Result<LanguageExpression<'a>, Lambda
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::language::{ExprPool, LanguageResult, VariableBuffer};
+    use crate::language::{ExprPool, ExprRef, LanguageResult, VariableBuffer};
     use crate::{Scenario, ThetaRoles};
     use std::collections::HashMap;
 
@@ -863,6 +914,27 @@ mod tests {
             assert_eq!(get_parse(statement, &scenario), result);
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn parse_errors_test() -> anyhow::Result<()> {
+        for statement in [
+            "(wow#<a,<e,t>>(nice#a))(cool#e)",
+            "every(x,lambda a y pa_John(y), pa_Blue(y#a))",
+        ] {
+            println!("{statement}");
+            RootedLambdaPool::parse(statement)?;
+        }
+
+        for statement in [
+            "wow#<e,t>(nice#a)",
+            "(wow#<a,<e,t>>(nice#a))(cool#a)",
+            "every(x,lambda a y pa_John(y), pa_Blue(y))",
+        ] {
+            let p = RootedLambdaPool::parse(statement);
+            assert!(p.is_err());
+        }
         Ok(())
     }
 }
