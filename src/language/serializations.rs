@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::{
     lambda::{LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
-    language::{BinOp, Expr, Variable},
+    language::{BinOp, Expr, MonOp, Variable, lambda_implementation::AssociativityData},
 };
 
 use crate::language::lambda_implementation::VarContext;
@@ -22,7 +22,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
         expr: LambdaExprRef,
         c: VarContext,
         v: &mut Vec<Token<'a>>,
-    ) {
+    ) -> AssociativityData {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
                 let (c, var) = c.inc_depth();
@@ -30,30 +30,51 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     t: lambda_type,
                     var: TokenVar::Lambda(var),
                 });
-                v.push(Token::OpenDelim);
-                self.tokens(*child, c, v);
-                v.push(Token::CloseDelim);
+
+                let mut new_v = vec![];
+                let child_asso = self.tokens(*child, c, &mut new_v);
+                match child_asso {
+                    AssociativityData::IsBinom => {
+                        v.push(Token::OpenDelim);
+                        v.extend(new_v);
+                        v.push(Token::CloseDelim);
+                    }
+                    AssociativityData::IsMonop => v.extend(new_v),
+                }
+
+                AssociativityData::IsBinom
             }
             LambdaExpr::BoundVariable(bvar, _) => {
-                v.push(Token::Var(TokenVar::Lambda(c.lambda_var(*bvar))))
+                v.push(Token::Var(TokenVar::Lambda(c.lambda_var(*bvar))));
+                AssociativityData::IsMonop
             }
             LambdaExpr::FreeVariable(fvar, t) => {
                 v.push(Token::Var(TokenVar::Free {
                     label: fvar.to_string(),
                     t,
                 }));
+                AssociativityData::IsMonop
             }
 
             LambdaExpr::Application {
                 subformula,
                 argument,
             } => {
-                v.push(Token::OpenDelim);
-                self.tokens(*subformula, c.clone(), v);
-                v.push(Token::CloseDelim);
+                let mut new_v = vec![];
+
+                match self.tokens(*subformula, c.clone(), &mut new_v) {
+                    AssociativityData::IsBinom => {
+                        v.push(Token::OpenDelim);
+                        v.extend(new_v);
+                        v.push(Token::CloseDelim);
+                    }
+                    AssociativityData::IsMonop => v.extend(new_v),
+                }
+
                 v.push(Token::OpenDelim);
                 self.tokens(*argument, c.clone(), v);
                 v.push(Token::CloseDelim);
+                AssociativityData::IsBinom
             }
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
                 Expr::Quantifier {
@@ -74,31 +95,39 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     });
                     v.push(Token::OpenDelim);
                     self.tokens(LambdaExprRef(restrictor.0), c.clone(), v);
-                    v.push(Token::CloseDelim);
-                    v.push(Token::OpenDelim);
+                    v.push(Token::ArgSep);
                     self.tokens(LambdaExprRef(subformula.0), c, v);
                     v.push(Token::CloseDelim);
+                    AssociativityData::IsMonop
                 }
                 Expr::Variable(variable) => {
-                    v.push(Token::Var(TokenVar::Quantifier(c.q_var(*variable))))
+                    v.push(Token::Var(TokenVar::Quantifier(c.q_var(*variable))));
+                    AssociativityData::IsMonop
                 }
-                Expr::Actor(a) => v.push(Token::Actor(a.to_string())),
-                Expr::Event(e) => v.push(Token::Event(e.to_string())),
+                Expr::Actor(a) => {
+                    v.push(Token::Actor(a.to_string()));
+                    AssociativityData::IsMonop
+                }
+                Expr::Event(e) => {
+                    v.push(Token::Event(e.to_string()));
+                    AssociativityData::IsMonop
+                }
                 Expr::Binary(bin_op, x, y) => match bin_op {
                     BinOp::AgentOf | BinOp::PatientOf => {
                         v.push(Token::Func(bin_op.to_string()));
                         v.push(Token::OpenDelim);
                         self.tokens(LambdaExprRef(x.0), c.clone(), v);
+                        v.push(Token::ArgSep);
                         self.tokens(LambdaExprRef(y.0), c, v);
                         v.push(Token::CloseDelim);
+                        AssociativityData::IsMonop
                     }
 
                     BinOp::And | BinOp::Or => {
-                        v.push(Token::OpenDelim);
                         self.tokens(LambdaExprRef(x.0), c.clone(), v);
                         v.push(Token::Func(bin_op.to_string()));
                         self.tokens(LambdaExprRef(y.0), c, v);
-                        v.push(Token::CloseDelim);
+                        AssociativityData::IsBinom
                     }
                 },
                 Expr::Unary(mon_op, arg) => {
@@ -109,9 +138,20 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                         | super::MonOp::Contradiction => mon_op.to_string(),
                     };
                     v.push(Token::Func(s));
-                    v.push(Token::OpenDelim);
-                    self.tokens(LambdaExprRef(arg.0), c, v);
-                    v.push(Token::CloseDelim);
+
+                    let mut new_v = vec![];
+                    let child_asso = self.tokens(LambdaExprRef(arg.0), c, &mut new_v);
+                    match (mon_op, child_asso) {
+                        (MonOp::Not, AssociativityData::IsMonop) => {
+                            v.extend(new_v);
+                        }
+                        _ => {
+                            v.push(Token::OpenDelim);
+                            v.extend(new_v);
+                            v.push(Token::CloseDelim);
+                        }
+                    }
+                    AssociativityData::IsMonop
                 }
                 Expr::Constant(constant) => {
                     let s = match constant {
@@ -122,6 +162,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                         super::Constant::Property(s, _) => s.to_string(),
                     };
                     v.push(Token::Const(s));
+                    AssociativityData::IsMonop
                 }
             },
         }
@@ -153,6 +194,7 @@ pub(super) enum Token<'a> {
         t: &'a LambdaType,
     },
     OpenDelim,
+    ArgSep,
     CloseDelim,
 }
 
@@ -177,35 +219,35 @@ mod test {
         for (statement, json) in [
             (
                 "~(AgentOf(a_John,e_0))",
-                "[{\"Func\":\"~\"},\"OpenDelim\",{\"Func\":\"AgentOf\"},\"OpenDelim\",{\"Actor\":\"John\"},{\"Event\":\"0\"},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Func\":\"~\"},{\"Func\":\"AgentOf\"},\"OpenDelim\",{\"Actor\":\"John\"},\"ArgSep\",{\"Event\":\"0\"},\"CloseDelim\"]",
             ),
             (
                 "(pa_Red(a_John) & ~(pa_Red(a_Mary)))",
-                "[\"OpenDelim\",{\"Func\":\"Red\"},\"OpenDelim\",{\"Actor\":\"John\"},\"CloseDelim\",{\"Func\":\"&\"},{\"Func\":\"~\"},\"OpenDelim\",{\"Func\":\"Red\"},\"OpenDelim\",{\"Actor\":\"Mary\"},\"CloseDelim\",\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Func\":\"Red\"},\"OpenDelim\",{\"Actor\":\"John\"},\"CloseDelim\",{\"Func\":\"&\"},{\"Func\":\"~\"},{\"Func\":\"Red\"},\"OpenDelim\",{\"Actor\":\"Mary\"},\"CloseDelim\"]",
             ),
             (
                 "every(x,all_a,pa_Blue(x))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"all_a\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"all_a\"},\"ArgSep\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "every(x,pa_Blue,pa_Blue(x))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"Blue\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"Blue\"},\"ArgSep\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "every(x,pa_5,pa_10(a_59))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"5\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"5\"},\"ArgSep\",{\"Func\":\"10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "every_e(x,all_e,PatientOf(a_Mary,x))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"e\"}},\"OpenDelim\",{\"Const\":\"all_e\"},\"CloseDelim\",\"OpenDelim\",{\"Func\":\"PatientOf\"},\"OpenDelim\",{\"Actor\":\"Mary\"},{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"e\"}},\"OpenDelim\",{\"Const\":\"all_e\"},\"ArgSep\",{\"Func\":\"PatientOf\"},\"OpenDelim\",{\"Actor\":\"Mary\"},\"ArgSep\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "(cool#<a,t>)(a_John)",
-                "[\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"cool\",\"t\":\"<a,t>\"}}},\"CloseDelim\",\"OpenDelim\",{\"Actor\":\"John\"},\"CloseDelim\"]",
+                "[{\"Var\":{\"Free\":{\"label\":\"cool\",\"t\":\"<a,t>\"}}},\"OpenDelim\",{\"Actor\":\"John\"},\"CloseDelim\"]",
             ),
             (
                 "(bad#<a,t>)(man#a)",
-                "[\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"bad\",\"t\":\"<a,t>\"}}},\"CloseDelim\",\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"man\",\"t\":\"a\"}}},\"CloseDelim\"]",
+                "[{\"Var\":{\"Free\":{\"label\":\"bad\",\"t\":\"<a,t>\"}}},\"OpenDelim\",{\"Var\":{\"Free\":{\"label\":\"man\",\"t\":\"a\"}}},\"CloseDelim\"]",
             ),
         ] {
             let expression = RootedLambdaPool::parse(statement)?;

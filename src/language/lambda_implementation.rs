@@ -329,7 +329,7 @@ impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<'a, Expr<'a>> {
 }
 
 #[derive(Debug, Copy, Clone)]
-enum AssociativityData {
+pub(super) enum AssociativityData {
     IsBinom,
     IsMonop,
 }
