@@ -6,6 +6,8 @@ use chumsky::{
     prelude::*,
     text::{TextExpected, inline_whitespace},
 };
+
+#[cfg(feature = "sampling")]
 use rand::{Rng, seq::IteratorRandom};
 
 use thiserror::Error;
@@ -175,9 +177,12 @@ impl Display for LambdaType {
     }
 }
 
+#[cfg(feature = "sampling")]
 const RECURSE_PROB: f64 = 0.2;
+#[cfg(feature = "sampling")]
 const MAX_DEPTH: u8 = 64;
 
+#[cfg(feature = "sampling")]
 impl LambdaType {
     fn random_inner(r: &mut impl Rng, depth: u8, no_e: bool) -> Self {
         if depth < MAX_DEPTH && r.random_bool(RECURSE_PROB) {
@@ -209,11 +214,15 @@ impl LambdaType {
 
 #[cfg(test)]
 mod test {
+
+    #[cfg(feature = "sampling")]
     use rand::SeedableRng;
+    #[cfg(feature = "sampling")]
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
 
+    #[cfg(feature = "sampling")]
     #[test]
     fn random_lambdas() -> anyhow::Result<()> {
         let mut r = ChaCha8Rng::seed_from_u64(32);

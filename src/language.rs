@@ -642,7 +642,10 @@ pub use parser::parse_executable;
 use thiserror::Error;
 
 mod lambda_implementation;
+
+#[cfg(feature = "sampling")]
 mod mutations;
+
 mod serializations;
 
 #[cfg(test)]
