@@ -87,19 +87,20 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
                             SampleDetails::LambdaExpr => {
                                 let pareto =
                                     (2.0) / (((depth / config.depth_rapidness) + 1.5).powf(3.0));
-                                config.lambda_weight * pareto
+                                config.lambda_weight * pareto.abs()
                             }
                             SampleDetails::LambdaVar(_) | SampleDetails::QuantifierVar(_) => {
                                 let pareto =
                                     (1.0) / (((depth / config.depth_rapidness) + 1.5).powf(2.0));
-                                config.variable_weight * pareto
+                                config.variable_weight * pareto.abs()
                             }
                             SampleDetails::Other(n_args) => {
                                 //This is the pareto PDF with x_m=1 and alpha=(n_args+1)
                                 //scaled by depth_rapidness and shifted to the right by 1
                                 let n_args = *n_args as f64;
-                                (n_args + 1.0)
-                                    / (((depth / config.depth_rapidness) + 1.5).powf(n_args + 2.0))
+                                ((n_args + 1.0)
+                                    / (((depth / config.depth_rapidness) + 1.5).powf(n_args + 2.0)))
+                                .abs()
                             }
                         })
                         .unwrap()
