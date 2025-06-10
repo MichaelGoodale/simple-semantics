@@ -247,7 +247,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
 impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (string, _) = self.string(self.root(), VarContext::default());
+        let (string, _) = self.string(self.root(), VarContext::default(), false);
         write!(f, "{string}")
     }
 }
@@ -328,10 +328,12 @@ impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<'a, Expr<'a>> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(super) enum AssociativityData {
-    IsBinom,
-    IsMonop,
+    Lambda,
+    App,
+    Binom(BinOp),
+    Monop,
 }
 
 impl<'a> RootedLambdaPool<'a, Expr<'a>> {
@@ -342,44 +344,51 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
             .to_pool()
     }
 
-    fn string(&self, expr: LambdaExprRef, c: VarContext) -> (String, AssociativityData) {
+    fn string(
+        &self,
+        expr: LambdaExprRef,
+        c: VarContext,
+        parent_is_app: bool,
+    ) -> (String, AssociativityData) {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
                 let (c, var) = c.inc_depth();
-                let (child, child_asso) = self.string(*child, c);
                 (
                     format!(
                         "lambda {} {} {}",
                         lambda_type,
                         var,
-                        match child_asso {
-                            AssociativityData::IsBinom => format!("({child})"),
-                            AssociativityData::IsMonop => child,
-                        }
+                        self.string(*child, c, false).0
                     ),
-                    AssociativityData::IsBinom,
+                    AssociativityData::Lambda,
                 )
             }
-            LambdaExpr::BoundVariable(bvar, _) => (c.lambda_var(*bvar), AssociativityData::IsMonop),
-            LambdaExpr::FreeVariable(fvar, t) => {
-                (format!("{fvar}#{t}"), AssociativityData::IsMonop)
-            }
+            LambdaExpr::BoundVariable(bvar, _) => (c.lambda_var(*bvar), AssociativityData::Monop),
+            LambdaExpr::FreeVariable(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Monop),
 
             LambdaExpr::Application {
                 subformula,
                 argument,
             } => {
-                let (sub, associative) = self.string(*subformula, c.clone());
-                let (arg, _) = self.string(*argument, c);
+                let (sub, associative) = self.string(*subformula, c.clone(), true);
+                let (arg, _) = self.string(*argument, c, false); // false
+                // since apps only collapse if they're a left chain
 
-                match associative {
-                    AssociativityData::IsBinom => {
-                        (format!("({sub})({arg})"), AssociativityData::IsBinom)
+                let mut s = match associative {
+                    AssociativityData::Lambda | AssociativityData::Binom(_) => {
+                        format!("({sub})({arg}")
                     }
-                    AssociativityData::IsMonop => {
-                        (format!("{sub}({arg})"), AssociativityData::IsMonop)
-                    }
+                    AssociativityData::Monop => format!("{sub}({arg}"),
+                    AssociativityData::App => format!("{sub}{arg}"),
+                };
+
+                if parent_is_app {
+                    s.push_str(", ");
+                } else {
+                    s.push(')');
                 }
+
+                (s, AssociativityData::App)
             }
 
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
@@ -390,8 +399,9 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     subformula,
                 } => {
                     let (c, var_string) = c.add_qvar(*var);
-                    let (restrictor, _) = self.string(LambdaExprRef(restrictor.0), c.clone());
-                    let (subformula, _) = self.string(LambdaExprRef(subformula.0), c);
+                    let (restrictor, _) =
+                        self.string(LambdaExprRef(restrictor.0), c.clone(), false);
+                    let (subformula, _) = self.string(LambdaExprRef(subformula.0), c, false);
                     (
                         format!(
                             "{}{}({}, {restrictor}, {subformula})",
@@ -402,39 +412,67 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                             },
                             var_string,
                         ),
-                        AssociativityData::IsMonop,
+                        AssociativityData::Monop,
                     )
                 }
-                Expr::Variable(variable) => (c.q_var(*variable), AssociativityData::IsMonop),
-                Expr::Actor(a) => (format!("a_{a}"), AssociativityData::IsMonop),
-                Expr::Event(e) => (format!("e_{e}"), AssociativityData::IsMonop),
+                Expr::Variable(variable) => (c.q_var(*variable), AssociativityData::Monop),
+                Expr::Actor(a) => (format!("a_{a}"), AssociativityData::Monop),
+                Expr::Event(e) => (format!("e_{e}"), AssociativityData::Monop),
                 Expr::Binary(bin_op, x, y) => {
-                    let (x, _) = self.string(LambdaExprRef(x.0), c.clone());
-                    let (y, _) = self.string(LambdaExprRef(y.0), c);
+                    let (x, x_a) = self.string(LambdaExprRef(x.0), c.clone(), false);
+                    let (y, y_a) = self.string(LambdaExprRef(y.0), c, false);
                     match bin_op {
                         BinOp::AgentOf | BinOp::PatientOf => {
-                            (format!("{bin_op}({x}, {y})",), AssociativityData::IsMonop)
+                            (format!("{bin_op}({x}, {y})",), AssociativityData::Monop)
                         }
 
-                        BinOp::And | BinOp::Or => {
-                            (format!("{x} {bin_op} {y}"), AssociativityData::IsBinom)
-                        }
+                        BinOp::And | BinOp::Or => (
+                            {
+                                let mut s = String::default();
+                                if add_parenthesis_for_bin_op(*bin_op, x_a) {
+                                    s.push_str(&format!("({x})"))
+                                } else {
+                                    s.push_str(&x)
+                                };
+                                s.push_str(&format!(" {bin_op} "));
+                                if add_parenthesis_for_bin_op(*bin_op, y_a) {
+                                    s.push_str(&format!("({y})"))
+                                } else {
+                                    s.push_str(&y)
+                                };
+                                s
+                            },
+                            AssociativityData::Binom(*bin_op),
+                        ),
                     }
                 }
                 Expr::Unary(mon_op, arg) => {
-                    let (arg, arg_binom) = self.string(LambdaExprRef(arg.0), c);
+                    let (arg, arg_binom) = self.string(LambdaExprRef(arg.0), c, false);
                     match (mon_op, arg_binom) {
-                        (MonOp::Not, AssociativityData::IsMonop) => {
-                            (format!("{mon_op}{arg}"), AssociativityData::IsMonop)
+                        (MonOp::Not, AssociativityData::Monop) => {
+                            (format!("{mon_op}{arg}"), AssociativityData::Monop)
                         }
-                        _ => (format!("{mon_op}({arg})"), AssociativityData::IsMonop),
+                        _ => (format!("{mon_op}({arg})"), AssociativityData::Monop),
                     }
                 }
-                Expr::Constant(constant) => (format!("{constant}"), AssociativityData::IsMonop),
+                Expr::Constant(constant) => (format!("{constant}"), AssociativityData::Monop),
             },
         }
     }
 }
+
+pub(super) fn add_parenthesis_for_bin_op(x: BinOp, data: AssociativityData) -> bool {
+    match data {
+        AssociativityData::Binom(b) => match b {
+            BinOp::AgentOf | BinOp::PatientOf => false,
+            BinOp::And | BinOp::Or if b == x => false,
+            BinOp::And | BinOp::Or => true,
+        },
+        AssociativityData::Lambda => true,
+        AssociativityData::App | AssociativityData::Monop => false,
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::to_var;
@@ -468,6 +506,22 @@ mod test {
             println!("{s}");
             let p = RootedLambdaPool::parse(s)?;
             assert_eq!(p.to_string(), s);
+        }
+
+        //TODO: Update parser to handle these fancy things!
+        for (s, goal_s) in [
+            (
+                "(loves#<a,<a,t>>(a_john))(a_mary)",
+                "loves#<a,<a,t>>(a_john, a_mary)",
+            ),
+            (
+                "((gives#<a,<a,<a,t>>>(a_john))(a_mary))(a_present)",
+                "gives#<a,<a,<a,t>>>(a_john, a_mary, a_present)",
+            ),
+        ] {
+            println!("{s} {goal_s}");
+            let p = RootedLambdaPool::parse(s)?;
+            assert_eq!(p.to_string(), goal_s);
         }
 
         Ok(())
@@ -527,12 +581,12 @@ mod test {
         );
         let likes = parser
             .parse(
-                "lambda e x ((lambda e y (some(e, all_a, AgentOf(e, x) & PatientOf(e, y) & pe_likes(y)))))",
+                "lambda e x lambda e y (some(e, all_a, AgentOf(e, x) & PatientOf(e, y) & pe_likes(y)))",
             )
             .unwrap().to_pool()?;
 
         let s =
-            "lambda e x (lambda e y some(z, all_a, AgentOf(z, x) & PatientOf(z, y) & pe_likes(y)))";
+            "lambda e x lambda e y some(z, all_a, AgentOf(z, x) & PatientOf(z, y) & pe_likes(y))";
         assert_eq!(likes.to_string(), s,);
         let likes2 = parser.parse(s).unwrap().to_pool()?;
         assert_eq!(likes, likes2);
