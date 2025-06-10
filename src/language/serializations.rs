@@ -290,6 +290,10 @@ mod test {
                 "(True | True) & False",
                 "[\"OpenDelim\",{\"Const\":\"True\"},{\"Func\":\"|\"},{\"Const\":\"True\"},\"CloseDelim\",{\"Func\":\"&\"},{\"Const\":\"False\"}]",
             ),
+            (
+                "lambda a x (lambda a y (likes#<a,<a,t>>(x))(y))",
+                "[{\"Lambda\":{\"t\":\"a\",\"var\":{\"Lambda\":\"x\"}}},{\"Lambda\":{\"t\":\"a\",\"var\":{\"Lambda\":\"y\"}}},{\"Var\":{\"Free\":{\"label\":\"likes\",\"t\":\"<a,<a,t>>\",\"anon\":false}}},\"OpenDelim\",{\"Var\":{\"Lambda\":\"x\"}},\"ArgSep\",{\"Var\":{\"Lambda\":\"y\"}},\"CloseDelim\"]",
+            ),
         ] {
             let expression = RootedLambdaPool::parse(statement)?;
             assert_eq!(json, serde_json::to_string(&expression)?);

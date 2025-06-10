@@ -518,9 +518,14 @@ mod test {
                 "((gives#<a,<a,<a,t>>>(a_john))(a_mary))(a_present)",
                 "gives#<a,<a,<a,t>>>(a_john, a_mary, a_present)",
             ),
+            (
+                "lambda a x lambda a y ((loves#<a,<a,t>>(x))(y))",
+                "lambda a x lambda a y loves#<a,<a,t>>(x, y)",
+            ),
         ] {
             println!("{s} {goal_s}");
             let p = RootedLambdaPool::parse(s)?;
+            dbg!(&p);
             assert_eq!(p.to_string(), goal_s);
         }
 
