@@ -302,8 +302,12 @@ impl Display for LanguageResultType {
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum LanguageTypeError {
-    #[error("The referenced object  does not exist in the current scenario")]
+    #[error("The referenced object does not exist in the current scenario")]
     PresuppositionError,
+
+    #[error("The referenced variable ({0:?}) does not exist in the current scenario")]
+    MissingVariable(Variable),
+
     #[error("Can't convert from {input} to {output}")]
     WrongType {
         input: LanguageResultType,
@@ -535,7 +539,9 @@ impl<'a> ExprPool<'a> {
                 scenario,
                 variables,
             )?,
-            Expr::Variable(i) => variables.get(*i).unwrap(),
+            Expr::Variable(i) => variables
+                .get(*i)
+                .ok_or(LanguageTypeError::MissingVariable(*i))?,
             Expr::Actor(a) => LanguageResult::Actor(a),
             Expr::Event(a) => LanguageResult::Event(*a),
             Expr::Binary(bin_op, lhs, rhs) => {
