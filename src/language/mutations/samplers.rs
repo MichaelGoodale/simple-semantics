@@ -1,6 +1,6 @@
 use super::UnbuiltExpr;
 use ahash::HashMap;
-use rand::seq::IndexedRandom;
+use rand::seq::{IndexedRandom, WeightError};
 use std::{borrow::Cow, collections::hash_map::Entry};
 
 use super::*;
@@ -65,12 +65,25 @@ pub enum ExprDistribution<'a, 'src, 'typ, 'conf> {
     },
 }
 
+#[derive(Debug, Clone, Error)]
+pub enum SamplingError {
+    #[error("Can't find an expr of type {0}!")]
+    CantFindExpr(LambdaType),
+    #[error("Can't find an expr of type {t} with args {}!", args.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "))]
+    CantFindExprWithArgs {
+        t: LambdaType,
+        args: Vec<LambdaType>,
+    },
+    #[error("Issue with sampling: {0}!")]
+    DistributionError(#[from] WeightError),
+}
+
 impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
-    pub fn choose(self, rng: &mut impl Rng) -> UnbuiltExpr<'src, 'typ> {
+    pub fn choose(self, rng: &mut impl Rng) -> Result<UnbuiltExpr<'src, 'typ>, SamplingError> {
         match self {
             ExprDistribution::KnownChildren { exprs } => {
                 let e = exprs.choose(rng).unwrap();
-                e.clone().into_owned()
+                Ok(e.clone().into_owned())
             }
             ExprDistribution::UnknownChildren {
                 exprs,
@@ -79,7 +92,7 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
             } => {
                 if depth == 0 {
                     let e = exprs.choose(rng).unwrap().clone().0;
-                    e.into_owned()
+                    Ok(e.into_owned())
                 } else {
                     let depth = depth as f64;
                     let e = &exprs
@@ -102,10 +115,9 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
                                     / (((depth / config.depth_rapidness) + 1.5).powf(n_args + 2.0)))
                                 .abs()
                             }
-                        })
-                        .unwrap()
+                        })?
                         .0;
-                    e.clone().into_owned()
+                    Ok(e.clone().into_owned())
                 }
             }
         }
@@ -186,7 +198,7 @@ impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
         lambda_type: &'typ LambdaType,
         arguments: &'typ [LambdaType],
         context: &Context<'typ>,
-    ) -> ExprDistribution<'a, 'src, 'typ, 'conf> {
+    ) -> Result<ExprDistribution<'a, 'src, 'typ, 'conf>, SamplingError> {
         let mut possibilities: Vec<Cow<'a, UnbuiltExpr<'src, 'typ>>> = self
             .expressions
             .get(lambda_type)
@@ -212,16 +224,23 @@ impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
             }
         }
 
-        ExprDistribution::KnownChildren {
-            exprs: possibilities,
+        if possibilities.is_empty() {
+            return Err(SamplingError::CantFindExprWithArgs {
+                t: lambda_type.clone(),
+                args: arguments.to_vec(),
+            });
         }
+
+        Ok(ExprDistribution::KnownChildren {
+            exprs: possibilities,
+        })
     }
 
     pub fn possibilities<'a>(
         &'a self,
         lambda_type: &'typ LambdaType,
         context: &Context<'typ>,
-    ) -> ExprDistribution<'a, 'src, 'typ, 'conf> {
+    ) -> Result<ExprDistribution<'a, 'src, 'typ, 'conf>, SamplingError> {
         let mut possibilities: Vec<_> = self
             .expressions
             .get(lambda_type)
@@ -259,11 +278,15 @@ impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
             }));
         }
 
-        ExprDistribution::UnknownChildren {
+        if possibilities.is_empty() {
+            return Err(SamplingError::CantFindExpr(lambda_type.clone()));
+        }
+
+        Ok(ExprDistribution::UnknownChildren {
             exprs: possibilities,
             config: self.config,
             depth: context.depth(),
-        }
+        })
     }
 }
 

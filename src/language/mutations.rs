@@ -10,6 +10,7 @@ use crate::{
         Bvar, ExpressionType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
         types::LambdaType,
     },
+    language::mutations::samplers::SamplingError,
 };
 
 mod context;
@@ -20,10 +21,13 @@ use samplers::PossibleExpressions;
 pub use samplers::RandomExprConfig;
 use unbuilt::{Fresher, UnbuiltExpr, add_expr};
 
-#[derive(Debug, Error, Clone, Copy)]
+#[derive(Debug, Error, Clone)]
 pub enum MutationError {
     #[error("You cannot make an expression that returns 'e'")]
     InvalidType,
+
+    #[error("Sampling Error: {0}")]
+    SamplingError(#[from] SamplingError),
 }
 
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
@@ -46,7 +50,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         available_event_properties: &[PropertyLabel<'src>],
         config: Option<RandomExprConfig>,
         rng: &mut impl Rng,
-    ) -> Self {
+    ) -> Result<Self, MutationError> {
         let config = &config.unwrap_or_default();
         let position = LambdaExprRef(rng.random_range(0..self.len()) as u32);
 
@@ -82,10 +86,10 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             context,
             possible_expressions,
             rng,
-        );
+        )?;
         let root = pool.cleanup(root);
 
-        RootedLambdaPool { pool, root }
+        Ok(RootedLambdaPool { pool, root })
     }
 
     pub fn random_expr(
@@ -109,7 +113,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             config,
         );
         let context = Context::default();
-        let pool = build_out_pool(pool, lambda_type, 0, context, possible_expressions, rng);
+        let pool = build_out_pool(pool, lambda_type, 0, context, possible_expressions, rng)?;
         Ok(RootedLambdaPool::new(pool, LambdaExprRef(0)))
     }
 
@@ -156,7 +160,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         available_actor_properties: &[PropertyLabel<'src>],
         available_event_properties: &[PropertyLabel<'src>],
         rng: &mut impl Rng,
-    ) {
+    ) -> Result<(), SamplingError> {
         let config = RandomExprConfig::default();
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
         let possible_expressions = PossibleExpressions::new(
@@ -171,8 +175,8 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             .unwrap_or_else(|| panic!("Couldn't find {}th expr!", position.0));
         let ExpressionType { output, arguments } = self.get_expression_type(position).unwrap();
         let replacement = possible_expressions
-            .possiblities_fixed_children(&output, &arguments, &context)
-            .choose(rng);
+            .possiblities_fixed_children(&output, &arguments, &context)?
+            .choose(rng)?;
 
         let new_expr = {
             let mut children = self.get(position).get_children();
@@ -213,6 +217,8 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         };
 
         self.pool.0[position.0 as usize] = new_expr;
+
+        Ok(())
     }
 }
 
@@ -223,22 +229,22 @@ fn build_out_pool<'src, 'typ>(
     context: Context<'typ>,
     possible_expressions: PossibleExpressions<'src, 'typ, '_>,
     rng: &mut impl Rng,
-) -> LambdaPool<'src, Expr<'src>> {
+) -> Result<LambdaPool<'src, Expr<'src>>, SamplingError> {
     let mut fresher = Fresher::new(&pool);
     let e = possible_expressions
-        .possibilities(lambda_type, &context)
-        .choose(rng);
+        .possibilities(lambda_type, &context)?
+        .choose(rng)?;
 
     let mut stack = add_expr(e, start_pos, context, &mut fresher, &mut pool);
 
     while let Some((pos, lambda_type, context)) = stack.pop() {
         let e = possible_expressions
-            .possibilities(lambda_type, &context)
-            .choose(rng);
+            .possibilities(lambda_type, &context)?
+            .choose(rng)?;
 
         stack.extend(add_expr(e, pos, context, &mut fresher, &mut pool));
     }
-    pool.try_into().unwrap()
+    Ok(pool.try_into().unwrap())
 }
 
 #[cfg(test)]
@@ -309,7 +315,7 @@ mod test {
                 &available_actor_properties,
                 &available_event_properties,
                 &mut rng,
-            );
+            )?;
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
         }
@@ -343,7 +349,7 @@ mod test {
                 &available_event_properties,
                 None,
                 &mut rng,
-            );
+            )?;
             println!("{}: {}", t, pool);
             assert_eq!(t, pool.get_type()?);
         }
