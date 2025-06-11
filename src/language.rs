@@ -124,7 +124,7 @@ pub enum Variable {
 impl Variable {
     fn to_var_string(self) -> String {
         match self {
-            Variable::Actor(a) | Variable::Event(a) => to_var(a as usize),
+            Variable::Actor(a) | Variable::Event(a) => to_var(a as usize, None),
         }
     }
 

@@ -29,7 +29,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
     ) -> AssociativityData {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
-                let (c, var) = c.inc_depth();
+                let (c, var) = c.inc_depth(lambda_type);
                 v.push(Token::Lambda {
                     t: lambda_type,
                     var: TokenVar::Lambda(var),
@@ -38,8 +38,10 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                 self.tokens(*child, c, v, false);
                 AssociativityData::Lambda
             }
-            LambdaExpr::BoundVariable(bvar, _) => {
-                v.push(Token::Var(TokenVar::Lambda(c.lambda_var(*bvar))));
+            LambdaExpr::BoundVariable(bvar, lambda_type) => {
+                v.push(Token::Var(TokenVar::Lambda(
+                    c.lambda_var(*bvar, lambda_type),
+                )));
                 AssociativityData::Monop
             }
             LambdaExpr::FreeVariable(fvar, t) => {

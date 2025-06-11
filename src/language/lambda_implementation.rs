@@ -252,20 +252,26 @@ impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {
     }
 }
 
-static VARIABLENAMES: [char; 26] = [
-    'x', 'y', 'z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
-    'q', 'r', 's', 't', 'u', 'v', 'w',
+static VARIABLENAMES: [&str; 26] = [
+    "x", "y", "z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
+    "q", "r", "s", "t", "u", "v", "w",
 ];
 
-pub fn to_var(x: usize) -> String {
-    if x < VARIABLENAMES.len() {
-        format!("{}", VARIABLENAMES[x])
+static TRUTHS: [&str; 2] = ["phi", "psi"];
+
+static PREDICATENAMES: [&str; 2] = ["P", "Q"];
+
+pub fn to_var(x: usize, t: Option<&LambdaType>) -> String {
+    let var_names = match t {
+        Some(t) if t == LambdaType::t() => TRUTHS.as_slice(),
+        Some(t) if t.is_function() => PREDICATENAMES.as_slice(),
+        _ => VARIABLENAMES.as_slice(),
+    };
+
+    if x < var_names.len() {
+        var_names[x].to_string()
     } else {
-        format!(
-            "{}{}",
-            VARIABLENAMES[x % VARIABLENAMES.len()],
-            x / VARIABLENAMES.len()
-        )
+        format!("{}{}", var_names[x % var_names.len()], x / var_names.len())
     }
 }
 
@@ -278,37 +284,64 @@ enum Var {
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub(super) struct VarContext {
     vars: HashMap<Var, usize>,
+    predicates: HashMap<Var, usize>,
+    truths: HashMap<Var, usize>,
     depth: usize,
 }
 
 impl VarContext {
-    pub(super) fn inc_depth(mut self) -> (Self, String) {
-        let n_var = self.vars.len();
-        self.vars.insert(Var::Depth(self.depth), n_var);
-        self.depth += 1;
-        (self, to_var(n_var))
+    fn get_map(&self, t: Option<&LambdaType>) -> &HashMap<Var, usize> {
+        match t {
+            Some(t) if t == LambdaType::t() => &self.truths,
+            Some(t) if t.is_function() => &self.predicates,
+            _ => &self.vars,
+        }
+    }
+    fn get_map_mut(&mut self, t: Option<&LambdaType>) -> &mut HashMap<Var, usize> {
+        match t {
+            Some(t) if t == LambdaType::t() => &mut self.truths,
+            Some(t) if t.is_function() => &mut self.predicates,
+            _ => &mut self.vars,
+        }
     }
 
-    pub(super) fn lambda_var(&self, bvar: usize) -> String {
-        to_var(*self.vars.get(&Var::Depth(self.depth - bvar - 1)).unwrap())
+    pub(super) fn inc_depth(mut self, t: &LambdaType) -> (Self, String) {
+        let d = self.depth;
+        let map = self.get_map_mut(Some(t));
+        let n_var = map.len();
+        map.insert(Var::Depth(d), n_var);
+        self.depth += 1;
+        (self, to_var(n_var, Some(t)))
+    }
+
+    pub(super) fn lambda_var(&self, bvar: usize, t: &LambdaType) -> String {
+        to_var(
+            *self
+                .get_map(Some(t))
+                .get(&Var::Depth(self.depth - bvar - 1))
+                .unwrap(),
+            Some(t),
+        )
     }
     pub(super) fn q_var(&self, var: Variable) -> String {
         to_var(
-            self.vars
+            self.get_map(None)
                 .get(&Var::Quantifier(var))
                 .copied()
                 .unwrap_or_else(|| match var {
                     //This is on the off-chance that the string is invalid due to a mutation (e.g.
-                    //swaping a quantifier and making a free var invalid)
+                    //swapping a quantifier and making a free var invalid)
                     Variable::Actor(a) | Variable::Event(a) => a as usize + 1000,
                 }),
+            None,
         )
     }
 
     pub(super) fn add_qvar(mut self, x: Variable) -> (Self, String) {
-        let n_var = self.vars.len();
-        self.vars.insert(Var::Quantifier(x), n_var);
-        (self, to_var(n_var))
+        let map = self.get_map_mut(None);
+        let n_var = map.len();
+        map.insert(Var::Quantifier(x), n_var);
+        (self, to_var(n_var, None))
     }
 }
 
@@ -352,7 +385,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     ) -> (String, AssociativityData) {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
-                let (c, var) = c.inc_depth();
+                let (c, var) = c.inc_depth(lambda_type);
                 (
                     format!(
                         "lambda {} {} {}",
@@ -363,7 +396,9 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     AssociativityData::Lambda,
                 )
             }
-            LambdaExpr::BoundVariable(bvar, _) => (c.lambda_var(*bvar), AssociativityData::Monop),
+            LambdaExpr::BoundVariable(bvar, lambda_type) => {
+                (c.lambda_var(*bvar, lambda_type), AssociativityData::Monop)
+            }
             LambdaExpr::FreeVariable(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Monop),
 
             LambdaExpr::Application {
@@ -502,6 +537,7 @@ mod test {
             "cool#<a,t>(a_John)",
             "bad#<a,t>(man#a)",
             "woah#<<e,t>,t>(lambda e x pe_wow(x))",
+            "lambda <a,t> P lambda a x P(x)",
         ] {
             println!("{s}");
             let p = RootedLambdaPool::parse(s)?;
@@ -564,13 +600,13 @@ mod test {
 
     #[test]
     fn var_name_assigner() {
-        assert_eq!(to_var(0), "x");
-        assert_eq!(to_var(1), "y");
-        assert_eq!(to_var(2), "z");
-        assert_eq!(to_var(26), "x1");
-        assert_eq!(to_var(27), "y1");
-        assert_eq!(to_var(28), "z1");
-        assert_eq!(to_var(26 * 300), "x300");
+        assert_eq!(to_var(0, None), "x");
+        assert_eq!(to_var(1, None), "y");
+        assert_eq!(to_var(2, None), "z");
+        assert_eq!(to_var(26, None), "x1");
+        assert_eq!(to_var(27, None), "y1");
+        assert_eq!(to_var(28, None), "z1");
+        assert_eq!(to_var(26 * 300, None), "x300");
     }
 
     #[test]
