@@ -483,12 +483,22 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                 }
                 Expr::Unary(mon_op, arg) => {
                     let (arg, arg_binom) = self.string(LambdaExprRef(arg.0), c, false);
-                    match (mon_op, arg_binom) {
-                        (MonOp::Not, AssociativityData::Monop) => {
-                            (format!("{mon_op}{arg}"), AssociativityData::Monop)
-                        }
-                        _ => (format!("{mon_op}({arg})"), AssociativityData::Monop),
-                    }
+                    (
+                        match mon_op {
+                            MonOp::Not => match arg_binom {
+                                AssociativityData::Binom(BinOp::And)
+                                | AssociativityData::Binom(BinOp::Or) => format!("{mon_op}({arg})"),
+                                AssociativityData::Binom(_)
+                                | AssociativityData::Lambda
+                                | AssociativityData::App
+                                | AssociativityData::Monop => {
+                                    format!("{mon_op}{arg}")
+                                }
+                            },
+                            _ => format!("{mon_op}({arg})"),
+                        },
+                        AssociativityData::Monop,
+                    )
                 }
                 Expr::Constant(constant) => (format!("{constant}"), AssociativityData::Monop),
             },
@@ -538,6 +548,7 @@ mod test {
             "bad#<a,t>(man#a)",
             "woah#<<e,t>,t>(lambda e x pe_wow(x))",
             "lambda <a,t> P lambda a x P(x)",
+            "lambda <a,t> P P(a_man) & ~P(a_woman)",
         ] {
             println!("{s}");
             let p = RootedLambdaPool::parse(s)?;
