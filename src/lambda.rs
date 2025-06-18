@@ -795,7 +795,6 @@ mod test {
 
     #[test]
     fn stats() -> anyhow::Result<()> {
-        let p = lot_parser::<extra::Err<Rich<_>>>();
         for (expr, constant_lambda) in [
             ("a_0", false),
             ("lambda a x (pa_man(x))", false),
@@ -811,7 +810,7 @@ mod test {
             ("lambda a y (pa_woman(a_m))", true),
             ("lambda a y (lambda a x (y))", true),
         ] {
-            let expr = p.parse(expr).unwrap().to_pool()?;
+            let expr = RootedLambdaPool::parse(expr)?;
             match expr.stats() {
                 LambdaSummaryStats::WellFormed {
                     constant_function, ..
@@ -1110,23 +1109,14 @@ mod test {
         Ok(())
     }
 
-    use crate::language::lot_parser;
-    use chumsky::prelude::*;
-
     #[test]
     fn test_root_and_merger() -> anyhow::Result<()> {
-        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let man = parser.parse("lambda a x (pa_man(x))").unwrap().to_pool()?;
+        let man = RootedLambdaPool::parse("lambda a x (pa_man(x))")?;
 
-        let sleeps = parser
-            .parse("lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))")
-            .unwrap()
-            .to_pool()?;
-        let every = parser
-            .parse("lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))")
-            .unwrap()
-            .to_pool()
-            .unwrap();
+        let sleeps =
+            RootedLambdaPool::parse("lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))")?;
+        let every =
+            RootedLambdaPool::parse("lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))")?;
 
         let phi = every.clone().merge(man.clone()).unwrap();
         let mut phi = phi.merge(sleeps.clone()).unwrap();
@@ -1149,20 +1139,13 @@ mod test {
 
     #[test]
     fn bind_free_variable() -> anyhow::Result<()> {
-        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let mut pool = parser.parse("phi#t & True").unwrap().to_pool()?;
+        let mut pool = RootedLambdaPool::parse("phi#t & True")?;
 
-        pool.bind_free_variable("phi".into(), parser.parse("False").unwrap().to_pool()?)?;
+        pool.bind_free_variable("phi".into(), RootedLambdaPool::parse("False")?)?;
         assert_eq!("False & True", pool.into_pool()?.to_string());
 
-        let input = parser
-            .parse("lambda a x every_e(y,pe_4,AgentOf(x,y))")
-            .unwrap()
-            .to_pool()?;
-        let mut a = parser
-            .parse("(P#<a,t>(a_3) & ~P#<a,t>(a_1))")
-            .unwrap()
-            .to_pool()?;
+        let input = RootedLambdaPool::parse("lambda a x every_e(y,pe_4,AgentOf(x,y))")?;
+        let mut a = RootedLambdaPool::parse("(P#<a,t>(a_3) & ~P#<a,t>(a_1))")?;
 
         a.bind_free_variable("P".into(), input)?;
         a.reduce()?;
@@ -1175,11 +1158,8 @@ mod test {
 
     #[test]
     fn apply_new_free_variable() -> anyhow::Result<()> {
-        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let mut pool = parser
-            .parse("lambda <e,t> P (lambda <e,t> Q (lambda e x (P(x) & Q(x))))")
-            .unwrap()
-            .to_pool()?;
+        let mut pool =
+            RootedLambdaPool::parse("lambda <e,t> P (lambda <e,t> Q (lambda e x (P(x) & Q(x))))")?;
 
         pool.apply_new_free_variable("X".into())?;
 
@@ -1209,11 +1189,9 @@ mod test {
 
     #[test]
     fn lambda_abstraction() -> anyhow::Result<()> {
-        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let mut pool = parser
-            .parse("lambda <e,t> P lambda <e,t> Q lambda e x Z#<e,t>(x) & P(x) & Q(x)")
-            .unwrap()
-            .to_pool()?;
+        let mut pool = RootedLambdaPool::parse(
+            "lambda <e,t> P lambda <e,t> Q lambda e x Z#<e,t>(x) & P(x) & Q(x)",
+        )?;
 
         pool.lambda_abstract_free_variable("Z".into(), LambdaType::et().clone(), false)?;
 
@@ -1253,11 +1231,9 @@ mod test {
 
     #[test]
     fn could_time_out_if_swapping_instead_of_cloning() -> anyhow::Result<()> {
-        let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut x = p
-            .parse("(lambda a x (PatientOf(x,e_0) & AgentOf(x, e_0)))((lambda a x (a_1))(a_0))")
-            .unwrap()
-            .to_pool()?;
+        let mut x = RootedLambdaPool::parse(
+            "(lambda a x (PatientOf(x,e_0) & AgentOf(x, e_0)))((lambda a x (a_1))(a_0))",
+        )?;
 
         println!("{x}");
         x.reduce()?;
@@ -1267,12 +1243,8 @@ mod test {
 
     #[test]
     fn lambda_abstraction_reduction() -> anyhow::Result<()> {
-        let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut a = p.parse("a_1").unwrap().to_pool()?;
-        let mut b = p
-            .parse("(lambda t x (a_1))(pa_0(freeVar#a))")
-            .unwrap()
-            .to_pool()?;
+        let mut a = RootedLambdaPool::parse("a_1")?;
+        let mut b = RootedLambdaPool::parse("(lambda t x (a_1))(pa_0(freeVar#a))")?;
 
         a.lambda_abstract_free_variable("freeVar".into(), LambdaType::a().clone(), false)?;
         b.lambda_abstract_free_variable("freeVar".into(), LambdaType::a().clone(), false)?;
@@ -1285,28 +1257,23 @@ mod test {
 
     #[test]
     fn reduction_test() -> anyhow::Result<()> {
-        let p = lot_parser::<extra::Err<Rich<_>>>();
-        let mut a = p
-            .parse(
-                "lambda a x (every_e(z, all_e, AgentOf(a_0, (lambda e y ((lambda e w (w))(y)))(z))))",
-            )
-            .unwrap().to_pool()?;
+        let mut a = RootedLambdaPool::parse(
+            "lambda a x (every_e(z, all_e, AgentOf(a_0, (lambda e y ((lambda e w (w))(y)))(z))))",
+        )?;
         a.reduce()?;
 
-        let mut a = p
-            .parse("(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))")
-            .unwrap()
-            .to_pool()?;
+        let mut a = RootedLambdaPool::parse(
+            "(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))",
+        )?;
 
         a.pool.beta_reduce(a.root)?;
         a.root = a.pool.cleanup(a.root);
         println!("{a}");
         dbg!(&a);
 
-        let mut a = p
-            .parse("(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))")
-            .unwrap()
-            .to_pool()?;
+        let mut a = RootedLambdaPool::parse(
+            "(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))",
+        )?;
 
         a.reduce()?;
         assert_eq!(
@@ -1319,12 +1286,9 @@ mod test {
 
     #[test]
     fn expr_type_checks() -> anyhow::Result<()> {
-        let p = lot_parser::<extra::Err<Rich<_>>>();
-        let a = p
-            .parse(
-                "lambda a x (every_e(z, all_e, AgentOf(a_0, (lambda e y ((lambda e w (w))(y)))(z))))",
-            )
-            .unwrap().to_pool()?;
+        let a = RootedLambdaPool::parse(
+            "lambda a x (every_e(z, all_e, AgentOf(a_0, (lambda e y ((lambda e w (w))(y)))(z))))",
+        )?;
         assert_eq!(
             a.get_expression_type(a.root)?,
             ExpressionType {

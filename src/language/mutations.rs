@@ -250,28 +250,20 @@ fn build_out_pool<'src, 'typ>(
 #[cfg(test)]
 mod test {
     use super::*;
-    use chumsky::prelude::*;
-    use chumsky::{error::Rich, extra};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
-    use crate::language::lot_parser;
-
     #[test]
     fn prune_quantifier_test() -> anyhow::Result<()> {
-        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let mut pool = parser
-            .parse("some_e(x,all_e,AgentOf(a_2,e_1) & PatientOf(a_0,e_0))")
-            .unwrap()
-            .to_pool()?;
+        let mut pool =
+            RootedLambdaPool::parse("some_e(x,all_e,AgentOf(a_2,e_1) & PatientOf(a_0,e_0))")?;
 
         pool.prune_quantifiers();
         assert_eq!(pool.to_string(), "AgentOf(a_2, e_1) & PatientOf(a_0, e_0)");
 
-        let mut pool = parser
-            .parse("some_e(x0, all_e, some(z, all_a, AgentOf(z, e_1) & PatientOf(a_0, e_0)))")
-            .unwrap()
-            .to_pool()?;
+        let mut pool = RootedLambdaPool::parse(
+            "some_e(x0, all_e, some(z, all_a, AgentOf(z, e_1) & PatientOf(a_0, e_0)))",
+        )?;
 
         pool.prune_quantifiers();
         assert_eq!(
@@ -279,10 +271,7 @@ mod test {
             "some(x, all_a, AgentOf(x, e_1) & PatientOf(a_0, e_0))"
         );
 
-        let mut pool = parser
-            .parse("~every_e(z, pe_1, pa_2(a_0))")
-            .unwrap()
-            .to_pool()?;
+        let mut pool = RootedLambdaPool::parse("~every_e(z, pe_1, pa_2(a_0))")?;
 
         pool.prune_quantifiers();
 
@@ -375,8 +364,7 @@ mod test {
             )?;
 
             let s = pool.to_string();
-            let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-            let pool2 = parser.parse(s.as_str()).unwrap().to_pool()?;
+            let pool2 = RootedLambdaPool::parse(s.as_str())?;
             assert_eq!(s, pool2.to_string());
         }
         Ok(())

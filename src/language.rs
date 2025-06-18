@@ -642,8 +642,6 @@ impl<'a> ExprPool<'a> {
 
 mod parser;
 pub use parser::LambdaParseError;
-pub use parser::UnprocessedParseTree;
-pub use parser::lot_parser;
 pub use parser::parse_executable;
 use thiserror::Error;
 
@@ -660,7 +658,6 @@ mod tests {
     use std::collections::HashMap;
 
     use ahash::RandomState;
-    use chumsky::{Parser, error::Rich, extra};
 
     use super::*;
     use crate::ThetaRoles;
@@ -1081,13 +1078,7 @@ mod tests {
 
     #[test]
     fn error_handling() -> anyhow::Result<()> {
-        let p = lot_parser::<extra::Err<Rich<_>>>();
-
-        let expr = p
-            .parse("some_e(y,pe_1,PatientOf(a_1,y))")
-            .unwrap()
-            .to_pool()?
-            .into_pool()?;
+        let expr = parse_executable("some_e(y,pe_1,PatientOf(a_1,y))")?;
 
         let a = Scenario {
             question: None,

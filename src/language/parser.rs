@@ -1,23 +1,24 @@
 use std::{
     collections::{HashMap, VecDeque},
-    fmt::Debug,
+    fmt::{Debug, Display},
 };
 
 use crate::{
-    Entity,
+    Actor, Entity, Event,
     lambda::{
         Bvar, LambdaExpr, LambdaExprRef, LambdaPool, ReductionError, RootedLambdaPool,
         types::{LambdaType, TypeError, core_type_parser},
     },
     language::{Constant, Expr, MonOp, lambda_implementation::LambdaConversionError},
 };
-use chumsky::prelude::*;
 use chumsky::{
     extra::ParserExtra,
+    input::ValueInput,
     label::LabelError,
     text::{TextExpected, inline_whitespace},
     util::MaybeRef,
 };
+use chumsky::{pratt::*, prelude::*};
 
 use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier, Variable};
 use thiserror::Error;
@@ -43,8 +44,8 @@ pub enum LambdaParseError {
     ConversionError(#[from] LambdaConversionError),
 }
 
-impl<'a> From<Vec<Rich<'a, char>>> for LambdaParseError {
-    fn from(value: Vec<Rich<'a, char>>) -> Self {
+impl<'a, T: Display> From<Vec<Rich<'a, T>>> for LambdaParseError {
+    fn from(value: Vec<Rich<'a, T>>) -> Self {
         LambdaParseError::ParseError(
             value
                 .into_iter()
@@ -189,6 +190,7 @@ impl<'src> ParseTree<'src> {
     }
 
     fn to_pool(&self) -> Result<RootedLambdaPool<'src, Expr<'src>>, LambdaParseError> {
+        dbg!(self);
         let mut pool = LambdaPool::new();
 
         let mut var_labels = VariableContext::default();
@@ -297,136 +299,89 @@ where
         .to_slice()
 }
 
-fn entity<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Copy
+fn unary_op<'tokens, 'src: 'tokens, I>(
+    expr: impl Parser<'tokens, I, ParseTree<'src>, ChumskyErr<'tokens, 'src>> + Clone,
+) -> impl Parser<'tokens, I, ParseTree<'src>, ChumskyErr<'tokens, 'src>> + Clone
 where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>,
+    I: ValueInput<'tokens, Token = Token<'src>, Span = SimpleSpan> + Clone,
 {
-    let event = just("e_")
-        .ignore_then(text::int(10))
-        .map(|num: &str| Entity::Event(num.parse().unwrap()));
-
-    let actor = just("a_").ignore_then(keyword()).map(Entity::Actor);
-
-    choice((actor, event))
-        .map(ParseTree::Entity)
-        .labelled("entity")
+    select! {Token::Property(s, a) => MonOp::Property(s, a)}
+        .then(expr.delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)))
+        .map(|(op, arg)| ParseTree::Unary(op, Box::new(arg)))
 }
 
-fn bool_literal<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Copy
+type ChumskyErr<'tokens, 'src> = extra::Err<Rich<'tokens, Token<'src>, Span>>;
+
+fn binary_operation<'tokens, 'src: 'tokens, I>(
+    a: impl Parser<'tokens, I, ParseTree<'src>, ChumskyErr<'tokens, 'src>> + Clone,
+    b: impl Parser<'tokens, I, ParseTree<'src>, ChumskyErr<'tokens, 'src>> + Clone,
+) -> impl Parser<'tokens, I, ParseTree<'src>, ChumskyErr<'tokens, 'src>> + Clone
 where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
+    I: ValueInput<'tokens, Token = Token<'src>, Span = SimpleSpan> + Clone,
 {
-    choice((
-        just("True").to(Constant::Tautology),
-        just("False").to(Constant::Contradiction),
-    ))
-    .map(ParseTree::Constant)
+    select! { Token::BinOp(b) => b}
+        .labelled("binary operation")
+        .then_ignore(just(Token::OpenDelim))
+        .then(a)
+        .then_ignore(just(Token::ArgSep))
+        .then(b)
+        .then_ignore(just(Token::CloseDelim))
+        .map(|((binop, actor), event)| ParseTree::Binary(binop, Box::new(actor), Box::new(event)))
 }
 
-fn properties<'src, E>(
-    expr: impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone,
-) -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
-where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>,
-{
-    let entity_or_var = choice((entity(), variable(), expr))
-        .padded()
-        .delimited_by(just('('), just(')'));
-
-    choice((
-        just("p")
-            .ignore_then(
-                just("a")
-                    .to(ActorOrEvent::Actor)
-                    .or(just("e").to(ActorOrEvent::Event)),
-            )
-            .then_ignore(just("_"))
-            .then(keyword())
-            .map(|(a, s)| MonOp::Property(s, a))
-            .then(entity_or_var.clone())
-            .map(|(x, arg)| ParseTree::Unary(x, Box::new(arg))),
-        variable()
-            .then(entity_or_var)
-            .map(|(x, arg)| ParseTree::Application {
-                subformula: Box::new(x),
-                argument: Box::new(arg),
-            }),
-    ))
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum Token<'src> {
+    Bool(Constant<'src>),
+    And,
+    Or,
+    Not,
+    Actor(Actor<'src>),
+    Event(Event),
+    BinOp(BinOp),
+    OpenDelim,
+    ArgSep,
+    CloseDelim,
+    Constant(Constant<'src>),
+    Property(&'src str, ActorOrEvent),
+    Quantifier(Quantifier, ActorOrEvent),
+    Lambda(LambdaType, &'src str),
+    Variable(&'src str),
+    FreeVariable(&'src str, LambdaType),
+}
+impl Display for Token<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Actor(a) => write!(f, "a_{a}"),
+            Token::Event(n) => write!(f, "e_{n}"),
+            Token::OpenDelim => write!(f, "("),
+            Token::ArgSep => write!(f, ","),
+            Token::CloseDelim => write!(f, ")"),
+            Token::Bool(constant) => write!(f, "{constant}"),
+            Token::And => write!(f, "&"),
+            Token::Or => write!(f, "|"),
+            Token::Not => write!(f, "~"),
+            Token::BinOp(bin_op) => write!(f, "{bin_op}"),
+            Token::Constant(constant) => write!(f, "{constant}"),
+            Token::Property(k, actor_or_event) => write!(f, "p{actor_or_event}_{k}"),
+            Token::Quantifier(quantifier, actor_or_event) => write!(
+                f,
+                "{quantifier}{}",
+                match actor_or_event {
+                    ActorOrEvent::Actor => "",
+                    ActorOrEvent::Event => "_e",
+                }
+            ),
+            Token::Lambda(lambda_type, t) => write!(f, "lambda {lambda_type} {t}"),
+            Token::Variable(v) => write!(f, "{v}"),
+            Token::FreeVariable(v, lambda_type) => write!(f, "{v}#{lambda_type}"),
+        }
+    }
 }
 
-fn sets<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Copy
-where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>,
-{
-    choice((
-        just("all_a").to(Constant::Everyone),
-        just("all_e").to(Constant::EveryEvent),
-        just("p")
-            .ignore_then(
-                just("a")
-                    .to(ActorOrEvent::Actor)
-                    .or(just("e").to(ActorOrEvent::Event)),
-            )
-            .then_ignore(just("_"))
-            .then(keyword())
-            .map(|(a, p): (_, &str)| Constant::Property(p, a)),
-    ))
-    .map(ParseTree::Constant)
-}
+pub type Span = SimpleSpan;
+pub type Spanned<T> = (T, Span);
 
-fn just_variable<'src, E>() -> impl Parser<'src, &'src str, &'src str, E> + Copy
-where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>,
-{
-    keyword()
-        .and_is(choice(RESERVED_KEYWORDS.map(|x| just(x))).not())
-        .and_is(just("e_").ignore_then(text::int(10)).not())
-        .and_is(just("a_").ignore_then(keyword()).not())
-        .and_is(just("pa_").ignore_then(keyword()).not())
-        .and_is(just("pe_").ignore_then(keyword()).not())
-        .labelled("variable")
-    //This is a stupid way to do it, but I can't get one_of to work for the life of me.
-}
-
-fn free_variable<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
-where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>,
-{
-    just_variable()
-        .then_ignore(just("#"))
-        .then(core_type_parser())
-        .map(|(s, lambda_type)| ParseTree::FreeVariable(s, lambda_type))
-}
-
-fn variable<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
-where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>,
-{
-    choice((free_variable(), just_variable().map(ParseTree::Variable)))
-}
-
-fn binary_operation<'src, E>(
-    a: impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone,
-    b: impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone,
-) -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
+fn lexer<'src, E>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, E>
 where
     E: ParserExtra<'src, &'src str>,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
@@ -434,106 +389,113 @@ where
         + LabelError<'src, &'src str, &'static str>,
 {
     choice((
-        just("AgentOf").to(BinOp::AgentOf),
-        just("PatientOf").to(BinOp::PatientOf),
-    ))
-    .then_ignore(just('('))
-    .then(a.padded())
-    .then_ignore(just(','))
-    .then(b.padded())
-    .then_ignore(just(')'))
-    .map(|((binop, actor), event)| ParseTree::Binary(binop, Box::new(actor), Box::new(event)))
-}
-
-fn language_parser<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
-where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>,
-{
-    let ent = entity();
-    let var = variable();
-    let entity_or_variable = choice((ent, var));
-
-    let true_or_false = bool_literal();
-    let possible_sets = sets();
-    recursive(|expr| {
-        let quantified = choice((
+        just(',').to(Token::ArgSep),
+        just('(').to(Token::OpenDelim),
+        just(')').to(Token::CloseDelim),
+        just("True").to(Token::Bool(Constant::Tautology)),
+        just("False").to(Token::Bool(Constant::Contradiction)),
+        just('&').to(Token::And),
+        just('|').to(Token::Or),
+        just('~').to(Token::Not),
+        just("AgentOf").to(Token::BinOp(BinOp::AgentOf)),
+        just("PatientOf").to(Token::BinOp(BinOp::PatientOf)),
+        just("all_a").to(Token::Constant(Constant::Everyone)),
+        just("all_e").to(Token::Constant(Constant::EveryEvent)),
+        choice((
             just("every").to(Quantifier::Universal),
             just("some").to(Quantifier::Existential),
         ))
-        .labelled("quantifier")
-        .then(just("_e").or_not().map(|s| match s {
-            Some(_) => ActorOrEvent::Event,
-            None => ActorOrEvent::Actor,
-        }))
-        .then_ignore(just('('))
-        .then(just_variable())
-        .then_ignore(just(','))
-        .then(expr.clone().padded())
-        .then_ignore(just(','))
-        .then(expr.clone().padded())
-        .then_ignore(just(')'))
-        .map(
-            |((((quantifier, lambda_type), variable), restrictor), subformula)| {
-                ParseTree::Quantifier {
-                    quantifier,
-                    variable,
-                    lambda_type,
-                    restrictor: Box::new(restrictor),
-                    subformula: Box::new(subformula),
-                }
-            },
-        );
-
-        let lambda = just("lambda")
+        .then(just("_e").or_not())
+        .map(|(q, t)| {
+            Token::Quantifier(
+                q,
+                if t.is_some() {
+                    ActorOrEvent::Event
+                } else {
+                    ActorOrEvent::Actor
+                },
+            )
+        }),
+        just("a_").ignore_then(keyword()).map(Token::Actor),
+        just("e_")
+            .ignore_then(text::int(10))
+            .map(|s: &str| Token::Event(s.parse().unwrap())),
+        just("p")
+            .ignore_then(
+                just("a")
+                    .to(ActorOrEvent::Actor)
+                    .or(just("e").to(ActorOrEvent::Event)),
+            )
+            .then_ignore(just("_"))
+            .then(keyword())
+            .map(|(t, s)| Token::Property(s, t)),
+        just("lambda")
             .then(inline_whitespace().at_least(1))
-            .ignore_then(core_type_parser().labelled("type label"))
+            .ignore_then(core_type_parser())
             .then_ignore(inline_whitespace().at_least(1))
-            .then(keyword().labelled("lambda variable"))
+            .then(keyword())
             .then_ignore(inline_whitespace().at_least(1))
-            .then(expr.clone())
-            .map(|((lambda_type, var), body)| ParseTree::Lambda {
-                body: Box::new(body),
-                var,
-                lambda_type,
-            })
-            .labelled("lambda expression");
+            .map(|(t, x)| Token::Lambda(t, x)),
+        keyword()
+            .then(just("#").ignore_then(core_type_parser()).or_not())
+            .map(|(var, lambda_type)| {
+                if let Some(t) = lambda_type {
+                    Token::FreeVariable(var, t)
+                } else {
+                    Token::Variable(var)
+                }
+            }),
+    ))
+    .map_with(|t, e| (t, e.span()))
+    .padded()
+    .repeated()
+    .collect()
+}
 
-        let atom = true_or_false
-            .or(binary_operation(expr.clone(), expr.clone()))
-            .or(properties(lambda.clone()))
-            .or(variable())
-            .or(lambda)
-            .or(quantified)
-            .or(expr.clone().delimited_by(just('('), just(')')));
+fn language_parser<'tokens, 'src: 'tokens, I>()
+-> impl Parser<'tokens, I, ParseTree<'src>, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token<'src>, Span = SimpleSpan> + Clone,
+{
+    let var = select! {
+        Token::Variable(a) => ParseTree::Variable(a),
+        Token::FreeVariable(a, t) => ParseTree::FreeVariable(a, t)
+    }
+    .labelled("variable");
 
-        let neg = just("~")
-            .repeated()
-            .foldr(atom, |_, b| ParseTree::Unary(MonOp::Not, Box::new(b)));
+    let ent = select! {
+        Token::Actor(a) => ParseTree::Entity(Entity::Actor(a)),
+        Token::Event(a) => ParseTree::Entity(Entity::Event(a)),
+    }
+    .labelled("entity");
 
-        let non_quantified = neg.clone().foldl(
-            choice((just('&').to(BinOp::And), just('|').to(BinOp::Or)))
-                .padded()
-                .then(neg.clone())
-                .repeated(),
-            |lhs, (op, rhs)| ParseTree::Binary(op, Box::new(lhs), Box::new(rhs)),
-        );
+    let bool = select! {
+        Token::Bool(b) => ParseTree::Constant(b)
+    }
+    .labelled("boolean");
+
+    let sets = select! {
+        Token::Constant(c) => ParseTree::Constant(c),
+        Token::Property(s, a) => ParseTree::Constant(Constant::Property(s,a))
+    }
+    .labelled("constant set");
+    recursive(|expr| {
+        let bin_op = binary_operation(expr.clone(), expr.clone());
+        let mon_op = unary_op(expr.clone());
 
         let application = choice((
-            free_variable(),
-            expr.clone().delimited_by(just('('), just(')')),
+            var,
+            expr.clone()
+                .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
         ))
-        .then_ignore(just('('))
+        .then_ignore(just(Token::OpenDelim))
         .then(
             expr.clone()
-                .padded()
-                .separated_by(just(','))
+                .separated_by(just(Token::ArgSep))
                 .at_least(1)
                 .collect::<VecDeque<_>>(),
         )
-        .then_ignore(just(')'))
+        .then_ignore(just(Token::CloseDelim))
         .map(|(t, mut args)| {
             let mut tree = ParseTree::Application {
                 subformula: Box::new(t),
@@ -549,42 +511,80 @@ where
             tree
         });
 
-        choice((
+        let quantified = select!(Token::Quantifier(q, a) => (q,a))
+            .then_ignore(just(Token::OpenDelim))
+            .then(select! {Token::Variable(v) => v})
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone())
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone())
+            .then_ignore(just(Token::CloseDelim))
+            .map(
+                |((((quantifier, lambda_type), variable), restrictor), subformula)| {
+                    ParseTree::Quantifier {
+                        quantifier,
+                        variable,
+                        lambda_type,
+                        restrictor: Box::new(restrictor),
+                        subformula: Box::new(subformula),
+                    }
+                },
+            );
+
+        let atom = choice((
             application,
-            non_quantified,
-            possible_sets,
-            entity_or_variable,
+            ent,
+            var,
+            bin_op,
+            mon_op,
+            quantified,
+            bool,
+            sets,
+            expr.delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
+        ));
+        atom.pratt((
+            prefix(2, just(Token::Not), |_, r, _| {
+                ParseTree::Unary(MonOp::Not, Box::new(r))
+            }),
+            prefix(
+                0,
+                select! {Token::Lambda(t, var) => (t, var)},
+                |(lambda_type, var), r, _| ParseTree::Lambda {
+                    body: Box::new(r),
+                    var,
+                    lambda_type,
+                },
+            ),
+            infix(left(1), just(Token::And), |l, _, r, _| {
+                ParseTree::Binary(BinOp::And, Box::new(l), Box::new(r))
+            }),
+            infix(left(1), just(Token::Or), |l, _, r, _| {
+                ParseTree::Binary(BinOp::Or, Box::new(l), Box::new(r))
+            }),
         ))
     })
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct UnprocessedParseTree<'a>(ParseTree<'a>);
+///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
+pub fn parse_lot<'a>(s: &'a str) -> Result<RootedLambdaPool<'a, Expr<'a>>, LambdaParseError> {
+    let tokens = lexer::<extra::Err<Rich<char>>>()
+        .then_ignore(end())
+        .parse(s)
+        .into_result()?;
 
-impl<'a> UnprocessedParseTree<'a> {
-    pub fn to_pool(&self) -> Result<RootedLambdaPool<'a, Expr<'a>>, LambdaParseError> {
-        self.0.to_pool()
-    }
-}
-
-///A parsing function that can be used to incorpate LOT parsers into other parsers.
-pub fn lot_parser<'src, E>() -> impl Parser<'src, &'src str, UnprocessedParseTree<'src>, E> + Clone
-where
-    E: ParserExtra<'src, &'src str>,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>,
-{
-    language_parser().map(UnprocessedParseTree)
+    language_parser()
+        .parse(
+            tokens
+                .as_slice()
+                .map((s.len()..s.len()).into(), |(t, s)| (t, s)),
+        )
+        .into_result()?
+        .to_pool()
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
 pub fn parse_executable<'a>(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
-    let mut pool = language_parser::<extra::Err<Rich<char>>>()
-        .then_ignore(end())
-        .parse(s)
-        .into_result()?
-        .to_pool()?;
+    let mut pool = parse_lot(s)?;
     pool.reduce()?;
     Ok(pool.into_pool()?)
 }
@@ -592,7 +592,7 @@ pub fn parse_executable<'a>(s: &'a str) -> Result<LanguageExpression<'a>, Lambda
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::language::{ExprPool, ExprRef, LanguageResult, VariableBuffer};
+    use crate::language::{ExprRef, LanguageResult};
     use crate::{Scenario, ThetaRoles};
     use std::collections::HashMap;
 
@@ -601,143 +601,92 @@ mod tests {
         for n in [1, 6, 3, 4, 5, 100, 40] {
             let str = format!("e_{n}");
             assert_eq!(
-                entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Entity(Entity::Event(n))
-            );
-            assert_eq!(
-                lot_parser::<extra::Err<Simple<_>>>().parse(&str).unwrap().0,
-                ParseTree::Entity(Entity::Event(n))
+                parse_lot(&str).unwrap(),
+                RootedLambdaPool::new(
+                    LambdaPool(vec![LambdaExpr::LanguageOfThoughtExpr(Expr::Event(n))]),
+                    LambdaExprRef(0)
+                )
             );
         }
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("a_{keyword}");
             assert_eq!(
-                entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Entity(Entity::Actor(keyword))
-            );
-            assert_eq!(
-                lot_parser::<extra::Err<Simple<_>>>().parse(&str).unwrap().0,
-                ParseTree::Entity(Entity::Actor(keyword))
+                parse_lot(&str).unwrap(),
+                RootedLambdaPool::new(
+                    LambdaPool(vec![LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(
+                        keyword
+                    ))]),
+                    LambdaExprRef(0)
+                )
             );
         }
-    }
-
-    #[test]
-    fn parse_bin_op() -> anyhow::Result<()> {
-        for (s, result) in [
-            (
-                "AgentOf(a_32, e_2)",
-                vec![
-                    Expr::Actor("32"),
-                    Expr::Event(2),
-                    Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
-                ],
-            ),
-            (
-                "PatientOf(a_0, e_1)",
-                vec![
-                    Expr::Actor("0"),
-                    Expr::Event(1),
-                    Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
-                ],
-            ),
-        ] {
-            let (pool, root) = binary_operation::<extra::Err<Simple<_>>>(entity(), entity())
-                .parse(s)
-                .unwrap()
-                .to_pool()?
-                .into();
-            let pool = pool.into_pool(root)?;
-            assert_eq!(pool.pool.0, result);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn parse_bool() {
-        assert_eq!(
-            bool_literal::<extra::Err<Simple<_>>>()
-                .parse("True")
-                .unwrap(),
-            ParseTree::Constant(Constant::Tautology)
-        );
-        assert_eq!(
-            bool_literal::<extra::Err<Simple<_>>>()
-                .parse("False")
-                .unwrap(),
-            ParseTree::Constant(Constant::Contradiction)
-        );
     }
 
     #[test]
     fn parse_sets() {
         assert_eq!(
-            sets::<extra::Err<Simple<_>>>().parse("all_e").unwrap(),
-            ParseTree::Constant(Constant::EveryEvent),
+            parse_lot("all_e").unwrap(),
+            RootedLambdaPool::new(
+                LambdaPool(vec![LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(
+                    Constant::EveryEvent
+                ))]),
+                LambdaExprRef(0)
+            )
         );
         assert_eq!(
-            sets::<extra::Err<Simple<_>>>().parse("all_a").unwrap(),
-            ParseTree::Constant(Constant::Everyone),
+            parse_lot("all_a").unwrap(),
+            RootedLambdaPool::new(
+                LambdaPool(vec![LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(
+                    Constant::Everyone
+                ))]),
+                LambdaExprRef(0)
+            )
         );
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("pa_{keyword}");
             assert_eq!(
-                sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Constant(Constant::Property(keyword, ActorOrEvent::Actor)),
+                parse_lot(&str).unwrap(),
+                RootedLambdaPool::new(
+                    LambdaPool(vec![LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(
+                        Constant::Property(keyword, ActorOrEvent::Actor)
+                    ))]),
+                    LambdaExprRef(0)
+                )
             );
             let str = format!("pe_{keyword}");
             assert_eq!(
-                sets::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
-                ParseTree::Constant(Constant::Property(keyword, ActorOrEvent::Event)),
+                parse_lot(&str).unwrap(),
+                RootedLambdaPool::new(
+                    LambdaPool(vec![LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(
+                        Constant::Property(keyword, ActorOrEvent::Event)
+                    ))]),
+                    LambdaExprRef(0)
+                )
             );
         }
     }
 
-    fn get_pool(s: &str) -> (ExprPool, ExprRef) {
-        let (parse, root) = language_parser::<extra::Err<Rich<char>>>()
-            .parse(s)
-            .unwrap()
-            .to_pool()
-            .unwrap()
-            .into();
-        let LanguageExpression { pool, start } = parse.into_pool(root).unwrap();
-        (pool, start)
-    }
-
-    fn get_parse<'a>(s: &'a str, simple_scenario: &'a Scenario) -> LanguageResult<'a> {
-        let mut variables = VariableBuffer(vec![]);
-        let (pool, root) = get_pool(s);
-        pool.interp(root, simple_scenario, &mut variables).unwrap()
+    fn get_parse<'a>(
+        s: &'a str,
+        simple_scenario: &'a Scenario,
+    ) -> anyhow::Result<LanguageResult<'a>> {
+        let pool = LanguageExpression::parse(s)?;
+        Ok(pool.run(simple_scenario)?)
     }
 
     fn check_lambdas(
         statement: &str,
         lambda_type: &str,
-        gold_pool: LambdaPool<Expr>,
-        gold_root: u32,
+        gold_pool: RootedLambdaPool<Expr>,
     ) -> anyhow::Result<()> {
-        let pool = language_parser::<extra::Err<Rich<char>>>()
-            .parse(statement)
-            .into_result()
-            .map_err(|x| {
-                anyhow::Error::msg(
-                    x.into_iter()
-                        .map(|x| x.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            })?;
-
-        dbg!(&pool);
-
-        let (pool, root) = pool.to_pool()?.into();
+        println!("{statement}");
+        let pool = parse_lot(statement)?;
 
         assert_eq!(
-            pool.get_type(root)?,
+            pool.get_type()?,
             LambdaType::from_string(lambda_type).map_err(|e| anyhow::anyhow!(e.to_string()))?
         );
         assert_eq!(pool, gold_pool);
-        assert_eq!(root, LambdaExprRef(gold_root));
 
         Ok(())
     }
@@ -747,102 +696,111 @@ mod tests {
         check_lambdas(
             "lambda e x (pe_Red(x))",
             "<e,t>",
-            LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property("Red", ActorOrEvent::Event),
-                    ExprRef(0),
-                )),
-                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::e().clone()),
-            ]),
-            2,
+            RootedLambdaPool::new(
+                LambdaPool::from(vec![
+                    LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                        MonOp::Property("Red", ActorOrEvent::Event),
+                        ExprRef(0),
+                    )),
+                    LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::e().clone()),
+                ]),
+                LambdaExprRef(2),
+            ),
         )?;
         check_lambdas(
             "lambda  <e,t> P  (lambda e x (P(x)))",
             "<<e,t>, <e,t>>",
-            LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
-                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(0),
-                    argument: LambdaExprRef(1),
-                },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::e().clone()),
-                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et().clone()),
-            ]),
-            4,
+            RootedLambdaPool::new(
+                LambdaPool::from(vec![
+                    LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
+                    LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
+                    LambdaExpr::Application {
+                        subformula: LambdaExprRef(0),
+                        argument: LambdaExprRef(1),
+                    },
+                    LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::e().clone()),
+                    LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::et().clone()),
+                ]),
+                LambdaExprRef(4),
+            ),
         )?;
         check_lambdas(
             "lambda <a,t> P (P(a_0))",
             "<<a,t>,t>",
-            LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(0, LambdaType::at().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("0")),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(0),
-                    argument: LambdaExprRef(1),
-                },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at().clone()),
-            ]),
-            3,
+            RootedLambdaPool::new(
+                LambdaPool::from(vec![
+                    LambdaExpr::BoundVariable(0, LambdaType::at().clone()),
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("0")),
+                    LambdaExpr::Application {
+                        subformula: LambdaExprRef(0),
+                        argument: LambdaExprRef(1),
+                    },
+                    LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at().clone()),
+                ]),
+                LambdaExprRef(3),
+            ),
         )?;
         check_lambdas(
             "~hey#<e,t>(lol#e)",
             "t",
-            LambdaPool::from(vec![
-                LambdaExpr::FreeVariable("hey".into(), LambdaType::et().clone()),
-                LambdaExpr::FreeVariable("lol".into(), LambdaType::e().clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(0),
-                    argument: LambdaExprRef(1),
-                },
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, ExprRef(2))),
-            ]),
-            3,
+            RootedLambdaPool::new(
+                LambdaPool::from(vec![
+                    LambdaExpr::FreeVariable("hey".into(), LambdaType::et().clone()),
+                    LambdaExpr::FreeVariable("lol".into(), LambdaType::e().clone()),
+                    LambdaExpr::Application {
+                        subformula: LambdaExprRef(0),
+                        argument: LambdaExprRef(1),
+                    },
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, ExprRef(2))),
+                ]),
+                LambdaExprRef(3),
+            ),
         )?;
 
         check_lambdas(
             "(lambda <a,t> P (P(a_0)))(lambda a x (pa_Red(x)))",
             "t",
-            LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(0, LambdaType::at().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("0")),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(0),
-                    argument: LambdaExprRef(1),
-                },
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at().clone()),
-                LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    MonOp::Property("Red", ActorOrEvent::Actor),
-                    ExprRef(4),
-                )),
-                LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::a().clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(3),
-                    argument: LambdaExprRef(6),
-                },
-            ]),
-            7,
+            RootedLambdaPool::new(
+                LambdaPool::from(vec![
+                    LambdaExpr::BoundVariable(0, LambdaType::at().clone()),
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("0")),
+                    LambdaExpr::Application {
+                        subformula: LambdaExprRef(0),
+                        argument: LambdaExprRef(1),
+                    },
+                    LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::at().clone()),
+                    LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                        MonOp::Property("Red", ActorOrEvent::Actor),
+                        ExprRef(4),
+                    )),
+                    LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::a().clone()),
+                    LambdaExpr::Application {
+                        subformula: LambdaExprRef(3),
+                        argument: LambdaExprRef(6),
+                    },
+                ]),
+                LambdaExprRef(7),
+            ),
         )?;
         check_lambdas(
             "lambda t phi (lambda t psi (phi & psi))",
             "<t,<t,t>>",
-            LambdaPool::from(vec![
-                LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
-                LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(0), ExprRef(1))),
-                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::t().clone()),
-                LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::t().clone()),
-            ]),
-            4,
-        )?;
-
-        check_lambdas(
-            "lambda <e,t> P lambda <e,t> Q lambda e x Z#<e,t>(x) & P(x) & Q(x)",
-            "<<e,t>, <<e,t>, <e,t>>>",
-            LambdaPool::from(vec![]),
-            4,
+            RootedLambdaPool::new(
+                LambdaPool::from(vec![
+                    LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
+                    LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                        BinOp::And,
+                        ExprRef(0),
+                        ExprRef(1),
+                    )),
+                    LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::t().clone()),
+                    LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::t().clone()),
+                ]),
+                LambdaExprRef(4),
+            ),
         )?;
 
         Ok(())
@@ -951,7 +909,7 @@ mod tests {
             "some(x0, (PatientOf(x0, e_0) & PatientOf(x0, e_1)), pa_Blue(x0))",
         ] {
             println!("{statement}");
-            assert_eq!(get_parse(statement, &scenario), LanguageResult::Bool(true));
+            assert_eq!(get_parse(statement, &scenario)?, LanguageResult::Bool(true));
         }
         for (statement, result) in [
             ("a_Mary", LanguageResult::Actor("Mary")),
@@ -962,7 +920,7 @@ mod tests {
             ("pa_Blue", LanguageResult::ActorSet(vec!["Mary", "John"])),
         ] {
             println!("{statement}");
-            assert_eq!(get_parse(statement, &scenario), result);
+            assert_eq!(get_parse(statement, &scenario)?, result);
         }
 
         Ok(())

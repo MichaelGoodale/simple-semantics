@@ -1,17 +1,18 @@
 use ahash::HashMap;
-use chumsky::prelude::*;
 use std::iter::empty;
 use thiserror::Error;
 
 use super::{
     ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LambdaParseError, LanguageExpression,
-    MonOp, Variable, lot_parser,
+    MonOp, Variable,
 };
-use crate::lambda::{
-    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
-    RootedLambdaPool, types::LambdaType,
+use crate::{
+    lambda::{
+        LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
+        RootedLambdaPool, types::LambdaType,
+    },
+    language::parser::parse_lot,
 };
-use chumsky::{error::Rich, extra};
 
 impl From<ExprRef> for LambdaExprRef {
     fn from(value: ExprRef) -> Self {
@@ -371,10 +372,7 @@ pub(super) enum AssociativityData {
 
 impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
-        lot_parser::<'a, extra::Err<Rich<_>>>()
-            .parse(s)
-            .into_result()?
-            .to_pool()
+        parse_lot(s)
     }
 
     fn string(
@@ -522,12 +520,7 @@ pub(super) fn add_parenthesis_for_bin_op(x: BinOp, data: AssociativityData) -> b
 mod test {
     use super::to_var;
 
-    use crate::{
-        Entity, Scenario, ThetaRoles, lambda::RootedLambdaPool, language::lot_parser,
-        parse_executable,
-    };
-
-    use chumsky::prelude::*;
+    use crate::{Entity, Scenario, ThetaRoles, lambda::RootedLambdaPool, parse_executable};
 
     #[test]
     fn fancy_printing() -> anyhow::Result<()> {
@@ -563,15 +556,12 @@ mod test {
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {
-        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let john = parser.parse("a_John").unwrap().to_pool()?;
-        let likes = parser
-            .parse(
-                "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(x, e) & PatientOf(y, e) & pe_likes(e)))))",
-            )
-            .unwrap().to_pool()?;
+        let john = RootedLambdaPool::parse("a_John")?;
+        let likes = RootedLambdaPool::parse(
+            "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(x, e) & PatientOf(y, e) & pe_likes(e)))))",
+        )?;
 
-        let mary = parser.parse("a_Mary").unwrap().to_pool()?;
+        let mary = RootedLambdaPool::parse("a_Mary")?;
         let phi = mary.clone().merge(likes.clone()).unwrap();
         let mut phi = phi.merge(john.clone()).unwrap();
         phi.reduce()?;
@@ -604,25 +594,21 @@ mod test {
 
     #[test]
     fn printing() -> anyhow::Result<()> {
-        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let pool = parser
-            .parse("some_e(x0, all_e, AgentOf(a_1, x0) & PatientOf(a_0, x0) & pe_0(x0))")
-            .unwrap()
-            .to_pool()?;
+        let pool = RootedLambdaPool::parse(
+            "some_e(x0, all_e, AgentOf(a_1, x0) & PatientOf(a_0, x0) & pe_0(x0))",
+        )?;
         assert_eq!(
             pool.to_string(),
             "some_e(x, all_e, AgentOf(a_1, x) & PatientOf(a_0, x) & pe_0(x))"
         );
-        let likes = parser
-            .parse(
-                "lambda e x lambda e y (some(e, all_a, AgentOf(e, x) & PatientOf(e, y) & pe_likes(y)))",
-            )
-            .unwrap().to_pool()?;
+        let likes = RootedLambdaPool::parse(
+            "lambda e x lambda e y (some(e, all_a, AgentOf(e, x) & PatientOf(e, y) & pe_likes(y)))",
+        )?;
 
         let s =
             "lambda e x lambda e y some(z, all_a, AgentOf(z, x) & PatientOf(z, y) & pe_likes(y))";
         assert_eq!(likes.to_string(), s,);
-        let likes2 = parser.parse(s).unwrap().to_pool()?;
+        let likes2 = RootedLambdaPool::parse(s)?;
         assert_eq!(likes, likes2);
 
         Ok(())
@@ -630,11 +616,7 @@ mod test {
 
     #[test]
     fn fancy_quantification_reduction() -> anyhow::Result<()> {
-        let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
-        let pool = parser
-            .parse("every_e(x0,pe_0(x0) & pe_1(x0), pe_2(x0))")
-            .unwrap()
-            .to_pool()?;
+        let pool = RootedLambdaPool::parse("every_e(x0,pe_0(x0) & pe_1(x0), pe_2(x0))")?;
         let scenario = Scenario::new(
             vec![],
             vec![ThetaRoles::default(); 5],
@@ -649,10 +631,8 @@ mod test {
 
         assert!(pool.into_pool()?.run(&scenario)?.try_into()?);
 
-        let pool = parser
-            .parse("every_e(x0, lambda e x (pe_0(x) & pe_1(x)), pe_2(x0))")
-            .unwrap()
-            .to_pool()?;
+        let pool =
+            RootedLambdaPool::parse("every_e(x0, lambda e x (pe_0(x) & pe_1(x)), pe_2(x0))")?;
 
         let scenario = Scenario::new(
             vec![],

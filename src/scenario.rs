@@ -1,8 +1,10 @@
 use ahash::{HashSet, RandomState};
+use chumsky::text::newline;
 use chumsky::{prelude::*, text::inline_whitespace};
 use std::collections::HashMap;
 
-use crate::language::{LambdaParseError, lot_parser};
+use crate::lambda::RootedLambdaPool;
+use crate::language::LambdaParseError;
 use crate::{Actor, Entity, Event, Scenario, ScenarioDataset, ThetaRoles};
 
 pub fn scenario_parser<'a>()
@@ -136,12 +138,14 @@ pub fn scenario_parser<'a>()
         )
         .map(|(s, ((actors, actor_props), events))| (s, actors, actor_props, events));
 
-    let lot = lot_parser();
-
-    let scenario = scenario.then(inline_whitespace().at_least(1).ignore_then(lot).or_not());
+    let scenario = scenario.then(
+        inline_whitespace()
+            .at_least(1)
+            .ignore_then(any().and_is(newline().not()).repeated().to_slice())
+            .or_not(),
+    );
 
     scenario
-        .clone()
         .map(|((s, actors, actor_props, events), lot)| {
             let mut dataset = (ScenarioDataset::default(), HashSet::default());
             add_scenario(&mut dataset, s, actors, actor_props, events);
@@ -164,7 +168,7 @@ pub fn scenario_parser<'a>()
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, x)| {
-                    x.map(|x| match x.to_pool() {
+                    x.map(|s| match RootedLambdaPool::parse(s) {
                         Ok(x) => Ok((i, x)),
                         Err(e) => Err(e),
                     })
