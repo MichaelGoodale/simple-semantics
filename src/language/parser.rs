@@ -1,4 +1,7 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::Debug,
+};
 
 use crate::{
     Entity,
@@ -397,6 +400,19 @@ where
     //This is a stupid way to do it, but I can't get one_of to work for the life of me.
 }
 
+fn free_variable<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
+where
+    E: ParserExtra<'src, &'src str>,
+    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+        + LabelError<'src, &'src str, MaybeRef<'src, char>>
+        + LabelError<'src, &'src str, &'static str>,
+{
+    just_variable()
+        .then_ignore(just("#"))
+        .then(core_type_parser())
+        .map(|(s, lambda_type)| ParseTree::FreeVariable(s, lambda_type))
+}
+
 fn variable<'src, E>() -> impl Parser<'src, &'src str, ParseTree<'src>, E> + Clone
 where
     E: ParserExtra<'src, &'src str>,
@@ -404,13 +420,7 @@ where
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
 {
-    choice((
-        just_variable()
-            .then_ignore(just("#"))
-            .then(core_type_parser())
-            .map(|(s, lambda_type)| ParseTree::FreeVariable(s, lambda_type)),
-        just_variable().map(ParseTree::Variable),
-    ))
+    choice((free_variable(), just_variable().map(ParseTree::Variable)))
 }
 
 fn binary_operation<'src, E>(
@@ -511,14 +521,36 @@ where
             |lhs, (op, rhs)| ParseTree::Binary(op, Box::new(lhs), Box::new(rhs)),
         );
 
-        choice((
+        let application = choice((
+            free_variable(),
+            expr.clone().delimited_by(just('('), just(')')),
+        ))
+        .then_ignore(just('('))
+        .then(
             expr.clone()
-                .delimited_by(just('('), just(')'))
-                .then(expr.delimited_by(just('('), just(')')))
-                .map(|(a, b)| ParseTree::Application {
-                    subformula: Box::new(a),
-                    argument: Box::new(b),
-                }),
+                .padded()
+                .separated_by(just(','))
+                .at_least(1)
+                .collect::<VecDeque<_>>(),
+        )
+        .then_ignore(just(')'))
+        .map(|(t, mut args)| {
+            let mut tree = ParseTree::Application {
+                subformula: Box::new(t),
+                argument: Box::new(args.pop_front().expect("previous primitive has at least 1")),
+            };
+            while let Some(x) = args.pop_front() {
+                tree = ParseTree::Application {
+                    subformula: Box::new(tree),
+                    argument: Box::new(x),
+                };
+            }
+
+            tree
+        });
+
+        choice((
+            application,
             non_quantified,
             possible_sets,
             entity_or_variable,
@@ -526,6 +558,7 @@ where
     })
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct UnprocessedParseTree<'a>(ParseTree<'a>);
 
 impl<'a> UnprocessedParseTree<'a> {
@@ -571,11 +604,19 @@ mod tests {
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
                 ParseTree::Entity(Entity::Event(n))
             );
+            assert_eq!(
+                lot_parser::<extra::Err<Simple<_>>>().parse(&str).unwrap().0,
+                ParseTree::Entity(Entity::Event(n))
+            );
         }
         for keyword in ["john", "mary", "phil", "Anna"] {
             let str = format!("a_{keyword}");
             assert_eq!(
                 entity::<extra::Err<Simple<_>>>().parse(&str).unwrap(),
+                ParseTree::Entity(Entity::Actor(keyword))
+            );
+            assert_eq!(
+                lot_parser::<extra::Err<Simple<_>>>().parse(&str).unwrap().0,
                 ParseTree::Entity(Entity::Actor(keyword))
             );
         }
@@ -675,7 +716,7 @@ mod tests {
         gold_pool: LambdaPool<Expr>,
         gold_root: u32,
     ) -> anyhow::Result<()> {
-        let (pool, root) = language_parser::<extra::Err<Rich<char>>>()
+        let pool = language_parser::<extra::Err<Rich<char>>>()
             .parse(statement)
             .into_result()
             .map_err(|x| {
@@ -685,9 +726,11 @@ mod tests {
                         .collect::<Vec<_>>()
                         .join("\n"),
                 )
-            })?
-            .to_pool()?
-            .into();
+            })?;
+
+        dbg!(&pool);
+
+        let (pool, root) = pool.to_pool()?.into();
 
         assert_eq!(
             pool.get_type(root)?,
@@ -794,6 +837,14 @@ mod tests {
             ]),
             4,
         )?;
+
+        check_lambdas(
+            "lambda <e,t> P lambda <e,t> Q lambda e x Z#<e,t>(x) & P(x) & Q(x)",
+            "<<e,t>, <<e,t>, <e,t>>>",
+            LambdaPool::from(vec![]),
+            4,
+        )?;
+
         Ok(())
     }
 

@@ -549,31 +549,13 @@ mod test {
             "woah#<<e,t>,t>(lambda e x pe_wow(x))",
             "lambda <a,t> P lambda a x P(x)",
             "lambda <a,t> P P(a_man) & ~P(a_woman)",
+            "loves#<a,<a,t>>(a_john, a_mary)",
+            "gives#<a,<a,<a,t>>>(a_john, a_mary, a_present)",
+            "lambda a x lambda a y loves#<a,<a,t>>(x, y)",
         ] {
             println!("{s}");
             let p = RootedLambdaPool::parse(s)?;
             assert_eq!(p.to_string(), s);
-        }
-
-        //TODO: Update parser to handle these fancy things!
-        for (s, goal_s) in [
-            (
-                "(loves#<a,<a,t>>(a_john))(a_mary)",
-                "loves#<a,<a,t>>(a_john, a_mary)",
-            ),
-            (
-                "((gives#<a,<a,<a,t>>>(a_john))(a_mary))(a_present)",
-                "gives#<a,<a,<a,t>>>(a_john, a_mary, a_present)",
-            ),
-            (
-                "lambda a x lambda a y ((loves#<a,<a,t>>(x))(y))",
-                "lambda a x lambda a y loves#<a,<a,t>>(x, y)",
-            ),
-        ] {
-            println!("{s} {goal_s}");
-            let p = RootedLambdaPool::parse(s)?;
-            dbg!(&p);
-            assert_eq!(p.to_string(), goal_s);
         }
 
         Ok(())

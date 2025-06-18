@@ -356,4 +356,29 @@ mod test {
         println!("{:?}", lengths);
         Ok(())
     }
+
+    #[test]
+    fn reparse_random() -> anyhow::Result<()> {
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let actors = ["0", "1"];
+        let available_actor_properties = ["0", "1", "2"];
+        let available_event_properties = ["2", "3", "4"];
+        for _ in 0..200 {
+            let t = LambdaType::random_no_e(&mut rng);
+            let pool = RootedLambdaPool::random_expr(
+                &t,
+                &actors,
+                &available_actor_properties,
+                &available_event_properties,
+                None,
+                &mut rng,
+            )?;
+
+            let s = pool.to_string();
+            let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
+            let pool2 = parser.parse(s.as_str()).unwrap().to_pool()?;
+            assert_eq!(s, pool2.to_string());
+        }
+        Ok(())
+    }
 }

@@ -1211,7 +1211,7 @@ mod test {
     fn lambda_abstraction() -> anyhow::Result<()> {
         let parser = lot_parser::<extra::Err<Rich<_>>>().then_ignore(end());
         let mut pool = parser
-            .parse("lambda <e,t> P (lambda <e,t> Q (lambda e x (Z#<e,t>(x) & P(x) & Q(x))))")
+            .parse("lambda <e,t> P lambda <e,t> Q lambda e x Z#<e,t>(x) & P(x) & Q(x)")
             .unwrap()
             .to_pool()?;
 
