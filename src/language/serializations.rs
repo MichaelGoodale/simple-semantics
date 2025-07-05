@@ -160,9 +160,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                 Expr::Unary(mon_op, arg) => {
                     let s = match mon_op {
                         super::MonOp::Property(s, _) => s.to_string(),
-                        super::MonOp::Tautology
-                        | super::MonOp::Not
-                        | super::MonOp::Contradiction => mon_op.to_string(),
+                        super::MonOp::Not => mon_op.to_string(),
                     };
                     v.push(Token::Func(s));
 

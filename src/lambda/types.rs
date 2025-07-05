@@ -1,3 +1,4 @@
+//! Defines the basic type system of the lambda calculus
 use std::{fmt::Display, sync::LazyLock};
 
 use chumsky::{

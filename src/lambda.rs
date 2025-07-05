@@ -1,3 +1,6 @@
+//! The module that defines the basic lambda calculus used to compose expressions in the langauge
+//! of thought.
+
 use std::{
     collections::{HashSet, VecDeque},
     fmt::{Debug, Display},
@@ -8,34 +11,52 @@ use thiserror::Error;
 pub mod types;
 use types::{LambdaType, TypeError};
 
-pub type Bvar = usize;
+pub(crate) type Bvar = usize;
 
+///Errors resulting from interacting with a lambda calculus expression.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaError {
+    ///A function application which violates the type system
     #[error("The free variable has type {free_var} while the argument is {arg}")]
     BadFreeVariableApp {
+        ///The type of the free variable involved
         free_var: LambdaType,
+        ///The argument applied to a free variable.
         arg: LambdaType,
     },
+    ///A free variable that violates the type sytem
     #[error("The free variable has type {free_var} while its lambda takes {lambda}")]
     BadFreeVariable {
+        ///The type of the free variable involved
         free_var: LambdaType,
+        ///The argument applied to a free variable.
         lambda: LambdaType,
     },
+
+    ///An internally caused error if DeBruijn indices are invalid.
     #[error(
         "A bound variable {var:?} cannot have a DeBruijn index higher than its lambda depth ({depth})"
     )]
-    BadBoundVariable { var: LambdaExprRef, depth: usize },
+    BadBoundVariable {
+        ///The DeBruijn index
+        var: LambdaExprRef,
+        ///The depth of the expression
+        depth: usize,
+    },
 
+    ///Any internal type error.
     #[error("Expression has type error ({0})")]
     TypeError(#[from] TypeError),
 
+    ///An error caused by a failed reduction
     #[error("Failed reduction: {0}")]
     ReductionError(#[from] ReductionError),
 }
 
+///A conversion error used when converting to a [`LambdaPool`] from a [`Vec<Option<LambdaExpr>>`]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaTryFromError {
+    ///This error happens if the vector is not exclusively [`Some`].
     #[error("The vec contains None")]
     HasNone,
 }
@@ -359,14 +380,17 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
         other_root
     }
 
+    ///Convert a lambda pool to its inner pool.
     pub fn into_pool(self, root: LambdaExprRef) -> Result<T::Pool, T::ConversionError> {
         T::to_pool(self, root)
     }
 
+    ///Convert from [`Vec<LambdaExpr<T>>`] to [`LambdaPool`]
     pub fn from(x: Vec<LambdaExpr<'src, T>>) -> Self {
         LambdaPool(x)
     }
 
+    ///Create a new, empty [`LambdaPool`]
     pub fn new<'c>() -> LambdaPool<'c, T> {
         LambdaPool(vec![])
     }
@@ -375,6 +399,7 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
         self.0.get(expr.0 as usize)
     }
 
+    ///Get the [`LambdaExpr`] at an index.
     pub fn get(&self, expr: LambdaExprRef) -> &LambdaExpr<'src, T> {
         &self.0[expr.0 as usize]
     }

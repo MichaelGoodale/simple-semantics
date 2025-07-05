@@ -23,23 +23,30 @@ use chumsky::{pratt::*, prelude::*};
 use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier, Variable};
 use thiserror::Error;
 
+///Error in parsing a lambda expression
 #[derive(Debug, Error, Clone)]
 pub enum LambdaParseError {
+    ///Core error in parsing
     #[error("ParseError({0})")]
     ParseError(String),
 
+    ///A free variable was left untyped
     #[error("You must provide a type for unbound free variable {0} like so \"{0}#<e,t>\"")]
     UnTypedFreeVariable(String),
 
+    ///When the expression was reduced, it lead to an error.
     #[error("Reduction Error: {0}")]
     ReductionError(#[from] ReductionError),
 
+    ///There is a type error in  apply function types
     #[error("{0}")]
     TypeError(String),
 
+    ///Type error in lower part
     #[error("Type error: {0}")]
     InnerTypeError(#[from] TypeError),
 
+    ///The expression was still a lambda expression and not yet runnable.
     #[error("{0}")]
     ConversionError(#[from] LambdaConversionError),
 }

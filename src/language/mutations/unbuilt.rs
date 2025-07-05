@@ -45,7 +45,7 @@ impl UnbuiltExpr<'_, '_> {
                 },
             },
             UnbuiltExpr::Unary(m) => match m {
-                MonOp::Not | MonOp::Tautology | MonOp::Contradiction => ExpressionType {
+                MonOp::Not => ExpressionType {
                     output: LambdaType::t().clone(),
                     arguments: vec![LambdaType::t().clone()],
                 },
@@ -134,9 +134,7 @@ pub fn add_expr<'src, 'pool>(
             children.push(match mon_op {
                 MonOp::Property(_, ActorOrEvent::Actor) => (cur_size + 1, LambdaType::a()),
                 MonOp::Property(_, ActorOrEvent::Event) => (cur_size + 1, LambdaType::e()),
-                MonOp::Not | MonOp::Tautology | MonOp::Contradiction => {
-                    (cur_size + 1, LambdaType::t())
-                }
+                MonOp::Not => (cur_size + 1, LambdaType::t()),
             });
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(mon_op, ExprRef(cur_size + 1)))
         }

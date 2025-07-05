@@ -106,9 +106,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
                 BinOp::AgentOf | BinOp::PatientOf | BinOp::And | BinOp::Or => LambdaType::t(),
             },
             Expr::Unary(mon_op, _) => match mon_op {
-                MonOp::Property(_, _) | MonOp::Tautology | MonOp::Contradiction | MonOp::Not => {
-                    LambdaType::t()
-                }
+                MonOp::Property(_, _) | MonOp::Not => LambdaType::t(),
             },
             Expr::Constant(constant) => match constant {
                 Constant::Everyone | Constant::Property(_, ActorOrEvent::Actor) => LambdaType::at(),

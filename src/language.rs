@@ -1,3 +1,5 @@
+//! Defines the core language of thought of the model and a simple virtual machine.
+
 use std::fmt::Display;
 
 use crate::lambda::RootedLambdaPool;
@@ -6,11 +8,18 @@ use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 use thiserror;
 
+///All binary operations
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BinOp {
+    ///<a,<e,t>> function that returns whether the first argument is the agent of the second
+    ///argument.
     AgentOf,
+    ///<a,<e,t>> function that returns whether the first argument is the patient of the second
+    ///argument.
     PatientOf,
+    ///Logical AND
     And,
+    ///Logical OR
     Or,
 }
 
@@ -39,11 +48,12 @@ impl BinOp {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+///All unary operations
 pub enum MonOp<'a> {
+    ///Logical not
     Not,
+    ///Returns whether an actor or event is a member of a predicate defined by the label.
     Property(PropertyLabel<'a>, ActorOrEvent),
-    Tautology,
-    Contradiction,
 }
 
 impl MonOp<'_> {
@@ -51,7 +61,7 @@ impl MonOp<'_> {
         match self {
             MonOp::Property(_, ActorOrEvent::Actor) => LambdaType::a(),
             MonOp::Property(_, ActorOrEvent::Event) => LambdaType::e(),
-            MonOp::Tautology | MonOp::Contradiction | MonOp::Not => LambdaType::t(),
+            MonOp::Not => LambdaType::t(),
         }
     }
 }
@@ -62,13 +72,13 @@ impl<'a> Display for MonOp<'a> {
             MonOp::Not => write!(f, "~"),
             MonOp::Property(x, ActorOrEvent::Actor) => write!(f, "pa_{x}"),
             MonOp::Property(x, ActorOrEvent::Event) => write!(f, "pe_{x}"),
-            MonOp::Tautology => write!(f, "True"),
-            MonOp::Contradiction => write!(f, "False"),
         }
     }
 }
 
+///Whether something refers to an actor or event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub enum ActorOrEvent {
     Actor,
     Event,
@@ -92,12 +102,18 @@ impl ActorOrEvent {
     }
 }
 
+///Any valid constant in the language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Constant<'a> {
+    ///The set of all actors in the [`Scenario`].
     Everyone,
+    ///The set of all events in the [`Scenario`].
     EveryEvent,
+    ///Truth
     Tautology,
+    ///Falsity
     Contradiction,
+    ///Any predicate as a set
     Property(PropertyLabel<'a>, ActorOrEvent),
 }
 
@@ -114,9 +130,12 @@ impl Display for Constant<'_> {
     }
 }
 
+///The ID of a given variable bound by quantification
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Variable {
+    ///The variable is over actors.
     Actor(u32),
+    ///The variable is over events.
     Event(u32),
 }
 
@@ -128,9 +147,12 @@ impl Variable {
     }
 }
 
+///An enum which represents all possible quantifiers in the language.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Quantifier {
+    ///Universal Quantification
     Universal,
+    ///Existential quantification
     Existential,
 }
 
@@ -143,28 +165,46 @@ impl Display for Quantifier {
     }
 }
 
+///The basic expression type of the language of thought.
+///Note that it *does not* include free variables or any of the machinery of the lambda calculus
+///which is handled elsewhere.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Expr<'a> {
+    //A quantifier
     Quantifier {
+        ///What kind of quantifier
         quantifier: Quantifier,
+        ///The bound variable
         var: Variable,
+        ///An expression defining the restrictor of the quantifier.
         restrictor: ExprRef,
+        ///An expression defining the subformula of the quantifier.
         subformula: ExprRef,
     },
+    ///See [`Variable`]
     Variable(Variable),
+    ///See [`Actor`]. Written `a_NAME`
     Actor(Actor<'a>),
+    ///See [`Event`]. Written `e_N` where `N` is an integer.
     Event(Event),
+    ///Any binary function.
     Binary(BinOp, ExprRef, ExprRef),
+    ///Any unary function.
     Unary(MonOp<'a>, ExprRef),
+    ///All constants.
     Constant(Constant<'a>),
 }
 
+///An index for a specific [`Expr`] in an [`ExprPool`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ExprRef(pub u32);
 
+///An arena allocated tree which represents an expression in the language of thought built out of
+///[`Expr`].
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct ExprPool<'a>(Vec<Expr<'a>>);
+pub(crate) struct ExprPool<'a>(Vec<Expr<'a>>);
 
+///An expression pool with a defined root.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct LanguageExpression<'a> {
     pool: ExprPool<'a>,
@@ -179,22 +219,27 @@ impl Display for LanguageExpression<'_> {
 }
 
 impl<'a> LanguageExpression<'a> {
+    ///Run a [`LanguageExpression`] in the language of thought and return the [`LanguageResult`]
     pub fn run(&self, scenario: &Scenario<'a>) -> Result<LanguageResult<'a>, LanguageTypeError> {
         let mut variables = VariableBuffer::default();
         self.pool.interp(self.start, scenario, &mut variables)
     }
 
+    ///Parse a given language of thought expression and return the [`LanguageExpression`]. This
+    ///does not support tools from the lambda calculus, see [`RootedLambdaPool`].
     pub fn parse(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
         Ok(RootedLambdaPool::parse(s)?.into_pool()?)
     }
 
-    pub fn new(pool: ExprPool<'a>, start: ExprRef) -> Self {
+    #[allow(dead_code)]
+    ///Create a `LanguageExpression` out of a [`ExprRef`] and a [`ExprPool`]
+    pub(crate) fn new(pool: ExprPool<'a>, start: ExprRef) -> Self {
         LanguageExpression { pool, start }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct VariableBuffer<'a>(Vec<Option<Entity<'a>>>);
+struct VariableBuffer<'a>(Vec<Option<Entity<'a>>>);
 
 impl<'a> VariableBuffer<'a> {
     fn set(&mut self, v: Variable, x: Entity<'a>) {
@@ -217,12 +262,16 @@ impl<'a> VariableBuffer<'a> {
     }
 }
 
+///The result of running a [`LanguageExpression`], see [`LanguageExpression::run`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub enum LanguageResult<'a> {
     Bool(bool),
     Actor(Actor<'a>),
     Event(Event),
+    ///A set of actors (represented as a vector).
     ActorSet(Vec<Actor<'a>>),
+    ///A set of events (represented as a vector).
     EventSet(Vec<Event>),
 }
 
@@ -268,7 +317,9 @@ impl Display for LanguageResult<'_> {
     }
 }
 
+///The basic atomic types of the LOT. See [`LanguageResult`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub enum LanguageResultType {
     Bool,
     Actor,
@@ -293,17 +344,23 @@ impl Display for LanguageResultType {
     }
 }
 
+///Possible errors that can be generated when running a [`LanguageExpression`]
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum LanguageTypeError {
+    ///A presupposition error in the semantics; occurs when a non-existent entity is referenced.
     #[error("The referenced object does not exist in the current scenario")]
     PresuppositionError,
 
+    ///A variable that is not bound that was used.
     #[error("The referenced variable ({0:?}) does not exist in the current scenario")]
     MissingVariable(Variable),
 
+    ///A type conversion which is violated.
     #[error("Can't convert from {input} to {output}")]
     WrongType {
+        ///The input type of the conversion
         input: LanguageResultType,
+        ///The output type of the conversion
         output: LanguageResultType,
     },
 }
@@ -378,23 +435,15 @@ impl TryFrom<LanguageResult<'_>> for Vec<Event> {
     }
 }
 
+impl<'a> From<Vec<Expr<'a>>> for ExprPool<'a> {
+    fn from(value: Vec<Expr<'a>>) -> Self {
+        ExprPool(value)
+    }
+}
+
 impl<'a> ExprPool<'a> {
-    pub fn new() -> ExprPool<'a> {
-        ExprPool(vec![])
-    }
-
-    pub fn from(x: Vec<Expr<'a>>) -> ExprPool<'a> {
-        ExprPool(x)
-    }
-
     fn get(&self, expr: ExprRef) -> &Expr<'a> {
         &self.0[expr.0 as usize]
-    }
-
-    pub fn add(&mut self, expr: Expr<'a>) -> ExprRef {
-        let idx = self.0.len();
-        self.0.push(expr);
-        ExprRef(idx.try_into().expect("Too many exprs in the pool"))
     }
 
     fn get_type(&self, expr: ExprRef) -> LanguageResultType {
@@ -504,7 +553,7 @@ impl<'a> ExprPool<'a> {
         Ok(LanguageResult::Bool(result))
     }
 
-    pub fn interp(
+    fn interp(
         &self,
         expr: ExprRef,
         scenario: &Scenario<'a>,
@@ -599,8 +648,6 @@ impl<'a> ExprPool<'a> {
                 let arg = self.interp(*arg, scenario, variables)?;
                 match mon_op {
                     MonOp::Not => LanguageResult::Bool(!TryInto::<bool>::try_into(arg)?),
-                    MonOp::Contradiction => LanguageResult::Bool(false),
-                    MonOp::Tautology => LanguageResult::Bool(true),
                     MonOp::Property(e, ActorOrEvent::Actor) => {
                         let arg: Actor = arg.try_into()?;
                         match scenario.properties.get(e) {
