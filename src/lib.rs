@@ -1,7 +1,7 @@
 //! # Simple semantics
 //! This crate defines a simple language of thought with a lambda calculus and a randomization
 //! procedure to learn simple montagovian grammars.
-//#![warn(missing_docs)]
+#![warn(missing_docs)]
 use ahash::{HashSet, RandomState};
 use chumsky::prelude::*;
 use lambda::RootedLambdaPool;
