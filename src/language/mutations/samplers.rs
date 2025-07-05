@@ -9,8 +9,9 @@ use crate::{
     lambda::{ExpressionType, types::LambdaType},
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
-pub enum SampleDetails {
+pub(super) enum SampleDetails {
     LambdaExpr,
     LambdaVar(usize),
     QuantifierVar(Variable),
@@ -36,7 +37,7 @@ pub struct RandomExprConfig {
 }
 
 impl RandomExprConfig {
-    fn new(lambda_weight: f64, variable_weight: f64, depth_weight: f64) -> Self {
+    pub fn new(lambda_weight: f64, variable_weight: f64, depth_weight: f64) -> Self {
         Self {
             lambda_weight,
             variable_weight,

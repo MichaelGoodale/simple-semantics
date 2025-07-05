@@ -1,6 +1,7 @@
 use super::*;
 
 //Need to add applications
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum UnbuiltExpr<'src, 't> {
     Quantifier(Quantifier, ActorOrEvent),

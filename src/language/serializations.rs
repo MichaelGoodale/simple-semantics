@@ -227,7 +227,6 @@ pub(super) enum Token<'a> {
         var: TokenVar<'a>,
     },
     Var(TokenVar<'a>),
-    BinOp(String),
     Actor(String),
     Event(String),
     Func(String),

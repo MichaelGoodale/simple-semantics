@@ -56,23 +56,6 @@ impl<'a, T: Display> From<Vec<Rich<'a, T>>> for LambdaParseError {
     }
 }
 
-const RESERVED_KEYWORDS: [&str; 11] = [
-    "lambda",
-    "some",
-    "every",
-    "some_e",
-    "every_e",
-    "True",
-    "False",
-    "all_e",
-    "all_a",
-    "AgentOf",
-    "PatientOf",
-];
-
-//TODO: Richer errors that reference where the type error is.
-//TODO: Type errors elsewhere
-
 impl<'src> ParseTree<'src> {
     fn add_to_pool(
         &self,

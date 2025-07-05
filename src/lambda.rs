@@ -762,10 +762,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
             Ok((has_variable, previous_lambdas))
         }
     }
-
-    fn has_variable(&self, i: LambdaExprRef) -> bool {
-        self.pool.bfs_from(i).any(|(x, lambda_depth)| matches!(*self.pool.get(x), LambdaExpr::BoundVariable(z,_) if z == lambda_depth-1))
-    }
 }
 
 impl<'a, T: LambdaLanguageOfThought> From<LambdaPool<'a, T>> for Vec<Option<LambdaExpr<'a, T>>> {

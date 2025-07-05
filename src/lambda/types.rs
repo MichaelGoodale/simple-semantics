@@ -12,6 +12,7 @@ use rand::{Rng, seq::IteratorRandom};
 
 use thiserror::Error;
 
+///Unable to parse a type.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub struct TypeParsingError(String);
 
@@ -34,29 +35,29 @@ impl Display for TypeParsingError {
 }
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
+///An error from applying types incorrectly.
 pub enum TypeError {
+    ///Trying to split a primitive type into two.
     #[error("Cannot split a primitive type")]
     NotAFunction,
+    ///Applying a something of the wrong type to something else.
     #[error("Cannot apply {0} to {1}!")]
     CantApply(LambdaType, LambdaType),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default, Hash)]
-pub enum InnerLambdaType {
+///The basic type system of the lambda calculus and LOT.
+pub enum LambdaType {
     #[default]
+    ///A type for [`crate::Actor`]s
     A,
+    ///A type for [`crate::Event`]s
     E,
+    ///A type for truth values.
     T,
+    ///A type for functions
     Composition(Box<LambdaType>, Box<LambdaType>),
 }
-
-#[derive(Debug, Clone, Eq, PartialEq, Default, Hash)]
-pub struct LambdaType(InnerLambdaType);
-
-/*
-#[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct LambdaType(Vec<Option<InnerLambdaType>>);
-*/
 
 pub(crate) fn core_type_parser<'src, E>() -> impl Parser<'src, &'src str, LambdaType, E> + Clone
 where
@@ -83,39 +84,53 @@ fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType, extra::Err<Rich<'a,
 }
 
 impl LambdaType {
+    ///Parse a type
+    ///
+    ///```
+    ///# use simple_semantics::lambda::types::LambdaType;
+    /////Create a type of e to e to t.
+    ///let x = LambdaType::from_string("<e,<e,t>>")?;
+    ///# Ok::<(), anyhow::Error>(())
+    ///```
     pub fn from_string(s: &str) -> Result<Self, TypeParsingError> {
         type_parser().parse(s).into_result().map_err(|x| x.into())
     }
 
+    ///Get the atomic type `a`
     pub fn a() -> &'static Self {
-        static A: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(InnerLambdaType::A));
-        &A
+        &LambdaType::A
     }
+
+    ///get the atomic type `e`
     pub fn e() -> &'static Self {
-        static E: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(InnerLambdaType::E));
-        &E
+        &LambdaType::E
     }
 
+    ///Get the atomic type `t`
     pub fn t() -> &'static Self {
-        static T: LazyLock<LambdaType> = LazyLock::new(|| LambdaType(InnerLambdaType::T));
-        &T
+        &LambdaType::T
     }
 
+    ///Compose two functions
     pub fn compose(a: Self, b: Self) -> Self {
-        LambdaType(InnerLambdaType::Composition(Box::new(a), Box::new(b)))
+        LambdaType::Composition(Box::new(a), Box::new(b))
     }
 
+    ///Get the `a` to `t` function type.
     pub fn at() -> &'static Self {
         static VAL: LazyLock<LambdaType> =
             LazyLock::new(|| LambdaType::compose(LambdaType::a().clone(), LambdaType::t().clone()));
         &VAL
     }
 
+    ///Get the `e` to `t` function type.
     pub fn et() -> &'static Self {
         static VAL: LazyLock<LambdaType> =
             LazyLock::new(|| LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()));
         &VAL
     }
+
+    ///Get the `<e,<e,t>>` function type
     pub fn eet() -> &'static Self {
         static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
             LambdaType::compose(
@@ -125,6 +140,7 @@ impl LambdaType {
         });
         &VAL
     }
+    ///Get the `<<e,t>, t>` function type
     pub fn ett() -> &'static Self {
         static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
             LambdaType::compose(
@@ -135,17 +151,22 @@ impl LambdaType {
         &VAL
     }
 
+    ///Check if `self` can have `other` applied to it.
     pub fn can_apply(&self, other: &Self) -> bool {
-        matches!(&self.0, InnerLambdaType::Composition(a, _) if a.as_ref() == other)
+        matches!(&self, LambdaType::Composition(a, _) if a.as_ref() == other)
     }
 
+    ///Split a function type into input and output. Returns a [`TypeError`] if the type is not a
+    ///function.
     pub fn split(&self) -> Result<(&LambdaType, &LambdaType), TypeError> {
-        match &self.0 {
-            InnerLambdaType::Composition(a, b) => Ok((a, b)),
+        match &self {
+            LambdaType::Composition(a, b) => Ok((a, b)),
             _ => Err(TypeError::NotAFunction),
         }
     }
 
+    ///Applies a function type to self. Returns a [`TypeError`] if the type is not the right type
+    ///for the function.
     pub fn apply(&self, other: &Self) -> Result<&Self, TypeError> {
         if !self.can_apply(other) {
             return Err(TypeError::CantApply(other.clone(), self.clone()));
@@ -153,14 +174,19 @@ impl LambdaType {
         self.rhs()
     }
 
+    ///Checks that the type is a function.
     pub fn is_function(&self) -> bool {
-        matches!(&self.0, InnerLambdaType::Composition(_, _))
+        matches!(&self, LambdaType::Composition(_, _))
     }
 
+    ///Get the left-hand side of a function. Returns a [`TypeError`] if the type is not a
+    ///function.
     pub fn lhs(&self) -> Result<&Self, TypeError> {
         Ok(self.split()?.0)
     }
 
+    ///Get the right-hand side of a function. Returns a [`TypeError`] if the type is not a
+    ///function.
     pub fn rhs(&self) -> Result<&Self, TypeError> {
         Ok(self.split()?.1)
     }
@@ -168,11 +194,11 @@ impl LambdaType {
 
 impl Display for LambdaType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.0 {
-            InnerLambdaType::E => write!(f, "e"),
-            InnerLambdaType::T => write!(f, "t"),
-            InnerLambdaType::A => write!(f, "a"),
-            InnerLambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
+        match &self {
+            LambdaType::E => write!(f, "e"),
+            LambdaType::T => write!(f, "t"),
+            LambdaType::A => write!(f, "a"),
+            LambdaType::Composition(lhs, rhs) => write!(f, "<{lhs},{rhs}>"),
         }
     }
 }
@@ -202,6 +228,7 @@ impl LambdaType {
         }
     }
 
+    ///Get a random lambda type.
     pub fn random(r: &mut impl Rng) -> Self {
         LambdaType::random_inner(r, 0, false)
     }

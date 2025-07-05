@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug, Default, Clone)]
-pub struct Context<'t> {
+pub(super) struct Context<'t> {
     lambdas: Vec<&'t LambdaType>,
     available_vars: Vec<Variable>,
     depth: usize,
@@ -74,7 +74,7 @@ impl<'t> Context<'t> {
     }
 }
 
-pub struct ContextBFSIterator<'src, 'a> {
+pub(super) struct ContextBFSIterator<'src, 'a> {
     pool: &'a RootedLambdaPool<'src, Expr<'src>>,
     queue: VecDeque<(LambdaExprRef, Context<'a>)>,
 }
@@ -128,7 +128,7 @@ impl<'src, 'a> Iterator for ContextBFSIterator<'src, 'a> {
 }
 
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
-    pub fn context_bfs_iter<'a>(&'a self) -> ContextBFSIterator<'src, 'a> {
+    pub(super) fn context_bfs_iter<'a>(&'a self) -> ContextBFSIterator<'src, 'a> {
         let mut queue = VecDeque::new();
         queue.push_back((
             self.root,

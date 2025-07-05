@@ -3,7 +3,6 @@ use std::fmt::Display;
 use crate::lambda::RootedLambdaPool;
 use crate::lambda::types::LambdaType;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
-use lambda_implementation::to_var;
 
 use thiserror;
 
@@ -122,12 +121,6 @@ pub enum Variable {
 }
 
 impl Variable {
-    fn to_var_string(self) -> String {
-        match self {
-            Variable::Actor(a) | Variable::Event(a) => to_var(a as usize, None),
-        }
-    }
-
     fn id(&self) -> u32 {
         match self {
             Variable::Actor(a) | Variable::Event(a) => *a,
@@ -394,16 +387,8 @@ impl<'a> ExprPool<'a> {
         ExprPool(x)
     }
 
-    fn checked_get(&self, expr: ExprRef) -> Option<&Expr<'a>> {
-        self.0.get(expr.0 as usize)
-    }
-
     fn get(&self, expr: ExprRef) -> &Expr<'a> {
         &self.0[expr.0 as usize]
-    }
-
-    fn get_mut(&mut self, expr: ExprRef) -> &mut Expr<'a> {
-        &mut self.0[expr.0 as usize]
     }
 
     pub fn add(&mut self, expr: Expr<'a>) -> ExprRef {
