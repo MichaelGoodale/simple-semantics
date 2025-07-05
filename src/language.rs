@@ -195,7 +195,7 @@ pub enum Expr<'a> {
     Constant(Constant<'a>),
 }
 
-///An index for a specific [`Expr`] in an [`ExprPool`].
+///An index for a specific [`Expr`] in a [`LanguageExpression`]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ExprRef(pub u32);
 

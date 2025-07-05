@@ -61,25 +61,36 @@ pub enum LambdaTryFromError {
     HasNone,
 }
 
+///An error from a faulty reduction
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum ReductionError {
+    ///A invalid reference to a [`LambdaExpr`] is passed.
     #[error("{0:?} is not a valid ref!")]
     NotValidRef(LambdaExprRef),
+    ///A reference to a [`LambdaExpr`] which is not an application is passed
     #[error("{0:?} is not an application!")]
     NotApplication(LambdaExprRef),
+
+    ///An application that doesn't apply a lambda expression
     #[error("The left hand side of the application ({app:?}), {lhs:?} is not a lambda expression!")]
     NotLambdaInApplication {
+        ///The entire application
         app: LambdaExprRef,
+        ///The left hand side of the application, which should be but isn't a lambda expression
         lhs: LambdaExprRef,
     },
 
+    ///Any general malformed types.
     #[error("Incorrect types: {0}")]
     TypeError(#[from] TypeError),
 }
 
+///An index to a [`LambdaExpr`] in the lambda pool.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct LambdaExprRef(pub u32);
 
+///A trait which allows one to define a language of thought that interacts with the lambda
+///calculus
 pub trait LambdaLanguageOfThought {
     type Pool;
     type ConversionError;
@@ -125,9 +136,12 @@ impl LambdaLanguageOfThought for () {
     }
 }
 
+///A free variable which can either be named or refered to by a integer.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum FreeVar<'a> {
+    ///A labeled free variable
     Named(&'a str),
+    ///An anonymous free variable defined by an index.
     Anonymous(usize),
 }
 

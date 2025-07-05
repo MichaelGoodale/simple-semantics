@@ -100,6 +100,8 @@ impl<'a> Scenario<'a> {
     }
 }
 
+///A struct defining a dataset of different [`Scenario`]s as well as their associated sentences all
+///lemmas in the dataset.
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct ScenarioDataset<'a> {
     scenarios: Vec<Scenario<'a>>,
@@ -108,6 +110,7 @@ pub struct ScenarioDataset<'a> {
 }
 
 impl<'a> ScenarioDataset<'a> {
+    ///Create a new [`ScenarioDataset`]
     pub fn new(
         scenarios: Vec<Scenario<'a>>,
         sentences: Vec<Vec<&'a str>>,
@@ -122,26 +125,32 @@ impl<'a> ScenarioDataset<'a> {
         }
     }
 
+    ///Iterate over all scenarios with a mutable reference.
     pub fn iter_scenarios_mut(&mut self) -> impl Iterator<Item = &mut Scenario<'a>> {
         self.scenarios.iter_mut()
     }
 
+    ///Iterate over all scenarios
     pub fn iter_scenarios(&self) -> impl Iterator<Item = &Scenario> {
         self.scenarios.iter()
     }
 
+    ///Iterate over all scenarios and sentences with a mutable reference.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut Scenario<'a>, &mut Vec<&'a str>)> {
         self.scenarios.iter_mut().zip(self.sentences.iter_mut())
     }
 
+    ///Iterate over all scenarios and sentences
     pub fn iter(&self) -> impl Iterator<Item = (&Scenario<'a>, &Vec<&'a str>)> {
         self.scenarios.iter().zip(self.sentences.iter())
     }
 
+    ///Get the available lemmas of a dataset.
     pub fn lemmas(&self) -> &[&'a str] {
         &self.lemmas
     }
 
+    ///Parse a list of sentences and scenarios and return the dataset.
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         let parser = scenario::scenario_parser();
         let parse = parser.parse(s).into_result();
