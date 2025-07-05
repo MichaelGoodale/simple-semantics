@@ -190,7 +190,6 @@ impl<'src> ParseTree<'src> {
     }
 
     fn to_pool(&self) -> Result<RootedLambdaPool<'src, Expr<'src>>, LambdaParseError> {
-        dbg!(self);
         let mut pool = LambdaPool::new();
 
         let mut var_labels = VariableContext::default();
@@ -214,7 +213,6 @@ impl<'src> VariableContext<'src> {
         lambda_type: Option<LambdaType>,
         lambda_depth: usize,
     ) -> Result<LambdaExpr<'src, Expr<'src>>, LambdaParseError> {
-        //dbg!(&self, variable);
         Ok(match self.0.get(variable) {
             Some(vars) if !vars.is_empty() => match vars
                 .last()
