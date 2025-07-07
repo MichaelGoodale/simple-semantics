@@ -125,6 +125,11 @@ impl<'a> ScenarioDataset<'a> {
         }
     }
 
+    ///The number of scenarios in the [`ScenarioDataset`].
+    pub fn len(&self) -> usize {
+        self.scenarios.len()
+    }
+
     ///Iterate over all scenarios with a mutable reference.
     pub fn iter_scenarios_mut(&mut self) -> impl Iterator<Item = &mut Scenario<'a>> {
         self.scenarios.iter_mut()

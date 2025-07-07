@@ -297,7 +297,7 @@ mod test {
                 None,
                 &mut rng,
             )?;
-            println!("{}: {}", t, pool);
+            println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
             pool.swap_expr(
                 &actors,
@@ -305,7 +305,7 @@ mod test {
                 &available_event_properties,
                 &mut rng,
             )?;
-            println!("{}: {}", t, pool);
+            println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
         }
         Ok(())
@@ -330,7 +330,7 @@ mod test {
                 &mut rng,
             )?;
             lengths.push(pool.len());
-            println!("{}: {}", t, pool);
+            println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
             let pool = pool.resample_from_expr(
                 &actors,
@@ -339,10 +339,10 @@ mod test {
                 None,
                 &mut rng,
             )?;
-            println!("{}: {}", t, pool);
+            println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
         }
-        println!("{:?}", lengths);
+        println!("{lengths:?}");
         Ok(())
     }
 
