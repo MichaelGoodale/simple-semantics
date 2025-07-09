@@ -118,13 +118,11 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         }
     }
 
-    fn to_pool(
-        mut pool: LambdaPool<Self>,
-        mut root: LambdaExprRef,
-    ) -> Result<Self::Pool, Self::ConversionError> {
+    fn to_pool(mut pool: RootedLambdaPool<Self>) -> Result<Self::Pool, Self::ConversionError> {
         //Quantifiers can have lambda terms embedded in them, this extracts them!
         //e.g. some(x, lambda a y (pa_0(y) | pa_1(y)), pa_3(x)) -> some(x, pa_0(x) | pa_1(x), pa_3(x))
         let quantifier_restrictions = pool
+            .pool
             .0
             .iter()
             .enumerate()
@@ -157,23 +155,26 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         if !quantifier_restrictions.is_empty() {
             //Go over and add app of bound variable to each lambda expr for each quantifier
             for (quantifer, restrictor, var) in quantifier_restrictions {
-                let var = pool.add(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(var)));
-                let new_restrictor = pool.add(LambdaExpr::Application {
+                let var = pool
+                    .pool
+                    .add(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(var)));
+                let new_restrictor = pool.pool.add(LambdaExpr::Application {
                     subformula: restrictor,
                     argument: var,
                 });
                 let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { restrictor, .. }) =
-                    pool.get_mut(quantifer)
+                    pool.pool.get_mut(quantifer)
                 else {
                     panic!("quantifier *must* be filtered to only quantifiers right before this.")
                 };
 
                 *restrictor = ExprRef(new_restrictor.0);
             }
-            root = pool.reduce(root)?;
+            pool.root = pool.pool.reduce(pool.root)?;
         }
 
         let processed_pool = pool
+            .pool
             .0
             .into_iter()
             .map(|x| match x {
@@ -184,13 +185,13 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
         Ok(LanguageExpression {
             pool: ExprPool(processed_pool),
-            start: ExprRef(root.0),
+            start: ExprRef(pool.root.0),
         })
     }
 
-    fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>) {
+    fn alpha_reduce(a: &mut RootedLambdaPool<Self>, b: &mut RootedLambdaPool<Self>) {
         let mut max_var = None;
-        for x in a.iter_mut() {
+        for x in a.pool.iter_mut() {
             match x {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
                 | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
@@ -208,7 +209,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         }
 
         if let Some(max_var) = max_var {
-            for x in b.iter_mut() {
+            for x in b.pool.iter_mut() {
                 match x {
                     LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
                     | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
@@ -369,6 +370,7 @@ pub(super) enum AssociativityData {
 }
 
 impl<'a> RootedLambdaPool<'a, Expr<'a>> {
+    ///Create a [`RootedLambdaPool<Expr>`] from a string.
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         parse_lot(s)
     }

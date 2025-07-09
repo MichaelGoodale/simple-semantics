@@ -85,6 +85,13 @@ fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType, extra::Err<Rich<'a,
 }
 
 impl LambdaType {
+    ///Takes a type x and returns <<x,t>, t>
+    pub fn lift_type(t: &LambdaType) -> LambdaType {
+        let t = LambdaType::compose(t.clone(), LambdaType::T);
+
+        LambdaType::compose(t, LambdaType::T)
+    }
+
     ///Parse a type
     ///
     ///```

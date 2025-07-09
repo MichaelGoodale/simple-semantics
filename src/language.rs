@@ -170,7 +170,7 @@ impl Display for Quantifier {
 ///which is handled elsewhere.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Expr<'a> {
-    //A quantifier
+    ///A quantified expression
     Quantifier {
         ///What kind of quantifier
         quantifier: Quantifier,

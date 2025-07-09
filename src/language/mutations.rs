@@ -43,6 +43,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         pos_context
     }
 
+    ///Choose a random expression and resample its children.
     pub fn resample_from_expr(
         self,
         available_actors: &[Actor<'src>],
@@ -92,6 +93,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         Ok(RootedLambdaPool { pool, root })
     }
 
+    ///Create a random expression of `lambda_type`.
     pub fn random_expr(
         lambda_type: &LambdaType,
         available_actors: &[Actor<'src>],
@@ -117,6 +119,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         Ok(RootedLambdaPool::new(pool, LambdaExprRef(0)))
     }
 
+    ///Remove quantifiers which do not use their variable in their body.
     pub fn prune_quantifiers(&mut self) {
         let quantifiers = self
             .pool
@@ -154,6 +157,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         self.root = self.pool.cleanup(self.root);
     }
 
+    ///Replace a random expression with something else of the same type.
     pub fn swap_expr(
         &mut self,
         available_actors: &[Actor<'src>],

@@ -90,23 +90,38 @@ pub enum ReductionError {
 pub struct LambdaExprRef(pub u32);
 
 ///A trait which allows one to define a language of thought that interacts with the lambda
-///calculus
+///calculus. An example implementation can be found for [`Expr`].
 pub trait LambdaLanguageOfThought {
+    ///The type of the executable syntax tree
     type Pool;
+    ///Error for converting from [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]
     type ConversionError;
 
+    ///Given an expression, get an iterator of its children
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef>;
+
+    ///Update the references such that `LambdaExprRef(0)` is remapped to `LambdaExprRef(remap[0])`.
+    ///(Used in garbage collection).
     fn remap_refs(&mut self, remap: &[usize]);
-    fn alpha_reduce(a: &mut LambdaPool<Self>, b: &mut LambdaPool<Self>)
+
+    ///When combining two expressions, ensure they don't share any variables.
+    fn alpha_reduce(a: &mut RootedLambdaPool<Self>, b: &mut RootedLambdaPool<Self>)
     where
         Self: Sized;
+
+    ///Given a list of new references for all children of an expr, change its children.
     fn change_children(&mut self, new_children: &[LambdaExprRef]);
+
+    ///Get the return type of an expression.
     fn get_type(&self) -> &LambdaType;
+
+    ///Get the type of all children in order.
     fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a>;
-    fn to_pool(
-        pool: LambdaPool<Self>,
-        root: LambdaExprRef,
-    ) -> Result<Self::Pool, Self::ConversionError>
+
+    ///Convert from a [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]. May return an
+    ///error if there are any lambda terms left in the [`RootedLambdaPool<T>`] (e.g. not fully
+    ///reduced).
+    fn to_pool(pool: RootedLambdaPool<Self>) -> Result<Self::Pool, Self::ConversionError>
     where
         Self: Sized;
 }
@@ -129,9 +144,9 @@ impl LambdaLanguageOfThought for () {
         Box::new(empty())
     }
 
-    fn alpha_reduce(_a: &mut LambdaPool<Self>, _b: &mut LambdaPool<Self>) {}
+    fn alpha_reduce(_a: &mut RootedLambdaPool<Self>, _b: &mut RootedLambdaPool<Self>) {}
 
-    fn to_pool(_: LambdaPool<Self>, _: LambdaExprRef) -> Result<Self::Pool, ()> {
+    fn to_pool(_: RootedLambdaPool<Self>) -> Result<Self::Pool, ()> {
         Ok(())
     }
 }
@@ -167,26 +182,40 @@ impl<'a> From<usize> for FreeVar<'a> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+///The core expression type of a lambda term
 pub enum LambdaExpr<'a, T> {
+    ///A lambda of a given type.
     Lambda(LambdaExprRef, LambdaType),
+    ///A variable bound by a lambda, labeled by its [De Bruijn index](https://en.wikipedia.org/wiki/De_Bruijn_index).
     BoundVariable(Bvar, LambdaType),
+    ///A free variable (may be named or anonymous, see [`FreeVar`]).
     FreeVariable(FreeVar<'a>, LambdaType),
+    ///The application of an argument to a function
     Application {
+        ///The body of the function
         subformula: LambdaExprRef,
+
+        ///The argument of the function
         argument: LambdaExprRef,
     },
+    ///Any expression which is not part of the lambda calculus directly (e.g. primitives). See
+    ///[`crate::Expr`] for an example.
     LanguageOfThoughtExpr(T),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+///A lambda expression with its root defined.
 pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
     pub(crate) pool: LambdaPool<'src, T>,
     pub(crate) root: LambdaExprRef,
 }
 
+///Records the input and output of an expression.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct ExpressionType {
+pub(crate) struct ExpressionType {
+    ///Output of an expression.
     pub output: LambdaType,
+    ///The arguments (if any) of an expression.
     pub arguments: Vec<LambdaType>,
 }
 impl ExpressionType {
@@ -240,32 +269,35 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
         self.root
     }
 
-    pub fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
+    ///Get the expression of a lambda term.
+    pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
         self.pool.get(x)
     }
 
+    ///The length of an expression
     #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.pool.0.len()
     }
 
-    pub fn get_mut(&mut self, x: LambdaExprRef) -> &mut LambdaExpr<'src, T> {
-        self.pool.get_mut(x)
-    }
-
-    pub fn get_type(&self) -> Result<LambdaType, TypeError> {
+    ///The type of the lambda expression
+    pub(crate) fn get_type(&self) -> Result<LambdaType, TypeError> {
         self.pool.get_type(self.root)
     }
 
-    pub fn new(pool: LambdaPool<'src, T>, root: LambdaExprRef) -> Self {
+    ///Create a new lambda expression.
+    pub(crate) fn new(pool: LambdaPool<'src, T>, root: LambdaExprRef) -> Self {
         RootedLambdaPool { pool, root }
     }
 
-    pub fn into(self) -> (LambdaPool<'src, T>, LambdaExprRef) {
+    ///Split into the pool and root seperately.
+    pub(crate) fn into(self) -> (LambdaPool<'src, T>, LambdaExprRef) {
         (self.pool, self.root)
     }
 
-    pub fn merge(mut self, other: Self) -> Option<Self> {
+    ///Combine two lambda expressions by applying one to the other. Returns [`None`] if that is
+    ///impossible.
+    pub fn merge(mut self, mut other: Self) -> Option<Self> {
         let self_type = self.pool.get_type(self.root).expect("malformed type");
         let other_type = other.pool.get_type(other.root).expect("malformed type");
 
@@ -277,14 +309,13 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
             return None;
         };
 
-        let (mut other_pool, other_root) = other.into();
-
         //To make sure that the rebound fresh variables are identical.
         if self_subformula {
-            T::alpha_reduce(&mut self.pool, &mut other_pool);
+            T::alpha_reduce(&mut self, &mut other);
         } else {
-            T::alpha_reduce(&mut other_pool, &mut self.pool);
+            T::alpha_reduce(&mut other, &mut self);
         }
+        let (other_pool, other_root) = other.into();
         let other_root = self.pool.extend_pool(other_root, other_pool);
 
         self.root = self.pool.add(if self_subformula {
@@ -302,16 +333,20 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
         Some(self)
     }
 
+    ///Reduce a lambda expression
     pub fn reduce(&mut self) -> Result<(), ReductionError> {
         let root = self.pool.reduce(self.root)?;
         self.root = root;
         Ok(())
     }
 
+    ///Convert a lambda expression to its executable version (should only be done if there are only
+    ///[`LambdaExpr::LanguageOfThoughtExpr`] expressions.
     pub fn into_pool(self) -> Result<T::Pool, T::ConversionError> {
-        self.pool.into_pool(self.root)
+        T::to_pool(self)
     }
 
+    ///Replace a free variable with a value.
     pub fn bind_free_variable(
         &mut self,
         fvar: FreeVar<'src>,
@@ -324,6 +359,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
         Ok(())
     }
 
+    ///Replace a free variable by lambda abstracting it. (e.g. $P(x_{free})$ to $\lambda x P(x)$).
     pub fn lambda_abstract_free_variable(
         &mut self,
         fvar: FreeVar<'src>,
@@ -359,6 +395,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
         Ok(())
     }
 
+    ///Apply a free variable to a function.
     pub fn apply_new_free_variable(
         &mut self,
         fvar: FreeVar<'src>,
@@ -378,7 +415,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
-pub struct LambdaPool<'a, T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<'a, T>>);
+pub(crate) struct LambdaPool<'a, T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<'a, T>>);
 
 impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
     fn extend_pool(
@@ -392,11 +429,6 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
         other_root.0 += shift_n as u32;
         self.0.append(&mut other_pool.0);
         other_root
-    }
-
-    ///Convert a lambda pool to its inner pool.
-    pub fn into_pool(self, root: LambdaExprRef) -> Result<T::Pool, T::ConversionError> {
-        T::to_pool(self, root)
     }
 
     ///Convert from [`Vec<LambdaExpr<T>>`] to [`LambdaPool`]
@@ -433,7 +465,8 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
     }
 }
 
-pub struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
+///Iterate over a lambda pool in breadth-first search
+pub(crate) struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
     pool: &'a LambdaPool<'src, T>,
     queue: VecDeque<(LambdaExprRef, Bvar)>,
 }
@@ -724,17 +757,43 @@ impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
     }
 }
 
+///Details about a [`RootedLambdaPool`]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LambdaSummaryStats {
+    ///The expression is correctly formed.
     WellFormed {
+        ///What type is it
         lambda_type: LambdaType,
+
+        ///Is it a constant function?
         constant_function: bool,
+
+        ///How long is the expression?
         n_nodes: usize,
     },
+
+    ///Is there a problem with the expression
     Malformed,
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'src, T> {
+    ///Convert an expression `phi` of type `x` and convert it to `lambda <x,t> P P(phi)`
+    pub fn lift(&mut self) -> Result<(), TypeError> {
+        let t =
+            LambdaType::Composition(Box::new(self.get_type()?.clone()), Box::new(LambdaType::T));
+
+        let p = self.pool.add(LambdaExpr::BoundVariable(0, t.clone()));
+        let apply = self.pool.add(LambdaExpr::Application {
+            subformula: p,
+            argument: self.root,
+        });
+        let lambda = self.pool.add(LambdaExpr::Lambda(apply, t));
+        self.root = lambda;
+
+        Ok(())
+    }
+
+    ///Get [`LambdaSummaryStats`] for an expression, e.g. how many context functions, size, etc.
     pub fn stats(&self) -> LambdaSummaryStats {
         let lambda_type = self.get_type();
         if lambda_type.is_err() {
@@ -1024,7 +1083,7 @@ mod test {
         );
 
         assert_eq!(
-            pool.into_pool(root)?,
+            RootedLambdaPool::new(pool, root).into_pool()?,
             LanguageExpression::new(
                 ExprPool::from(vec![
                     Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3)),
@@ -1361,6 +1420,15 @@ mod test {
                 ]
             }
         );
+        Ok(())
+    }
+
+    #[test]
+    fn lift() -> anyhow::Result<()> {
+        let mut e = RootedLambdaPool::parse("a_john")?;
+        e.lift()?;
+        assert_eq!(e.to_string(), "lambda <a,t> P P(a_john)");
+
         Ok(())
     }
 }
