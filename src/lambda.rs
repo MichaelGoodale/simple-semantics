@@ -281,7 +281,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
     }
 
     ///The type of the lambda expression
-    pub(crate) fn get_type(&self) -> Result<LambdaType, TypeError> {
+    pub fn get_type(&self) -> Result<LambdaType, TypeError> {
         self.pool.get_type(self.root)
     }
 
