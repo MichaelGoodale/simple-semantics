@@ -7,6 +7,7 @@ use chumsky::prelude::*;
 use lambda::RootedLambdaPool;
 use language::{Expr, LambdaParseError};
 use std::{collections::HashMap, fmt::Display};
+use thiserror::Error;
 
 ///The representation of an entity that can receive theta roles (e.g. a human, a cup, a thought).
 pub type Actor<'a> = &'a str;
@@ -109,20 +110,39 @@ pub struct ScenarioDataset<'a> {
     lemmas: Vec<&'a str>,
 }
 
+///Error for creating a dataset without equal sentences and scenarios.
+#[derive(Debug, Default, Clone, Eq, PartialEq, Error)]
+pub struct DatasetError {}
+
+impl Display for DatasetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Scenario and sentences not of equal length!")
+    }
+}
+
 impl<'a> ScenarioDataset<'a> {
     ///Create a new [`ScenarioDataset`]
     pub fn new(
         scenarios: Vec<Scenario<'a>>,
         sentences: Vec<Vec<&'a str>>,
         lemmas: HashSet<&'a str>,
-    ) -> Self {
+    ) -> Result<Self, DatasetError> {
+        if scenarios.len() != sentences.len() {
+            return Err(DatasetError {});
+        }
+
         let mut lemmas: Vec<_> = lemmas.into_iter().collect();
         lemmas.sort();
-        ScenarioDataset {
+        Ok(ScenarioDataset {
             scenarios,
             sentences,
             lemmas,
-        }
+        })
+    }
+
+    ///Is the dataset empty?
+    pub fn is_empty(&self) -> bool {
+        self.scenarios.is_empty()
     }
 
     ///The number of scenarios in the [`ScenarioDataset`].

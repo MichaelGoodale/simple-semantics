@@ -50,7 +50,7 @@ fn load_dataset() -> anyhow::Result<()> {
             .into_iter()
             .collect::<Vec<_>>(),
         ["John", "Mary", "ran", "saw"].into_iter().collect(),
-    );
+    )?;
 
     assert_eq!(data, parsed_data);
 

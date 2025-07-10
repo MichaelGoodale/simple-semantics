@@ -9,7 +9,7 @@ use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 use thiserror;
 
 ///All binary operations
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum BinOp {
     ///<a,<e,t>> function that returns whether the first argument is the agent of the second
     ///argument.
@@ -47,7 +47,7 @@ impl BinOp {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 ///All unary operations
 pub enum MonOp<'a> {
     ///Logical not
@@ -77,7 +77,7 @@ impl<'a> Display for MonOp<'a> {
 }
 
 ///Whether something refers to an actor or event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum ActorOrEvent {
     Actor,
@@ -103,7 +103,7 @@ impl ActorOrEvent {
 }
 
 ///Any valid constant in the language.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Constant<'a> {
     ///The set of all actors in the [`Scenario`].
     Everyone,
@@ -148,7 +148,7 @@ impl Variable {
 }
 
 ///An enum which represents all possible quantifiers in the language.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Quantifier {
     ///Universal Quantification
     Universal,
@@ -168,7 +168,7 @@ impl Display for Quantifier {
 ///The basic expression type of the language of thought.
 ///Note that it *does not* include free variables or any of the machinery of the lambda calculus
 ///which is handled elsewhere.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Expr<'a> {
     ///A quantified expression
     Quantifier {
@@ -201,11 +201,11 @@ pub struct ExprRef(pub u32);
 
 ///An arena allocated tree which represents an expression in the language of thought built out of
 ///[`Expr`].
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Hash)]
 pub(crate) struct ExprPool<'a>(Vec<Expr<'a>>);
 
 ///An expression pool with a defined root.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct LanguageExpression<'a> {
     pool: ExprPool<'a>,
     start: ExprRef,
@@ -238,7 +238,7 @@ impl<'a> LanguageExpression<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
 struct VariableBuffer<'a>(Vec<Option<Entity<'a>>>);
 
 impl<'a> VariableBuffer<'a> {
@@ -263,7 +263,7 @@ impl<'a> VariableBuffer<'a> {
 }
 
 ///The result of running a [`LanguageExpression`], see [`LanguageExpression::run`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum LanguageResult<'a> {
     Bool(bool),
@@ -318,7 +318,7 @@ impl Display for LanguageResult<'_> {
 }
 
 ///The basic atomic types of the LOT. See [`LanguageResult`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum LanguageResultType {
     Bool,

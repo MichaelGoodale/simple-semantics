@@ -86,7 +86,7 @@ pub enum ReductionError {
 }
 
 ///An index to a [`LambdaExpr`] in the lambda pool.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct LambdaExprRef(pub u32);
 
 ///A trait which allows one to define a language of thought that interacts with the lambda
@@ -152,7 +152,7 @@ impl LambdaLanguageOfThought for () {
 }
 
 ///A free variable which can either be named or refered to by a integer.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum FreeVar<'a> {
     ///A labeled free variable
     Named(&'a str),
@@ -181,7 +181,7 @@ impl<'a> From<usize> for FreeVar<'a> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 ///The core expression type of a lambda term
 pub enum LambdaExpr<'a, T> {
     ///A lambda of a given type.
@@ -203,7 +203,7 @@ pub enum LambdaExpr<'a, T> {
     LanguageOfThoughtExpr(T),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 ///A lambda expression with its root defined.
 pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
     pub(crate) pool: LambdaPool<'src, T>,
@@ -414,7 +414,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
     }
 }
 
-#[derive(Default, Debug, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Clone, Eq, PartialEq, Hash)]
 pub(crate) struct LambdaPool<'a, T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<'a, T>>);
 
 impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
@@ -758,7 +758,7 @@ impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
 }
 
 ///Details about a [`RootedLambdaPool`]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LambdaSummaryStats {
     ///The expression is correctly formed.
     WellFormed {
