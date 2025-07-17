@@ -86,10 +86,22 @@ fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType, extra::Err<Rich<'a,
 
 impl LambdaType {
     ///Takes a type x and returns <<x,t>, t>
-    pub fn lift_type(t: &LambdaType) -> LambdaType {
-        let t = LambdaType::compose(t.clone(), LambdaType::T);
+    pub fn lift_type(self) -> LambdaType {
+        let t = LambdaType::compose(self, LambdaType::T);
 
         LambdaType::compose(t, LambdaType::T)
+    }
+
+    ///Checks if the type is the lifted version of another.
+    pub fn is_lifted_type_of(&self, t: &LambdaType) -> bool {
+        let Ok((a, LambdaType::T)) = self.split() else {
+            return false;
+        };
+        let Ok((a, LambdaType::T)) = a.split() else {
+            return false;
+        };
+
+        a == t
     }
 
     ///Parse a type
@@ -318,5 +330,18 @@ mod test {
         for s in ["e", "t", "<e,t>", "<e,<e,t>>", "<t,<<t,t>,<e,t>>>"] {
             assert_eq!(parser.parse(s).unwrap().to_string(), s);
         }
+    }
+
+    #[test]
+    fn check_lifting() -> anyhow::Result<()> {
+        for s in ["e", "t", "<e,t>", "<e,<e,t>>", "<t,<<t,t>,<e,t>>>"] {
+            let lifted_str = format!("<<{s},t>,t>");
+            let lifted = LambdaType::from_string(&lifted_str)?;
+            let base_type = LambdaType::from_string(s)?;
+            assert!(lifted.is_lifted_type_of(&base_type));
+            assert_eq!(base_type.lift_type(), lifted);
+        }
+
+        Ok(())
     }
 }
