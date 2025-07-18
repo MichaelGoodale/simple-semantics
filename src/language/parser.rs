@@ -659,7 +659,7 @@ mod tests {
         simple_scenario: &'a Scenario,
     ) -> anyhow::Result<LanguageResult<'a>> {
         let pool = LanguageExpression::parse(s)?;
-        Ok(pool.run(simple_scenario)?)
+        Ok(pool.run(simple_scenario, None)?)
     }
 
     fn check_lambdas(
@@ -839,7 +839,7 @@ mod tests {
         ] {
             println!("{statement}");
             let expression = parse_executable(statement)?;
-            assert_eq!(expression.run(&scenario)?, LanguageResult::Bool(true));
+            assert_eq!(expression.run(&scenario, None)?, LanguageResult::Bool(true));
         }
 
         for (statement, result) in [
@@ -849,7 +849,7 @@ mod tests {
         ] {
             println!("{statement}");
             let expression = parse_executable(statement)?;
-            assert_eq!(expression.run(&scenario)?, result);
+            assert_eq!(expression.run(&scenario, None)?, result);
         }
 
         Ok(())

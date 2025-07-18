@@ -629,7 +629,7 @@ mod test {
             .collect(),
         );
 
-        assert!(pool.into_pool()?.run(&scenario)?.try_into()?);
+        assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
 
         let pool =
             RootedLambdaPool::parse("every_e(x0, lambda e x (pe_0(x) & pe_1(x)), pe_2(x0))")?;
@@ -646,7 +646,7 @@ mod test {
             .collect(),
         );
 
-        assert!(pool.into_pool()?.run(&scenario)?.try_into()?);
+        assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
 
         Ok(())
     }

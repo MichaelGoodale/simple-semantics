@@ -102,8 +102,8 @@ fn scenarios(bencher: divan::Bencher) {
     .unwrap();
     let scenario = labels.iter_scenarios().next().unwrap();
     bencher.bench(|| {
-        a.run(scenario).unwrap();
-        b.run(scenario).unwrap();
-        c.run(scenario).unwrap();
+        a.run(scenario, None).unwrap();
+        b.run(scenario, None).unwrap();
+        c.run(scenario, None).unwrap();
     });
 }

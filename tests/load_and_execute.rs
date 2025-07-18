@@ -58,7 +58,7 @@ fn load_dataset() -> anyhow::Result<()> {
     assert_eq!(
         parsed_data
             .iter_scenarios()
-            .map(|x| executable.run(x).unwrap())
+            .map(|x| executable.run(x, None).unwrap())
             .collect::<Vec<_>>(),
         [true, false, true].map(LanguageResult::Bool).to_vec()
     );
@@ -78,7 +78,7 @@ fn lambda_stuff() -> anyhow::Result<()> {
     assert_eq!(
         parsed_data
             .iter_scenarios()
-            .map(|x| executable.run(x).unwrap())
+            .map(|x| executable.run(x, None).unwrap())
             .collect::<Vec<_>>(),
         [true, false, true, false]
             .map(LanguageResult::Bool)
@@ -98,7 +98,7 @@ fn lambda_stuff() -> anyhow::Result<()> {
     assert_eq!(
         parsed_data
             .iter_scenarios()
-            .map(|x| executable.run(x).unwrap())
+            .map(|x| executable.run(x, None).unwrap())
             .collect::<Vec<_>>(),
         [true, false, true, false]
             .map(LanguageResult::Bool)
@@ -113,7 +113,7 @@ fn lambda_stuff() -> anyhow::Result<()> {
     assert_eq!(
         parsed_data
             .iter_scenarios()
-            .map(|x| executable.run(x).unwrap())
+            .map(|x| executable.run(x, None).unwrap())
             .collect::<Vec<_>>(),
         [true, false, false, false]
             .map(LanguageResult::Bool)

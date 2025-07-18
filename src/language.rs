@@ -2,6 +2,9 @@
 
 use std::fmt::Display;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Duration, Instant};
+
 use crate::lambda::RootedLambdaPool;
 use crate::lambda::types::LambdaType;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
@@ -218,11 +221,59 @@ impl Display for LanguageExpression<'_> {
     }
 }
 
+#[derive(Debug, Clone, Default, Copy, Eq, PartialEq, PartialOrd, Ord)]
+///A configuration struct to limit the time of execution of a given language expression
+pub struct ExecutionConfig {
+    max_steps: Option<usize>,
+    #[cfg(not(target_arch = "wasm32"))]
+    timeout: Option<Duration>,
+}
+
+impl ExecutionConfig {
+    ///Create a new [`ExecutionConfig`]
+    pub const fn new(
+        max_steps: Option<usize>,
+        #[cfg(not(target_arch = "wasm32"))] timeout: Option<Duration>,
+    ) -> Self {
+        ExecutionConfig {
+            max_steps,
+            #[cfg(not(target_arch = "wasm32"))]
+            timeout,
+        }
+    }
+
+    ///Set max_steps on a config
+    pub const fn with_max_steps(mut self, max_steps: usize) -> Self {
+        self.max_steps = Some(max_steps);
+        self
+    }
+
+    ///Set max_duration on a config
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const fn with_timeout(mut self, time_out: Duration) -> Self {
+        self.timeout = Some(time_out);
+        self
+    }
+}
+
 impl<'a> LanguageExpression<'a> {
     ///Run a [`LanguageExpression`] in the language of thought and return the [`LanguageResult`]
-    pub fn run(&self, scenario: &Scenario<'a>) -> Result<LanguageResult<'a>, LanguageTypeError> {
+    pub fn run(
+        &self,
+        scenario: &Scenario<'a>,
+        config: Option<ExecutionConfig>,
+    ) -> Result<LanguageResult<'a>, LanguageTypeError> {
         let mut variables = VariableBuffer::default();
-        self.pool.interp(self.start, scenario, &mut variables)
+        Execution {
+            pool: &self.pool,
+            n_steps: 0,
+
+            #[cfg(not(target_arch = "wasm32"))]
+            start: Instant::now(),
+
+            config: &config.unwrap_or_default(),
+        }
+        .interp(self.start, scenario, &mut variables)
     }
 
     ///Parse a given language of thought expression and return the [`LanguageExpression`]. This
@@ -235,6 +286,34 @@ impl<'a> LanguageExpression<'a> {
     ///Create a `LanguageExpression` out of a [`ExprRef`] and a [`ExprPool`]
     pub(crate) fn new(pool: ExprPool<'a>, start: ExprRef) -> Self {
         LanguageExpression { pool, start }
+    }
+}
+
+struct Execution<'a, 'b> {
+    pool: &'b ExprPool<'a>,
+    n_steps: usize,
+    #[cfg(not(target_arch = "wasm32"))]
+    start: Instant,
+    config: &'b ExecutionConfig,
+}
+
+impl Execution<'_, '_> {
+    fn check_if_good_to_continue(&mut self) -> Result<(), LanguageTypeError> {
+        if let Some(max_steps) = self.config.max_steps
+            && self.n_steps > max_steps
+        {
+            return Err(LanguageTypeError::TooManySteps(max_steps));
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(max_time) = self.config.timeout
+            && self.start.elapsed() > max_time
+        {
+            return Err(LanguageTypeError::TimeOut);
+        }
+
+        self.n_steps += 1;
+        Ok(())
     }
 }
 
@@ -363,6 +442,14 @@ pub enum LanguageTypeError {
         ///The output type of the conversion
         output: LanguageResultType,
     },
+
+    ///The execution ran out of steps
+    #[error("The execution took more than {0} steps")]
+    TooManySteps(usize),
+
+    ///The execution ran out of time (unavailable on wasm).
+    #[error("The execution ran out of time")]
+    TimeOut,
 }
 
 impl TryFrom<LanguageResult<'_>> for Event {
@@ -466,18 +553,20 @@ impl<'a> ExprPool<'a> {
             },
         }
     }
+}
 
+impl<'a, 'b> Execution<'a, 'b> {
     fn quantification(
-        &self,
+        &mut self,
         quantifier: &Quantifier,
         var: &Variable,
         restrictor: ExprRef,
         subformula: ExprRef,
-        scenario: &Scenario,
+        scenario: &Scenario<'a>,
         variables: &mut VariableBuffer<'a>,
     ) -> Result<LanguageResult<'a>, LanguageTypeError> {
         let mut variables = variables.clone();
-        let domain: Vec<Entity> = match self.get_type(restrictor) {
+        let domain: Vec<Entity> = match self.pool.get_type(restrictor) {
             LanguageResultType::Bool => {
                 let mut domain = vec![];
                 match var {
@@ -554,12 +643,13 @@ impl<'a> ExprPool<'a> {
     }
 
     fn interp(
-        &self,
+        &mut self,
         expr: ExprRef,
         scenario: &Scenario<'a>,
         variables: &mut VariableBuffer<'a>,
     ) -> Result<LanguageResult<'a>, LanguageTypeError> {
-        Ok(match self.get(expr) {
+        self.check_if_good_to_continue()?;
+        Ok(match self.pool.get(expr) {
             Expr::Quantifier {
                 quantifier,
                 var,
@@ -696,7 +786,6 @@ mod tests {
 
     #[test]
     fn agent_of_and_patient_of() -> anyhow::Result<()> {
-        let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
             actors: vec!["0", "1"],
@@ -713,8 +802,12 @@ mod tests {
             Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
         ]);
 
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(2),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(2), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
 
@@ -723,10 +816,13 @@ mod tests {
             Expr::Event(0),
             Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
         ]);
+
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(2),
+        };
         assert_eq!(
-            simple_expr
-                .interp(ExprRef(2), &simple_scenario, &mut variables)
-                .unwrap_err(),
+            expr.run(&simple_scenario, None).unwrap_err(),
             LanguageTypeError::PresuppositionError
         );
         Ok(())
@@ -734,7 +830,6 @@ mod tests {
 
     #[test]
     fn quantification() -> anyhow::Result<()> {
-        let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
             actors: vec!["0", "1"],
@@ -771,8 +866,13 @@ mod tests {
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
         ]);
+
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
 
@@ -796,8 +896,12 @@ mod tests {
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(false)
         );
         Ok(())
@@ -805,7 +909,6 @@ mod tests {
 
     #[test]
     fn logic() -> anyhow::Result<()> {
-        let mut variables = VariableBuffer(vec![]);
         let simple_scenario = Scenario {
             question: None,
             actors: vec!["0", "1"],
@@ -823,20 +926,20 @@ mod tests {
         };
 
         assert_eq!(
-            ExprPool(vec![Expr::Constant(Constant::Contradiction)]).interp(
-                ExprRef(0),
-                &simple_scenario,
-                &mut variables
-            )?,
+            LanguageExpression {
+                pool: ExprPool(vec![Expr::Constant(Constant::Contradiction)]),
+                start: ExprRef(0)
+            }
+            .run(&simple_scenario, None)?,
             LanguageResult::Bool(false)
         );
 
         assert_eq!(
-            ExprPool(vec![Expr::Constant(Constant::Tautology)]).interp(
-                ExprRef(0),
-                &simple_scenario,
-                &mut variables
-            )?,
+            LanguageExpression {
+                pool: ExprPool(vec![Expr::Constant(Constant::Tautology)]),
+                start: ExprRef(0)
+            }
+            .run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
 
@@ -845,8 +948,12 @@ mod tests {
             Expr::Unary(MonOp::Not, ExprRef(1)),
             Expr::Constant(Constant::Contradiction),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
 
@@ -855,8 +962,12 @@ mod tests {
             Expr::Unary(MonOp::Not, ExprRef(1)),
             Expr::Constant(Constant::Tautology),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(false)
         );
 
@@ -867,8 +978,12 @@ mod tests {
             Expr::Constant(Constant::Contradiction),
             Expr::Constant(Constant::Contradiction),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
 
@@ -879,8 +994,12 @@ mod tests {
             Expr::Constant(Constant::Contradiction),
             Expr::Constant(Constant::Contradiction),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(false)
         );
 
@@ -906,8 +1025,12 @@ mod tests {
             Expr::Variable(Variable::Event(1)),
             Expr::Constant(Constant::Tautology),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(false)
         );
         Ok(())
@@ -915,7 +1038,6 @@ mod tests {
 
     #[test]
     fn properties() -> anyhow::Result<()> {
-        let mut variables = VariableBuffer(vec![]);
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
         properties.insert("1", vec![Entity::Actor("0"), Entity::Actor("1")]);
         properties.insert("534", vec![Entity::Actor("1")]);
@@ -947,8 +1069,12 @@ mod tests {
             Expr::Unary(MonOp::Property("1", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
         // someone is of property type 534.
@@ -963,8 +1089,12 @@ mod tests {
             Expr::Unary(MonOp::Property("534", ActorOrEvent::Actor), ExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
         Ok(())
@@ -972,7 +1102,6 @@ mod tests {
 
     #[test]
     fn complicated_restrictors() -> anyhow::Result<()> {
-        let mut variables = VariableBuffer(vec![]);
         let mut properties: HashMap<_, _, RandomState> = HashMap::default();
         properties.insert("534", vec![Entity::Actor("1")]);
         properties.insert("235", vec![Entity::Event(0)]);
@@ -1007,8 +1136,13 @@ mod tests {
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
         ]);
+
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
         // all property type 2 objects are agents of a 235-event (which is false)
@@ -1031,8 +1165,12 @@ mod tests {
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(false)
         );
 
@@ -1073,8 +1211,12 @@ mod tests {
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
         );
         //All property type 2 and property type 3 actors are patients of an event
@@ -1101,8 +1243,12 @@ mod tests {
             Expr::Variable(Variable::Actor(0)),
             Expr::Variable(Variable::Event(1)),
         ]);
+        let expr = LanguageExpression {
+            pool: simple_expr,
+            start: ExprRef(0),
+        };
         assert_eq!(
-            simple_expr.interp(ExprRef(0), &simple_scenario, &mut variables)?,
+            expr.run(&simple_scenario, None)?,
             LanguageResult::Bool(false)
         );
         Ok(())
@@ -1131,8 +1277,11 @@ mod tests {
             }],
             properties: vec![("0", vec![Entity::Event(0)])].into_iter().collect(),
         };
-        assert_eq!(expr.run(&b), Err(LanguageTypeError::PresuppositionError));
-        expr.run(&a)?;
+        assert_eq!(
+            expr.run(&b, None),
+            Err(LanguageTypeError::PresuppositionError)
+        );
+        expr.run(&a, None)?;
 
         Ok(())
     }
@@ -1149,9 +1298,9 @@ mod tests {
             "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))",
         )?;
         let scenario = labels.iter_scenarios().next().unwrap();
-        assert_eq!(a.run(scenario)?, LanguageResult::Bool(true));
-        assert_eq!(b.run(scenario)?, LanguageResult::Bool(false));
-        assert_eq!(c.run(scenario)?, LanguageResult::Bool(true));
+        assert_eq!(a.run(scenario, None)?, LanguageResult::Bool(true));
+        assert_eq!(b.run(scenario, None)?, LanguageResult::Bool(false));
+        assert_eq!(c.run(scenario, None)?, LanguageResult::Bool(true));
 
         Ok(())
     }
