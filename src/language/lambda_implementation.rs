@@ -170,7 +170,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
                 *restrictor = ExprRef(new_restrictor.0);
             }
-            pool.root = pool.pool.reduce(pool.root)?;
+            pool.reduce()?;
             pool.cleanup();
         }
 

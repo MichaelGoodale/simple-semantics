@@ -342,8 +342,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
 
     ///Reduce a lambda expression
     pub fn reduce(&mut self) -> Result<(), ReductionError> {
-        let root = self.pool.reduce(self.root)?;
-        self.root = root;
+        self.pool.reduce(self.root)?;
         Ok(())
     }
 
@@ -720,14 +719,11 @@ where
             })
     }
 
-    pub fn reduce(&mut self, root: LambdaExprRef) -> Result<LambdaExprRef, ReductionError> {
-        if let Some(x) = self.get_next_app(root) {
+    pub fn reduce(&mut self, root: LambdaExprRef) -> Result<(), ReductionError> {
+        while let Some(x) = self.get_next_app(root) {
             self.beta_reduce(x)?;
-            //let new_root = self.cleanup(root);
-            Ok(self.reduce(root)?)
-        } else {
-            Ok(root)
         }
+        Ok(())
     }
 }
 
@@ -1075,8 +1071,8 @@ mod test {
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
         ]);
-        let root = pool.reduce(LambdaExprRef(0))?;
-        let root = pool.cleanup(root);
+        pool.reduce(LambdaExprRef(0))?;
+        let root = pool.cleanup(LambdaExprRef(0));
         assert_eq!(
             pool,
             LambdaPool(vec![
