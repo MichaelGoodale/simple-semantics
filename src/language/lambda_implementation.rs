@@ -191,8 +191,10 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
     }
 
     fn alpha_reduce(a: &mut RootedLambdaPool<Self>, b: &mut RootedLambdaPool<Self>) {
+        return ();
         let mut max_var = None;
-        for x in a.pool.iter_mut() {
+
+        for x in a.pool.0.iter() {
             match x {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
                 | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {

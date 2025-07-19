@@ -5,6 +5,7 @@ use std::{
     collections::{HashSet, VecDeque},
     fmt::{Debug, Display},
     iter::empty,
+    marker::PhantomData,
 };
 use thiserror::Error;
 
@@ -457,7 +458,7 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
         &self.0[expr.0 as usize]
     }
 
-    pub fn get_mut(&mut self, expr: LambdaExprRef) -> &mut LambdaExpr<'src, T> {
+    pub fn get_mut<'a>(&'a mut self, expr: LambdaExprRef) -> &'a mut LambdaExpr<'src, T> {
         &mut self.0[expr.0 as usize]
     }
 
@@ -520,10 +521,61 @@ impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, '_, T> {
     }
 }
 
+///Iterate over a lambda pool and return a mutable reference
+pub(crate) struct MutableLambdaPoolBFSIterator<'a, 'src: 'a, T: LambdaLanguageOfThought + 'a> {
+    pool: *mut LambdaPool<'src, T>,
+    queue: VecDeque<(LambdaExprRef, Bvar)>,
+    phantom: PhantomData<&'a ()>,
+}
+
+impl<'a, 'src: 'a, T: LambdaLanguageOfThought + 'a> MutableLambdaPoolBFSIterator<'a, 'src, T> {
+    fn new(pool: &mut LambdaPool<'src, T>, x: LambdaExprRef) -> Self {
+        Self {
+            pool: pool as *mut LambdaPool<'src, T>,
+            queue: VecDeque::from([(x, 0)]),
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIterator<'a, 'src, T> {
+    type Item = &'a mut LambdaExpr<'src, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((x, lambda_depth)) = self.queue.pop_front() {
+            let expr = unsafe { self.pool.as_ref().unwrap() };
+            match expr.get(x) {
+                LambdaExpr::Lambda(x, _) => self.queue.push_back((*x, lambda_depth + 1)),
+                LambdaExpr::Application {
+                    subformula,
+                    argument,
+                } => {
+                    self.queue.push_back((*subformula, lambda_depth));
+                    self.queue.push_back((*argument, lambda_depth));
+                }
+                LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
+                LambdaExpr::LanguageOfThoughtExpr(x) => x
+                    .get_children()
+                    .for_each(|x| self.queue.push_back((x, lambda_depth))),
+            }
+            Some(unsafe { self.pool.as_mut().unwrap().get_mut(x) })
+        } else {
+            None
+        }
+    }
+}
+
 impl<'src, T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<'src, T>
 where
     T: Clone,
 {
+    pub(crate) fn bfs_from_mut<'a>(
+        &'a mut self,
+        x: LambdaExprRef,
+    ) -> MutableLambdaPoolBFSIterator<'a, 'src, T> {
+        MutableLambdaPoolBFSIterator::new(self, x)
+    }
+
     pub(crate) fn bfs_from(&self, x: LambdaExprRef) -> LambdaPoolBFSIterator<T> {
         LambdaPoolBFSIterator {
             pool: self,
