@@ -107,3 +107,22 @@ fn scenarios(bencher: divan::Bencher) {
         c.run(scenario, None).unwrap();
     });
 }
+
+#[divan::bench]
+fn reduction(bencher: divan::Bencher) {
+    let t_to_t = [
+        "lambda t phi ~(phi | pa_woman(a_Phil) | (some_e(x, pe_laughs, pe_likes(x)) & ~some(x, pa_woman, phi))) | pa_woman(a_Mary) | every_e(x, pe_likes, pe_runs(x)) | pa_man(a_Mary) | pa_woman(a_Sue) | every(x, lambda a y phi, pa_man(a_Phil) & ~pa_woman(x) & some(y, all_a, phi | (some_e(z, pe_runs, PatientOf(a_John, z)) & (~pa_man(a_Sue) | ~pa_man(y)))))",
+        "lambda t phi every_e(x, pe_sleeps, pe_sleeps(x) & (pa_woman(a_John) | pe_likes(x)))",
+        "lambda t phi ~some(x, all_a, ~some_e(y, pe_loves, PatientOf(x, y)) & (~every_e(y, pe_helps, phi) | some(y, pa_man, ~~pa_woman(x)))) | some_e(x, all_e, pe_runs(x))",
+    ]
+    .map(|s| RootedLambdaPool::parse(s).unwrap());
+    let t = RootedLambdaPool::parse("every_e(x, pe_runs, pe_laughs(x) & pa_woman(a_Sue))").unwrap();
+
+    bencher.bench(|| {
+        let mut t = t.clone();
+        for x in t_to_t.iter().cycle().take(1000).cloned() {
+            t = t.merge(x).unwrap();
+        }
+        t.reduce()
+    });
+}
