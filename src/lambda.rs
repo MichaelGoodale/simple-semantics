@@ -181,6 +181,8 @@ impl<'a> From<usize> for FreeVar<'a> {
     }
 }
 
+//TODO: Implement Eq for LambdaPool so that it ignores dangling refs
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 ///The core expression type of a lambda term
 pub enum LambdaExpr<'a, T> {
@@ -228,6 +230,11 @@ impl ExpressionType {
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'src, T> {
+    ///Clean up dangling references.
+    pub fn cleanup(&mut self) {
+        self.root = self.pool.cleanup(self.root);
+    }
+
     pub(crate) fn get_expression_type(
         &self,
         i: LambdaExprRef,
@@ -342,7 +349,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
 
     ///Convert a lambda expression to its executable version (should only be done if there are only
     ///[`LambdaExpr::LanguageOfThoughtExpr`] expressions.
-    pub fn into_pool(self) -> Result<T::Pool, T::ConversionError> {
+    pub fn into_pool(mut self) -> Result<T::Pool, T::ConversionError> {
+        self.cleanup();
         T::to_pool(self)
     }
 
@@ -355,7 +363,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
         let (other_pool, other_root) = replacement.into();
         let other_root = self.pool.extend_pool(other_root, other_pool);
         self.pool.bind_free_variable(self.root, fvar, other_root)?;
-        self.root = self.pool.cleanup(self.root);
+        //self.root = self.pool.cleanup(self.root);
         Ok(())
     }
 
@@ -715,8 +723,8 @@ where
     pub fn reduce(&mut self, root: LambdaExprRef) -> Result<LambdaExprRef, ReductionError> {
         if let Some(x) = self.get_next_app(root) {
             self.beta_reduce(x)?;
-            let new_root = self.cleanup(root);
-            Ok(self.reduce(new_root)?)
+            //let new_root = self.cleanup(root);
+            Ok(self.reduce(root)?)
         } else {
             Ok(root)
         }
@@ -940,6 +948,7 @@ mod test {
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3")),
         ]);
         pool.reduce(LambdaExprRef(0))?;
+        pool.cleanup(LambdaExprRef(0));
 
         assert_eq!(
             pool.clone(),
@@ -972,6 +981,7 @@ mod test {
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
         ]);
         pool.reduce(LambdaExprRef(0))?;
+        pool.cleanup(LambdaExprRef(0));
         assert_eq!(
             pool,
             LambdaPool(vec![
@@ -1007,6 +1017,7 @@ mod test {
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
         ]);
         pool.reduce(LambdaExprRef(0))?;
+        pool.cleanup(LambdaExprRef(0));
 
         assert_eq!(
             pool,
@@ -1065,6 +1076,7 @@ mod test {
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
         ]);
         let root = pool.reduce(LambdaExprRef(0))?;
+        let root = pool.cleanup(root);
         assert_eq!(
             pool,
             LambdaPool(vec![
@@ -1165,6 +1177,7 @@ mod test {
             LambdaExpr::FreeVariable("5".into(), LambdaType::e().clone()),
         ]);
         pool.reduce(LambdaExprRef(0))?;
+        pool.cleanup(LambdaExprRef(0));
         assert_eq!(
             pool,
             LambdaPool(vec![LambdaExpr::FreeVariable(
@@ -1277,6 +1290,7 @@ mod test {
             ]),
             root: LambdaExprRef(8),
         };
+        pool.cleanup();
         assert_eq!(pool, gold_pool);
         Ok(())
     }
@@ -1345,6 +1359,8 @@ mod test {
         println!("A:\t{a}");
         println!("B:\t{b}");
 
+        a.cleanup();
+        b.cleanup();
         assert_eq!(a, b);
         Ok(())
     }

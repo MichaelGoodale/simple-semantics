@@ -171,6 +171,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
                 *restrictor = ExprRef(new_restrictor.0);
             }
             pool.root = pool.pool.reduce(pool.root)?;
+            pool.cleanup();
         }
 
         let processed_pool = pool
@@ -629,6 +630,7 @@ mod test {
             .collect(),
         );
 
+        dbg!(&pool);
         assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
 
         let pool =
@@ -646,6 +648,7 @@ mod test {
             .collect(),
         );
 
+        dbg!(&pool);
         assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
 
         Ok(())
