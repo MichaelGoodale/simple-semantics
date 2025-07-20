@@ -696,7 +696,6 @@ where
             let inner_term = match self.get(*subformula) {
                 LambdaExpr::Lambda(x, ..) => {
                     self.check_type_clash(app)?;
-
                     *x
                 }
                 _ => {
@@ -1273,6 +1272,7 @@ mod test {
             RootedLambdaPool::parse("lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))")?;
         let every =
             RootedLambdaPool::parse("lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))")?;
+        dbg!(&every);
 
         let phi = every.clone().merge(man.clone()).unwrap();
         let mut phi = phi.merge(sleeps.clone()).unwrap();

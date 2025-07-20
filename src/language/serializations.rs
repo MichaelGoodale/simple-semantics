@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::{
     lambda::{FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
     language::{
-        ActorOrEvent, BinOp, Expr, MonOp, Variable,
+        ActorOrEvent, BinOp, Expr, MonOp,
         lambda_implementation::{AssociativityData, add_parenthesis_for_bin_op},
     },
 };
@@ -32,14 +32,14 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                 let (c, var) = c.inc_depth(lambda_type);
                 v.push(Token::Lambda {
                     t: lambda_type,
-                    var: TokenVar::Lambda(var),
+                    var: TokenVar::Bound(var),
                 });
 
                 self.tokens(*child, c, v, false);
                 AssociativityData::Lambda
             }
             LambdaExpr::BoundVariable(bvar, lambda_type) => {
-                v.push(Token::Var(TokenVar::Lambda(
+                v.push(Token::Var(TokenVar::Bound(
                     c.lambda_var(*bvar, lambda_type),
                 )));
                 AssociativityData::Monop
@@ -101,7 +101,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                             ActorOrEvent::Actor => LambdaType::a(),
                             ActorOrEvent::Event => LambdaType::e(),
                         },
-                        var: TokenVar::Quantifier(var_string),
+                        var: TokenVar::Bound(var_string),
                     });
                     v.push(Token::OpenDelim);
                     self.tokens(LambdaExprRef(restrictor.0), c.clone(), v, false);
@@ -111,7 +111,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     AssociativityData::Monop
                 }
                 Expr::Variable(variable) => {
-                    v.push(Token::Var(TokenVar::Quantifier(c.lambda_var(
+                    v.push(Token::Var(TokenVar::Bound(c.lambda_var(
                         variable.id() as usize,
                         variable.as_lambda_type(),
                     ))));
@@ -212,8 +212,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
 
 #[derive(Debug, Clone, Serialize)]
 pub(super) enum TokenVar<'a> {
-    Lambda(String),
-    Quantifier(String),
+    Bound(String),
     Free {
         label: String,
         t: &'a LambdaType,
@@ -271,19 +270,19 @@ mod test {
             ),
             (
                 "every(x,all_a,pa_Blue(x))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"all_a\"},\"ArgSep\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Bound\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"all_a\"},\"ArgSep\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Bound\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "every(x,pa_Blue,pa_Blue(x))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"Blue\"},\"ArgSep\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Bound\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"Blue\"},\"ArgSep\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Var\":{\"Bound\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "every(x,pa_5,pa_10(a_59))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"5\"},\"ArgSep\",{\"Func\":\"10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Bound\":\"x\"},\"t\":\"a\"}},\"OpenDelim\",{\"Const\":\"5\"},\"ArgSep\",{\"Func\":\"10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "every_e(x,all_e,PatientOf(a_Mary,x))",
-                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Quantifier\":\"x\"},\"t\":\"e\"}},\"OpenDelim\",{\"Const\":\"all_e\"},\"ArgSep\",{\"Func\":\"PatientOf\"},\"OpenDelim\",{\"Actor\":\"Mary\"},\"ArgSep\",{\"Var\":{\"Quantifier\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
+                "[{\"Quantifier\":{\"q\":\"every\",\"var\":{\"Bound\":\"x\"},\"t\":\"e\"}},\"OpenDelim\",{\"Const\":\"all_e\"},\"ArgSep\",{\"Func\":\"PatientOf\"},\"OpenDelim\",{\"Actor\":\"Mary\"},\"ArgSep\",{\"Var\":{\"Bound\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
                 "(cool#<a,t>)(a_John)",
@@ -307,7 +306,7 @@ mod test {
             ),
             (
                 "lambda a x (lambda a y (likes#<a,<a,t>>(x))(y))",
-                "[{\"Lambda\":{\"t\":\"a\",\"var\":{\"Lambda\":\"x\"}}},{\"Lambda\":{\"t\":\"a\",\"var\":{\"Lambda\":\"y\"}}},{\"Var\":{\"Free\":{\"label\":\"likes\",\"t\":\"<a,<a,t>>\",\"anon\":false}}},\"OpenDelim\",{\"Var\":{\"Lambda\":\"x\"}},\"ArgSep\",{\"Var\":{\"Lambda\":\"y\"}},\"CloseDelim\"]",
+                "[{\"Lambda\":{\"t\":\"a\",\"var\":{\"Bound\":\"x\"}}},{\"Lambda\":{\"t\":\"a\",\"var\":{\"Bound\":\"y\"}}},{\"Var\":{\"Free\":{\"label\":\"likes\",\"t\":\"<a,<a,t>>\",\"anon\":false}}},\"OpenDelim\",{\"Var\":{\"Bound\":\"x\"}},\"ArgSep\",{\"Var\":{\"Bound\":\"y\"}},\"CloseDelim\"]",
             ),
         ] {
             let expression = RootedLambdaPool::parse(statement)?;
