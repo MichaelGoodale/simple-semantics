@@ -120,7 +120,7 @@ fn reduction(bencher: divan::Bencher) {
 
     bencher.bench(|| {
         let mut t = t.clone();
-        for x in t_to_t.iter().cycle().take(5000).cloned() {
+        for x in t_to_t.iter().cycle().take(7500).cloned() {
             t = t.merge(x).unwrap();
         }
         t.reduce().unwrap();

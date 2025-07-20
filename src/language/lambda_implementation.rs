@@ -38,6 +38,18 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
     type Pool = LanguageExpression<'a>;
     type ConversionError = LambdaConversionError;
 
+    fn n_children(&self) -> usize {
+        match self {
+            Expr::Quantifier { .. } => 2,
+            Expr::Variable(_) => 0,
+            Expr::Actor(_) => 0,
+            Expr::Event(_) => 0,
+            Expr::Constant(_) => 0,
+            Expr::Binary(..) => 2,
+            Expr::Unary(..) => 1,
+        }
+    }
+
     fn inc_depth(&self) -> bool {
         matches!(self, Expr::Quantifier { .. })
     }
@@ -57,22 +69,22 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         .map(|x| LambdaExprRef(x.0))
     }
 
-    fn change_children(&mut self, new_children: &[LambdaExprRef]) {
+    fn change_children(&mut self, mut new_children: impl Iterator<Item = LambdaExprRef>) {
         match self {
             Expr::Quantifier {
                 restrictor,
                 subformula,
                 ..
             } => {
-                *restrictor = ExprRef(new_children[0].0);
-                *subformula = ExprRef(new_children[1].0);
+                *restrictor = ExprRef(new_children.next().unwrap().0);
+                *subformula = ExprRef(new_children.next().unwrap().0);
             }
             Expr::Binary(_, x, y) => {
-                *x = ExprRef(new_children[0].0);
-                *y = ExprRef(new_children[1].0);
+                *x = ExprRef(new_children.next().unwrap().0);
+                *y = ExprRef(new_children.next().unwrap().0);
             }
             Expr::Unary(_, x) => {
-                *x = ExprRef(new_children[0].0);
+                *x = ExprRef(new_children.next().unwrap().0);
             }
             Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => (),
         }

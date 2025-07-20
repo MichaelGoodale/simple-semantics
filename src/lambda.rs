@@ -110,7 +110,10 @@ pub trait LambdaLanguageOfThought {
     fn inc_depth(&self) -> bool;
 
     ///Given a list of new references for all children of an expr, change its children.
-    fn change_children(&mut self, new_children: &[LambdaExprRef]);
+    fn change_children(&mut self, new_children: impl Iterator<Item = LambdaExprRef>);
+
+    ///Get the number of children of an expression.
+    fn n_children(&self) -> usize;
 
     ///Get the return type of an expression.
     fn get_type(&self) -> &LambdaType;
@@ -132,9 +135,13 @@ impl LambdaLanguageOfThought for () {
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
         std::iter::empty()
     }
+
+    fn n_children(&self) -> usize {
+        0
+    }
     fn remap_refs(&mut self, _: &[usize]) {}
 
-    fn change_children(&mut self, _: &[LambdaExprRef]) {}
+    fn change_children(&mut self, _: impl Iterator<Item = LambdaExprRef>) {}
 
     fn get_type(&self) -> &LambdaType {
         unimplemented!()
@@ -471,6 +478,16 @@ pub(crate) struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
 }
 
 impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
+    fn n_children(&self) -> usize {
+        match self {
+            LambdaExpr::Lambda(..) => 1,
+            LambdaExpr::BoundVariable(..) => 0,
+            LambdaExpr::FreeVariable(..) => 0,
+            LambdaExpr::Application { .. } => 2,
+            LambdaExpr::LanguageOfThoughtExpr(e) => e.n_children(),
+        }
+    }
+
     pub(crate) fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaExprRef> + 'a> {
         match self {
             LambdaExpr::Lambda(x, _) => Box::new([x].into_iter().copied()),
@@ -533,7 +550,7 @@ impl<'a, 'src: 'a, T: LambdaLanguageOfThought + 'a> MutableLambdaPoolBFSIterator
 }
 
 impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIterator<'a, 'src, T> {
-    type Item = &'a mut LambdaExpr<'src, T>;
+    type Item = (&'a mut LambdaExpr<'src, T>, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((x, lambda_depth)) = self.queue.pop_front() {
@@ -555,21 +572,12 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
                         .for_each(|x| self.queue.push_back((x, depth)))
                 }
             }
-            Some(unsafe { self.pool.as_mut().unwrap().get_mut(x) })
+            Some((
+                unsafe { self.pool.as_mut().unwrap().get_mut(x) },
+                lambda_depth,
+            ))
         } else {
             None
-        }
-    }
-}
-
-impl<'src, T: Clone> LambdaExpr<'src, T> {
-    ///Adjusts bind variables to a new depth)
-    fn depth_remap(&self, depth: usize) -> LambdaExpr<'src, T> {
-        match self {
-            LambdaExpr::BoundVariable(i, lambda_type) => {
-                LambdaExpr::BoundVariable(i + depth, lambda_type.clone())
-            }
-            _ => self.clone(),
         }
     }
 }
@@ -578,7 +586,6 @@ impl<'src, T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<'src, T>
 where
     T: Clone,
 {
-    #[allow(dead_code)]
     pub(crate) fn bfs_from_mut<'a>(
         &'a mut self,
         x: LambdaExprRef,
@@ -651,41 +658,51 @@ where
         Ok(())
     }
 
-    fn clone_section_return_expr(
-        &mut self,
-        source: LambdaExprRef,
-        depth: usize,
-    ) -> LambdaExpr<'src, T> {
-        let mut expr = self.get(source).depth_remap(depth);
-        let new_children: Vec<_> = expr
-            .get_children()
-            .map(|child| self.clone_section(child, depth))
-            .collect();
-        expr.change_children(&new_children);
-        expr
-    }
-
-    fn clone_section(&mut self, source: LambdaExprRef, depth: usize) -> LambdaExprRef {
-        let mut expr = self.get(source).depth_remap(depth);
-        let new_children: Vec<_> = expr
-            .get_children()
-            .map(|child| self.clone_section(child, depth))
-            .collect();
-        expr.change_children(&new_children);
-        self.0.push(expr);
-        LambdaExprRef(self.0.len() as u32 - 1)
-    }
-
     fn replace_section(&mut self, to_replace: &[(LambdaExprRef, usize)], to_copy: LambdaExprRef) {
+        //TODO: Increment only locally free bound variables (e.g. bound variables that are bound
+        //higher than either applicant).
         let n = to_replace.len();
         for (i, (x, depth)) in to_replace.iter().enumerate() {
             if i != n - 1 {
-                //We have more to add so we need to copy.
-                let expr = self.clone_section_return_expr(to_copy, *depth);
-                *self.get_mut(*x) = expr;
+                let mut len = self.0.len();
+                let mut first = true;
+                let mut head = None;
+                self.0.extend(
+                    self.bfs_from(to_copy)
+                        .filter_map(|(x, d)| {
+                            let mut expr = self.get(x).clone();
+                            if let LambdaExpr::BoundVariable(bound_depth, _) = &mut expr
+                                && *bound_depth >= d
+                            {
+                                *bound_depth += depth;
+                            }
+
+                            let old_len = len;
+                            len += expr.n_children();
+                            expr.change_children((old_len..len).map(|x| LambdaExprRef(x as u32)));
+                            if first {
+                                head = Some(expr);
+                                first = false;
+                                None
+                            } else {
+                                Some(expr)
+                            }
+                        })
+                        .collect::<Vec<_>>(), //TODO: There may be a way to remove this allocation, not
+                                              //sure
+                );
+
+                *self.get_mut(*x) = head.unwrap();
             } else {
+                for (x, d) in self.bfs_from_mut(to_copy) {
+                    if let LambdaExpr::BoundVariable(bound_depth, _) = x
+                        && *bound_depth >= d
+                    {
+                        *bound_depth += depth;
+                    }
+                }
                 //Last iteration so we don't need to copy anymore.
-                *self.get_mut(*x) = self.get(to_copy).depth_remap(*depth);
+                *self.get_mut(*x) = self.get(to_copy).clone();
             }
         }
     }
@@ -793,16 +810,16 @@ where
 }
 
 impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
-    fn change_children(&mut self, children: &[LambdaExprRef]) {
+    fn change_children(&mut self, mut children: impl Iterator<Item = LambdaExprRef>) {
         match self {
-            LambdaExpr::Lambda(lambda_expr_ref, _) => *lambda_expr_ref = children[0],
+            LambdaExpr::Lambda(lambda_expr_ref, _) => *lambda_expr_ref = children.next().unwrap(),
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
             LambdaExpr::Application {
                 subformula,
                 argument,
             } => {
-                *subformula = children[0];
-                *argument = children[1];
+                *subformula = children.next().unwrap();
+                *argument = children.next().unwrap();
             }
             LambdaExpr::LanguageOfThoughtExpr(x) => x.change_children(children),
         }
@@ -1290,6 +1307,7 @@ mod test {
         let mut phi = phi.merge(sleeps.clone()).unwrap();
         println!("{phi}");
         phi.reduce()?;
+        println!("{phi}");
         let pool = phi.into_pool()?;
         assert_eq!(
             "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
