@@ -105,10 +105,9 @@ pub trait LambdaLanguageOfThought {
     ///(Used in garbage collection).
     fn remap_refs(&mut self, remap: &[usize]);
 
-    ///When combining two expressions, ensure they don't share any variables.
-    fn alpha_reduce(a: &mut RootedLambdaPool<Self>, b: &mut RootedLambdaPool<Self>)
-    where
-        Self: Sized;
+    ///Returns true if this is somewhere that can bind variables (e.g. should we increment debruijn
+    ///indices
+    fn inc_depth(&self) -> bool;
 
     ///Given a list of new references for all children of an expr, change its children.
     fn change_children(&mut self, new_children: &[LambdaExprRef]);
@@ -141,11 +140,13 @@ impl LambdaLanguageOfThought for () {
         unimplemented!()
     }
 
+    fn inc_depth(&self) -> bool {
+        false
+    }
+
     fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a> {
         Box::new(empty())
     }
-
-    fn alpha_reduce(_a: &mut RootedLambdaPool<Self>, _b: &mut RootedLambdaPool<Self>) {}
 
     fn to_pool(_: RootedLambdaPool<Self>) -> Result<Self::Pool, ()> {
         Ok(())
@@ -305,7 +306,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
 
     ///Combine two lambda expressions by applying one to the other. Returns [`None`] if that is
     ///impossible.
-    pub fn merge(mut self, mut other: Self) -> Option<Self> {
+    pub fn merge(mut self, other: Self) -> Option<Self> {
         let self_type = self.pool.get_type(self.root).expect("malformed type");
         let other_type = other.pool.get_type(other.root).expect("malformed type");
 
@@ -317,12 +318,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
             return None;
         };
 
-        //To make sure that the rebound fresh variables are identical.
-        if self_subformula {
-            T::alpha_reduce(&mut self, &mut other);
-        } else {
-            T::alpha_reduce(&mut other, &mut self);
-        }
         let (other_pool, other_root) = other.into();
         let other_root = self.pool.extend_pool(other_root, other_pool);
 
@@ -510,9 +505,12 @@ impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, '_, T> {
                     self.queue.push_back((*argument, lambda_depth));
                 }
                 LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-                LambdaExpr::LanguageOfThoughtExpr(x) => x
-                    .get_children()
-                    .for_each(|x| self.queue.push_back((x, lambda_depth))),
+                LambdaExpr::LanguageOfThoughtExpr(x) => {
+                    let depth = lambda_depth + if x.inc_depth() { 1 } else { 0 };
+
+                    x.get_children()
+                        .for_each(|x| self.queue.push_back((x, depth)))
+                }
             }
             Some((x, lambda_depth))
         } else {
@@ -554,9 +552,12 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
                     self.queue.push_back((*argument, lambda_depth));
                 }
                 LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-                LambdaExpr::LanguageOfThoughtExpr(x) => x
-                    .get_children()
-                    .for_each(|x| self.queue.push_back((x, lambda_depth))),
+                LambdaExpr::LanguageOfThoughtExpr(x) => {
+                    let depth = lambda_depth + if x.inc_depth() { 1 } else { 0 };
+
+                    x.get_children()
+                        .for_each(|x| self.queue.push_back((x, depth)))
+                }
             }
             Some(unsafe { self.pool.as_mut().unwrap().get_mut(x) })
         } else {

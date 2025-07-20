@@ -3,7 +3,6 @@ use super::*;
 #[derive(Debug, Default, Clone)]
 pub(super) struct Context<'t> {
     lambdas: Vec<&'t LambdaType>,
-    available_vars: Vec<Variable>,
     depth: usize,
 }
 
@@ -19,47 +18,26 @@ impl<'t> Context<'t> {
     pub fn into_owned_lambdas<'b>(self, new_lambdas: &'b [LambdaType]) -> Context<'b> {
         Context {
             lambdas: new_lambdas.iter().collect(),
-            available_vars: self.available_vars,
             depth: self.depth,
         }
     }
 
-    pub fn add_var(&mut self, v: Variable) -> Variable {
-        self.available_vars.push(v);
-        v
+    pub fn add_var(&mut self, actor_or_event: ActorOrEvent) {
+        self.lambdas.push(match actor_or_event {
+            ActorOrEvent::Actor => LambdaType::a(),
+            ActorOrEvent::Event => LambdaType::e(),
+        })
     }
+
     pub fn add_lambda(&mut self, lhs: &'t LambdaType) {
         self.lambdas.push(lhs);
     }
 
-    pub fn event_variables<'a>(&self) -> impl Iterator<Item = UnbuiltExpr<'a, 't>> {
-        self.available_vars.iter().filter_map(|x| {
-            if matches!(x, Variable::Event(_)) {
-                Some(UnbuiltExpr::Variable(*x))
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn actor_variables<'a>(&self) -> impl Iterator<Item = UnbuiltExpr<'a, 't>> {
-        self.available_vars.iter().filter_map(|x| {
-            if matches!(x, Variable::Actor(_)) {
-                Some(UnbuiltExpr::Variable(*x))
-            } else {
-                None
-            }
-        })
-    }
-
     pub fn can_sample_event(&self) -> bool {
-        self.available_vars
-            .iter()
-            .any(|x| matches!(x, Variable::Event(_)))
-            | self.lambdas.iter().any(|lam| *lam == LambdaType::e())
+        self.lambdas.iter().any(|lam| *lam == LambdaType::e())
     }
 
-    pub fn lambda_variables<'a>(
+    pub fn variables<'a>(
         &self,
         lambda_type: &LambdaType,
     ) -> impl Iterator<Item = UnbuiltExpr<'a, 't>> {
@@ -107,7 +85,7 @@ impl<'src, 'a> Iterator for ContextBFSIterator<'src, 'a> {
                     ..
                 }) => {
                     let mut context = context.clone();
-                    context.available_vars.push(*var);
+                    context.add_var(*var);
                     context.depth += 1;
                     self.queue
                         .push_back((LambdaExprRef(restrictor.0), context.clone()));
@@ -134,7 +112,6 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             self.root,
             Context {
                 lambdas: vec![],
-                available_vars: vec![],
                 depth: 0,
             },
         ));

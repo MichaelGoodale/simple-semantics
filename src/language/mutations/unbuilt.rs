@@ -5,7 +5,6 @@ use super::*;
 #[derive(Debug, Clone)]
 pub enum UnbuiltExpr<'src, 't> {
     Quantifier(Quantifier, ActorOrEvent),
-    Variable(Variable),
     Actor(Actor<'src>),
     Event(Event),
     Binary(BinOp),
@@ -28,10 +27,6 @@ impl UnbuiltExpr<'_, '_> {
                     LambdaType::t().clone(),
                 ],
             },
-            UnbuiltExpr::Variable(var) => ExpressionType::new_no_args(match var {
-                Variable::Actor(_) => LambdaType::a().clone(),
-                Variable::Event(_) => LambdaType::e().clone(),
-            }),
             UnbuiltExpr::Actor(_) => ExpressionType::new_no_args(LambdaType::a().clone()),
             UnbuiltExpr::Event(_) => ExpressionType::new_no_args(LambdaType::e().clone()),
             UnbuiltExpr::Binary(b) => match b {
@@ -85,7 +80,6 @@ pub fn add_expr<'src, 'pool>(
     e: UnbuiltExpr<'src, 'pool>,
     pos: u32,
     mut context: Context<'pool>,
-    fresher: &mut Fresher,
     pool: &mut Vec<Option<LambdaExpr<Expr<'src>>>>,
 ) -> Vec<(u32, &'pool LambdaType, Context<'pool>)> {
     let cur_size = pool.len() as u32 - 1;
@@ -102,15 +96,14 @@ pub fn add_expr<'src, 'pool>(
                 ),
                 (cur_size + 2, LambdaType::t()),
             ]);
-            let var = context.add_var(fresher.fresh(actor_or_event));
+            context.add_var(actor_or_event);
             LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                 quantifier,
-                var_type: var,
+                var_type: actor_or_event,
                 restrictor: ExprRef(cur_size + 1),
                 subformula: ExprRef(cur_size + 2),
             })
         }
-        UnbuiltExpr::Variable(var) => LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(var)),
         UnbuiltExpr::Event(event) => LambdaExpr::LanguageOfThoughtExpr(Expr::Event(event)),
         UnbuiltExpr::Actor(actor) => LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(actor)),
         UnbuiltExpr::Binary(bin_op) => {
@@ -157,47 +150,4 @@ pub fn add_expr<'src, 'pool>(
         .into_iter()
         .map(|(a, b)| (a, b, context.clone()))
         .collect()
-}
-
-#[derive(Debug, Copy, Clone, Default)]
-pub struct Fresher(u32);
-
-impl Fresher {
-    pub fn fresh(&mut self, actor_or_event: ActorOrEvent) -> Variable {
-        self.0 += 1;
-        actor_or_event.to_variable(self.0)
-    }
-
-    pub fn new_rooted(pool: &RootedLambdaPool<Expr>) -> Self {
-        Fresher(
-            pool.pool
-                .0
-                .iter()
-                .filter_map(|x| match x {
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v))
-                    | LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var_type: v, .. }) => {
-                        Some(v.id())
-                    }
-                    _ => None,
-                })
-                .max()
-                .unwrap_or(0),
-        )
-    }
-
-    pub fn new(pool: &[Option<LambdaExpr<Expr>>]) -> Self {
-        Fresher(
-            pool.iter()
-                .filter_map(|x| match x {
-                    Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)))
-                    | Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                        var_type: v,
-                        ..
-                    })) => Some(v.id()),
-                    _ => None,
-                })
-                .max()
-                .unwrap_or(0),
-        )
-    }
 }

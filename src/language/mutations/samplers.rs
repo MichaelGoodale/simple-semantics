@@ -14,14 +14,12 @@ use crate::{
 pub(super) enum SampleDetails {
     LambdaExpr,
     LambdaVar(usize),
-    QuantifierVar(Variable),
     Other(usize),
 }
 
 impl SampleDetails {
     fn new(e: &UnbuiltExpr) -> Self {
         match e {
-            UnbuiltExpr::Variable(variable) => SampleDetails::QuantifierVar(*variable),
             UnbuiltExpr::Lambda(..) => SampleDetails::LambdaExpr,
             UnbuiltExpr::BoundVariable(n, _) => SampleDetails::LambdaVar(*n),
             _ => panic!(),
@@ -103,7 +101,7 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
                                     (2.0) / (((depth / config.depth_rapidness) + 1.5).powf(3.0));
                                 config.lambda_weight * pareto.abs()
                             }
-                            SampleDetails::LambdaVar(_) | SampleDetails::QuantifierVar(_) => {
+                            SampleDetails::LambdaVar(_) => {
                                 let pareto =
                                     (1.0) / (((depth / config.depth_rapidness) + 1.5).powf(2.0));
                                 config.variable_weight * pareto.abs()
@@ -217,12 +215,7 @@ impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
                 }
             }
         } else if arguments.is_empty() {
-            possibilities.extend(context.lambda_variables(lambda_type).map(Cow::Owned));
-            if lambda_type == LambdaType::a() {
-                possibilities.extend(context.actor_variables().map(Cow::Owned));
-            } else if lambda_type == LambdaType::e() {
-                possibilities.extend(context.event_variables().map(Cow::Owned));
-            }
+            possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
         }
 
         if possibilities.is_empty() {
@@ -262,22 +255,10 @@ impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
             possibilities.push((e, det));
         }
 
-        possibilities.extend(context.lambda_variables(lambda_type).map(|e| {
+        possibilities.extend(context.variables(lambda_type).map(|e| {
             let d = SampleDetails::new(&e);
             (Cow::Owned(e), d)
         }));
-
-        if lambda_type == LambdaType::a() {
-            possibilities.extend(context.actor_variables().map(|e| {
-                let d = SampleDetails::new(&e);
-                (Cow::Owned(e), d)
-            }));
-        } else if lambda_type == LambdaType::e() {
-            possibilities.extend(context.event_variables().map(|e| {
-                let d = SampleDetails::new(&e);
-                (Cow::Owned(e), d)
-            }));
-        }
 
         if possibilities.is_empty() {
             return Err(SamplingError::CantFindExpr(lambda_type.clone()));

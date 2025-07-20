@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::{
     lambda::{FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
     language::{
-        BinOp, Expr, MonOp, Variable,
+        ActorOrEvent, BinOp, Expr, MonOp, Variable,
         lambda_implementation::{AssociativityData, add_parenthesis_for_bin_op},
     },
 };
@@ -89,17 +89,17 @@ impl RootedLambdaPool<'_, Expr<'_>> {
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
                 Expr::Quantifier {
                     quantifier,
-                    var_type: var,
+                    var_type,
                     restrictor,
                     subformula,
                 } => {
-                    let (c, var_string) = c.add_qvar(*var);
+                    let (c, var_string) = c.inc_depth_q(*var_type);
 
                     v.push(Token::Quantifier {
                         q: quantifier.to_string(),
-                        t: match var {
-                            Variable::Actor(_) => LambdaType::a(),
-                            Variable::Event(_) => LambdaType::e(),
+                        t: match var_type {
+                            ActorOrEvent::Actor => LambdaType::a(),
+                            ActorOrEvent::Event => LambdaType::e(),
                         },
                         var: TokenVar::Quantifier(var_string),
                     });
@@ -111,7 +111,10 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     AssociativityData::Monop
                 }
                 Expr::Variable(variable) => {
-                    v.push(Token::Var(TokenVar::Quantifier(c.q_var(*variable))));
+                    v.push(Token::Var(TokenVar::Quantifier(c.lambda_var(
+                        variable.id() as usize,
+                        variable.as_lambda_type(),
+                    ))));
                     AssociativityData::Monop
                 }
                 Expr::Actor(a) => {

@@ -38,6 +38,10 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
     type Pool = LanguageExpression<'a>;
     type ConversionError = LambdaConversionError;
 
+    fn inc_depth(&self) -> bool {
+        matches!(self, Expr::Quantifier { .. })
+    }
+
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
         match self {
             Expr::Quantifier {
@@ -128,23 +132,27 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             .enumerate()
             .filter_map(|(i, x)| {
                 if let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                    var_type: var,
+                    var_type,
                     restrictor,
                     ..
                 }) = x
                 {
                     let restr_expr = pool.get(LambdaExprRef(restrictor.0));
-                    let should_bind = match var {
-                        Variable::Actor(_) => {
+                    let should_bind = match var_type {
+                        ActorOrEvent::Actor => {
                             matches!(restr_expr, LambdaExpr::Lambda(_, t) if t == LambdaType::a())
                         }
-                        Variable::Event(_) => {
+                        ActorOrEvent::Event => {
                             matches!(restr_expr, LambdaExpr::Lambda(_, t) if t == LambdaType::e())
                         }
                     };
 
                     if should_bind {
-                        Some((LambdaExprRef(i as u32), LambdaExprRef(restrictor.0), *var))
+                        Some((
+                            LambdaExprRef(i as u32),
+                            LambdaExprRef(restrictor.0),
+                            *var_type,
+                        ))
                     } else {
                         None
                     }
@@ -159,7 +167,12 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             for (quantifer, restrictor, var) in quantifier_restrictions {
                 let var = pool
                     .pool
-                    .add(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(var)));
+                    .add(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(
+                        match var {
+                            ActorOrEvent::Actor => Variable::Actor(0),
+                            ActorOrEvent::Event => Variable::Event(0),
+                        },
+                    )));
                 let new_restrictor = pool.pool.add(LambdaExpr::Application {
                     subformula: restrictor,
                     argument: var,
@@ -182,6 +195,12 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             .into_iter()
             .map(|x| match x {
                 LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x),
+                LambdaExpr::BoundVariable(x, LambdaType::A) => {
+                    Ok(Expr::Variable(Variable::Actor(x as u32)))
+                }
+                LambdaExpr::BoundVariable(x, LambdaType::E) => {
+                    Ok(Expr::Variable(Variable::Event(x as u32)))
+                }
                 _ => Err(LambdaConversionError::StillHasLambdaTerms),
             })
             .collect::<Result<Vec<_>, LambdaConversionError>>()?;
@@ -192,50 +211,14 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         })
     }
 
-    fn alpha_reduce(a: &mut RootedLambdaPool<Self>, b: &mut RootedLambdaPool<Self>) {
-        let mut max_var = None;
-
-        for x in a.pool.0.iter() {
-            match x {
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var_type: v, .. })
-                | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
-                    if let Some(max_var) = max_var.as_mut() {
-                        let v = v.id();
-                        if v > *max_var {
-                            *max_var = v;
-                        }
-                    } else {
-                        max_var = Some(v.id());
-                    }
-                }
-                _ => (),
-            }
-        }
-
-        if let Some(max_var) = max_var {
-            for x in b.pool.iter_mut() {
-                match x {
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var_type: v, .. })
-                    | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
-                        *v = match v {
-                            Variable::Actor(a) => Variable::Actor(max_var + *a + 1),
-                            Variable::Event(e) => Variable::Event(max_var + *e + 1),
-                        }
-                    }
-                    _ => (),
-                }
-            }
-        }
-    }
-
     fn get_arguments<'b>(&'b self) -> Box<dyn Iterator<Item = LambdaType> + 'b> {
         match self {
             Expr::Quantifier {
-                var_type: Variable::Actor(_),
+                var_type: ActorOrEvent::Actor,
                 ..
             } => Box::new([LambdaType::at().clone(), LambdaType::t().clone()].into_iter()),
             Expr::Quantifier {
-                var_type: Variable::Event(_),
+                var_type: ActorOrEvent::Event,
                 ..
             } => Box::new([LambdaType::et().clone(), LambdaType::t().clone()].into_iter()),
             Expr::Binary(b, _, _) => Box::new(b.get_argument_type().into_iter().cloned()),
@@ -279,29 +262,23 @@ pub fn to_var(x: usize, t: Option<&LambdaType>) -> String {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-enum Var {
-    Depth(usize),
-    Quantifier(Variable),
-}
-
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub(super) struct VarContext {
-    vars: HashMap<Var, usize>,
-    predicates: HashMap<Var, usize>,
-    truths: HashMap<Var, usize>,
+    vars: HashMap<usize, usize>,
+    predicates: HashMap<usize, usize>,
+    truths: HashMap<usize, usize>,
     depth: usize,
 }
 
 impl VarContext {
-    fn get_map(&self, t: Option<&LambdaType>) -> &HashMap<Var, usize> {
+    fn get_map(&self, t: Option<&LambdaType>) -> &HashMap<usize, usize> {
         match t {
             Some(t) if t == LambdaType::t() => &self.truths,
             Some(t) if t.is_function() => &self.predicates,
             _ => &self.vars,
         }
     }
-    fn get_map_mut(&mut self, t: Option<&LambdaType>) -> &mut HashMap<Var, usize> {
+    fn get_map_mut(&mut self, t: Option<&LambdaType>) -> &mut HashMap<usize, usize> {
         match t {
             Some(t) if t == LambdaType::t() => &mut self.truths,
             Some(t) if t.is_function() => &mut self.predicates,
@@ -309,43 +286,30 @@ impl VarContext {
         }
     }
 
+    pub(super) fn inc_depth_q(mut self, t: ActorOrEvent) -> (Self, String) {
+        let d = self.depth;
+        let t: LambdaType = t.into();
+        let map = self.get_map_mut(Some(&t));
+        let n_var = map.len();
+        map.insert(d, n_var);
+        self.depth += 1;
+        (self, to_var(n_var, Some(&t)))
+    }
+
     pub(super) fn inc_depth(mut self, t: &LambdaType) -> (Self, String) {
         let d = self.depth;
         let map = self.get_map_mut(Some(t));
         let n_var = map.len();
-        map.insert(Var::Depth(d), n_var);
+        map.insert(d, n_var);
         self.depth += 1;
         (self, to_var(n_var, Some(t)))
     }
 
     pub(super) fn lambda_var(&self, bvar: usize, t: &LambdaType) -> String {
         to_var(
-            *self
-                .get_map(Some(t))
-                .get(&Var::Depth(self.depth - bvar - 1))
-                .unwrap(),
+            *self.get_map(Some(t)).get(&(self.depth - bvar - 1)).unwrap(),
             Some(t),
         )
-    }
-    pub(super) fn q_var(&self, var: Variable) -> String {
-        to_var(
-            self.get_map(None)
-                .get(&Var::Quantifier(var))
-                .copied()
-                .unwrap_or_else(|| match var {
-                    //This is on the off-chance that the string is invalid due to a mutation (e.g.
-                    //swapping a quantifier and making a free var invalid)
-                    Variable::Actor(a) | Variable::Event(a) => a as usize + 1000,
-                }),
-            None,
-        )
-    }
-
-    pub(super) fn add_qvar(mut self, x: Variable) -> (Self, String) {
-        let map = self.get_map_mut(None);
-        let n_var = map.len();
-        map.insert(Var::Quantifier(x), n_var);
-        (self, to_var(n_var, None))
     }
 }
 
@@ -398,11 +362,6 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     AssociativityData::Lambda,
                 )
             }
-            LambdaExpr::BoundVariable(bvar, lambda_type) => {
-                (c.lambda_var(*bvar, lambda_type), AssociativityData::Monop)
-            }
-            LambdaExpr::FreeVariable(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Monop),
-
             LambdaExpr::Application {
                 subformula,
                 argument,
@@ -427,15 +386,22 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
 
                 (s, AssociativityData::App)
             }
-
+            LambdaExpr::BoundVariable(bvar, lambda_type) => {
+                (c.lambda_var(*bvar, lambda_type), AssociativityData::Monop)
+            }
+            LambdaExpr::FreeVariable(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Monop),
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
+                Expr::Variable(variable) => (
+                    c.lambda_var(variable.id() as usize, variable.as_lambda_type()),
+                    AssociativityData::Monop,
+                ),
                 Expr::Quantifier {
                     quantifier,
-                    var_type: var,
+                    var_type,
                     restrictor,
                     subformula,
                 } => {
-                    let (c, var_string) = c.add_qvar(*var);
+                    let (c, var_string) = c.inc_depth_q(*var_type);
                     let (restrictor, _) =
                         self.string(LambdaExprRef(restrictor.0), c.clone(), false);
                     let (subformula, _) = self.string(LambdaExprRef(subformula.0), c, false);
@@ -443,16 +409,15 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                         format!(
                             "{}{}({}, {restrictor}, {subformula})",
                             quantifier,
-                            match var {
-                                Variable::Actor(_) => "",
-                                Variable::Event(_) => "_e",
+                            match var_type {
+                                ActorOrEvent::Actor => "",
+                                ActorOrEvent::Event => "_e",
                             },
                             var_string,
                         ),
                         AssociativityData::Monop,
                     )
                 }
-                Expr::Variable(variable) => (c.q_var(*variable), AssociativityData::Monop),
                 Expr::Actor(a) => (format!("a_{a}"), AssociativityData::Monop),
                 Expr::Event(e) => (format!("e_{e}"), AssociativityData::Monop),
                 Expr::Binary(bin_op, x, y) => {

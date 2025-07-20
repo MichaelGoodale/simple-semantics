@@ -20,7 +20,7 @@ use chumsky::{
 };
 use chumsky::{pratt::*, prelude::*};
 
-use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier, Variable};
+use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier};
 use thiserror::Error;
 
 ///Error in parsing a lambda expression
@@ -105,16 +105,17 @@ impl<'src> ParseTree<'src> {
             }
             ParseTree::Quantifier {
                 quantifier,
-                lambda_type: actor_or_event,
+                lambda_type: var_type,
                 variable,
                 restrictor,
                 subformula,
             } => {
-                let var = variable_names.bind_fresh_quantifier(variable, *actor_or_event);
-                let restrictor = restrictor.add_to_pool(pool, variable_names, lambda_depth)?;
+                let lambda_type: LambdaType = (*var_type).into();
+                variable_names.bind_var(variable, lambda_depth + 1, lambda_type);
+                let restrictor = restrictor.add_to_pool(pool, variable_names, lambda_depth + 1)?;
 
                 let r_type = pool.get_type(restrictor)?;
-                let required_type = match actor_or_event {
+                let required_type = match var_type {
                     ActorOrEvent::Actor => LambdaType::at(),
                     ActorOrEvent::Event => LambdaType::et(),
                 };
@@ -124,7 +125,7 @@ impl<'src> ParseTree<'src> {
                     )));
                 }
 
-                let subformula = subformula.add_to_pool(pool, variable_names, lambda_depth)?;
+                let subformula = subformula.add_to_pool(pool, variable_names, lambda_depth + 1)?;
                 let sub_type = pool.get_type(subformula)?;
                 if &sub_type != LambdaType::t() {
                     return Err(LambdaParseError::TypeError(format!(
@@ -135,7 +136,7 @@ impl<'src> ParseTree<'src> {
 
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: *quantifier,
-                    var_type: var,
+                    var_type: *var_type,
                     restrictor: restrictor.into(),
                     subformula: subformula.into(),
                 })
@@ -166,7 +167,7 @@ impl<'src> ParseTree<'src> {
                 var,
                 lambda_type,
             } => {
-                variable_names.bind_lambda(var, lambda_depth + 1, lambda_type.clone());
+                variable_names.bind_var(var, lambda_depth + 1, lambda_type.clone());
                 let body = body.add_to_pool(pool, variable_names, lambda_depth + 1)?;
                 variable_names.unbind(var);
                 LambdaExpr::Lambda(body, lambda_type.clone())
@@ -187,14 +188,9 @@ impl<'src> ParseTree<'src> {
         Ok(RootedLambdaPool::new(pool, root))
     }
 }
-#[derive(Debug, Clone, Eq, PartialEq)]
-enum ContextVar {
-    QuantifierVar(Variable),
-    LambdaVar(Bvar, LambdaType),
-}
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-struct VariableContext<'src>(HashMap<&'src str, Vec<ContextVar>>, u32);
+struct VariableContext<'src>(HashMap<&'src str, Vec<(Bvar, LambdaType)>>, u32);
 
 impl<'src> VariableContext<'src> {
     fn to_expr(
@@ -204,17 +200,12 @@ impl<'src> VariableContext<'src> {
         lambda_depth: usize,
     ) -> Result<LambdaExpr<'src, Expr<'src>>, LambdaParseError> {
         Ok(match self.0.get(variable) {
-            Some(vars) if !vars.is_empty() => match vars
-                .last()
-                .expect("There should never be an empty vec in the VariableContext")
-            {
-                ContextVar::QuantifierVar(q) => {
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(*q))
-                }
-                ContextVar::LambdaVar(og_depth, lambda_type) => {
-                    LambdaExpr::BoundVariable(lambda_depth - og_depth, lambda_type.clone())
-                }
-            },
+            Some(vars) if !vars.is_empty() => {
+                let (og_depth, lambda_type) = vars
+                    .last()
+                    .expect("There should never be an empty vec in the VariableContext");
+                LambdaExpr::BoundVariable(lambda_depth - og_depth, lambda_type.clone())
+            }
             //Do free var
             _ => match lambda_type {
                 Some(lambda_type) => LambdaExpr::FreeVariable(variable.into(), lambda_type),
@@ -225,25 +216,11 @@ impl<'src> VariableContext<'src> {
         })
     }
 
-    fn bind_lambda(&mut self, variable: &'src str, lambda_depth: usize, lambda_type: LambdaType) {
+    fn bind_var(&mut self, variable: &'src str, lambda_depth: usize, lambda_type: LambdaType) {
         self.0
             .entry(variable)
             .or_default()
-            .push(ContextVar::LambdaVar(lambda_depth, lambda_type));
-    }
-
-    fn bind_fresh_quantifier(
-        &mut self,
-        variable: &'src str,
-        actor_or_event: ActorOrEvent,
-    ) -> Variable {
-        let var = actor_or_event.to_variable(self.1);
-        self.0
-            .entry(variable)
-            .or_default()
-            .push(ContextVar::QuantifierVar(var));
-        self.1 += 1;
-        var
+            .push((lambda_depth, lambda_type));
     }
 
     fn unbind(&mut self, variable: &'src str) {

@@ -19,7 +19,7 @@ mod unbuilt;
 use context::Context;
 use samplers::PossibleExpressions;
 pub use samplers::RandomExprConfig;
-use unbuilt::{Fresher, UnbuiltExpr, add_expr};
+use unbuilt::{UnbuiltExpr, add_expr};
 
 #[derive(Debug, Error, Clone)]
 pub enum MutationError {
@@ -136,7 +136,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 
         for quantifier in quantifiers {
             if let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                var_type: var,
+                var_type: _,
                 subformula,
                 ..
             }) = self.get(quantifier)
@@ -144,9 +144,9 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 let has_variable = self
                     .pool
                     .bfs_from(LambdaExprRef(subformula.0))
-                    .any(|(x, _)| {
-                        if let LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) = self.get(x) {
-                            v == var
+                    .any(|(x, d)| {
+                        if let LambdaExpr::BoundVariable(v, _) = self.get(x) {
+                            *v == d
                         } else {
                             false
                         }
@@ -188,16 +188,12 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             let mut children = self.get(position).get_children();
             match replacement {
                 UnbuiltExpr::Quantifier(quantifier, actor_or_event) => {
-                    let mut fresher = Fresher::new_rooted(self);
                     LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                         quantifier,
-                        var_type: fresher.fresh(actor_or_event),
+                        var_type: actor_or_event,
                         restrictor: children.next().unwrap().into(),
                         subformula: children.next().unwrap().into(),
                     })
-                }
-                UnbuiltExpr::Variable(variable) => {
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(variable))
                 }
                 UnbuiltExpr::Actor(a) => LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(a)),
                 UnbuiltExpr::Event(e) => LambdaExpr::LanguageOfThoughtExpr(Expr::Event(e)),
@@ -236,19 +232,18 @@ fn build_out_pool<'src, 'typ>(
     possible_expressions: PossibleExpressions<'src, 'typ, '_>,
     rng: &mut impl Rng,
 ) -> Result<LambdaPool<'src, Expr<'src>>, SamplingError> {
-    let mut fresher = Fresher::new(&pool);
     let e = possible_expressions
         .possibilities(lambda_type, &context)?
         .choose(rng)?;
 
-    let mut stack = add_expr(e, start_pos, context, &mut fresher, &mut pool);
+    let mut stack = add_expr(e, start_pos, context, &mut pool);
 
     while let Some((pos, lambda_type, context)) = stack.pop() {
         let e = possible_expressions
             .possibilities(lambda_type, &context)?
             .choose(rng)?;
 
-        stack.extend(add_expr(e, pos, context, &mut fresher, &mut pool));
+        stack.extend(add_expr(e, pos, context, &mut pool));
     }
     Ok(pool.try_into().unwrap())
 }

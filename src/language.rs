@@ -105,6 +105,15 @@ impl ActorOrEvent {
     }
 }
 
+impl From<ActorOrEvent> for LambdaType {
+    fn from(value: ActorOrEvent) -> Self {
+        match value {
+            ActorOrEvent::Actor => LambdaType::A,
+            ActorOrEvent::Event => LambdaType::E,
+        }
+    }
+}
+
 ///Any valid constant in the language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Constant<'a> {
@@ -146,6 +155,13 @@ impl Variable {
     fn id(&self) -> u32 {
         match self {
             Variable::Actor(a) | Variable::Event(a) => *a,
+        }
+    }
+
+    fn as_lambda_type(&self) -> &'static LambdaType {
+        match self {
+            Variable::Actor(_) => LambdaType::a(),
+            Variable::Event(_) => LambdaType::e(),
         }
     }
 }
@@ -332,7 +348,7 @@ impl<'a> VariableBuffer<'a> {
     }
 
     fn get(&self, v: Variable, quantifier_depth: usize) -> Option<LanguageResult<'a>> {
-        let pos = quantifier_depth.checked_sub(v.id() as usize)?;
+        let pos = (quantifier_depth).checked_sub(v.id() as usize + 1)?;
         match self.0.get(pos) {
             Some(x) => match (v, x) {
                 (Variable::Actor(_), Some(Entity::Actor(a))) => Some(LanguageResult::Actor(a)),
@@ -576,7 +592,7 @@ impl<'a, 'b> Execution<'a, 'b> {
                 match var_type {
                     ActorOrEvent::Actor => {
                         for e in scenario.actors.iter() {
-                            variables.set(self.quantifier_depth, Entity::Actor(e));
+                            variables.set(self.quantifier_depth - 1, Entity::Actor(e));
                             let truth_value_for_e: bool = self
                                 .interp(restrictor, scenario, &mut variables)?
                                 .try_into()?;
@@ -587,7 +603,7 @@ impl<'a, 'b> Execution<'a, 'b> {
                     }
                     ActorOrEvent::Event => {
                         for e in scenario.events() {
-                            variables.set(self.quantifier_depth, Entity::Event(e));
+                            variables.set(self.quantifier_depth - 1, Entity::Event(e));
                             let truth_value_for_e: bool = self
                                 .interp(restrictor, scenario, &mut variables)?
                                 .try_into()?;
@@ -634,7 +650,7 @@ impl<'a, 'b> Execution<'a, 'b> {
             Quantifier::Existential => false,
         };
         for e in domain {
-            variables.set(self.quantifier_depth, e);
+            variables.set(self.quantifier_depth - 1, e);
             let subformula_value: bool = self
                 .interp(subformula, scenario, &mut variables)?
                 .try_into()?;
@@ -868,8 +884,8 @@ mod tests {
             },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::Variable(Variable::Actor(0)),
-            Expr::Variable(Variable::Event(1)),
+            Expr::Variable(Variable::Actor(1)),
+            Expr::Variable(Variable::Event(0)),
         ]);
 
         let expr = LanguageExpression {
@@ -898,8 +914,8 @@ mod tests {
             },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::PatientOf, ExprRef(5), ExprRef(6)),
-            Expr::Variable(Variable::Actor(0)),
-            Expr::Variable(Variable::Event(1)),
+            Expr::Variable(Variable::Actor(1)),
+            Expr::Variable(Variable::Event(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
@@ -1026,8 +1042,8 @@ mod tests {
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::And, ExprRef(5), ExprRef(8)),
             Expr::Binary(BinOp::PatientOf, ExprRef(6), ExprRef(7)),
-            Expr::Variable(Variable::Actor(0)),
-            Expr::Variable(Variable::Event(1)),
+            Expr::Variable(Variable::Actor(1)),
+            Expr::Variable(Variable::Event(0)),
             Expr::Constant(Constant::Tautology),
         ]);
         let expr = LanguageExpression {
@@ -1138,8 +1154,8 @@ mod tests {
             },
             Expr::Constant(Constant::Property("235", ActorOrEvent::Event)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::Variable(Variable::Actor(0)),
-            Expr::Variable(Variable::Event(1)),
+            Expr::Variable(Variable::Actor(1)),
+            Expr::Variable(Variable::Event(0)),
         ]);
 
         let expr = LanguageExpression {
@@ -1167,8 +1183,8 @@ mod tests {
             },
             Expr::Constant(Constant::Property("235", ActorOrEvent::Event)),
             Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
-            Expr::Variable(Variable::Actor(0)),
-            Expr::Variable(Variable::Event(1)),
+            Expr::Variable(Variable::Actor(1)),
+            Expr::Variable(Variable::Event(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
@@ -1213,8 +1229,8 @@ mod tests {
             },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::AgentOf, ExprRef(9), ExprRef(10)),
-            Expr::Variable(Variable::Actor(0)),
-            Expr::Variable(Variable::Event(1)),
+            Expr::Variable(Variable::Actor(1)),
+            Expr::Variable(Variable::Event(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
@@ -1245,8 +1261,8 @@ mod tests {
             },
             Expr::Constant(Constant::EveryEvent),
             Expr::Binary(BinOp::PatientOf, ExprRef(9), ExprRef(10)),
-            Expr::Variable(Variable::Actor(0)),
-            Expr::Variable(Variable::Event(1)),
+            Expr::Variable(Variable::Actor(1)),
+            Expr::Variable(Variable::Event(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
