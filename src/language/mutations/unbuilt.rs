@@ -105,7 +105,7 @@ pub fn add_expr<'src, 'pool>(
             let var = context.add_var(fresher.fresh(actor_or_event));
             LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                 quantifier,
-                var,
+                var_type: var,
                 restrictor: ExprRef(cur_size + 1),
                 subformula: ExprRef(cur_size + 2),
             })
@@ -175,7 +175,7 @@ impl Fresher {
                 .iter()
                 .filter_map(|x| match x {
                     LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v))
-                    | LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. }) => {
+                    | LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var_type: v, .. }) => {
                         Some(v.id())
                     }
                     _ => None,
@@ -191,7 +191,8 @@ impl Fresher {
                 .filter_map(|x| match x {
                     Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)))
                     | Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                        var: v, ..
+                        var_type: v,
+                        ..
                     })) => Some(v.id()),
                     _ => None,
                 })

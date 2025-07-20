@@ -89,7 +89,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
                 Expr::Quantifier {
                     quantifier,
-                    var,
+                    var_type: var,
                     restrictor,
                     subformula,
                 } => {

@@ -135,7 +135,7 @@ impl<'src> ParseTree<'src> {
 
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: *quantifier,
-                    var,
+                    var_type: var,
                     restrictor: restrictor.into(),
                     subformula: subformula.into(),
                 })

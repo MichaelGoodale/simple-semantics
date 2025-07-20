@@ -101,7 +101,7 @@ impl<'src, 'a> Iterator for ContextBFSIterator<'src, 'a> {
                     self.queue.push_back((*argument, context));
                 }
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                    var,
+                    var_type: var,
                     restrictor,
                     subformula,
                     ..

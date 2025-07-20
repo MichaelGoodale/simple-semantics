@@ -128,7 +128,9 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             .enumerate()
             .filter_map(|(i, x)| {
                 if let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                    var, restrictor, ..
+                    var_type: var,
+                    restrictor,
+                    ..
                 }) = x
                 {
                     let restr_expr = pool.get(LambdaExprRef(restrictor.0));
@@ -195,7 +197,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
         for x in a.pool.0.iter() {
             match x {
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var_type: v, .. })
                 | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
                     if let Some(max_var) = max_var.as_mut() {
                         let v = v.id();
@@ -213,7 +215,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         if let Some(max_var) = max_var {
             for x in b.pool.iter_mut() {
                 match x {
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var: v, .. })
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { var_type: v, .. })
                     | LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(v)) => {
                         *v = match v {
                             Variable::Actor(a) => Variable::Actor(max_var + *a + 1),
@@ -229,11 +231,11 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
     fn get_arguments<'b>(&'b self) -> Box<dyn Iterator<Item = LambdaType> + 'b> {
         match self {
             Expr::Quantifier {
-                var: Variable::Actor(_),
+                var_type: Variable::Actor(_),
                 ..
             } => Box::new([LambdaType::at().clone(), LambdaType::t().clone()].into_iter()),
             Expr::Quantifier {
-                var: Variable::Event(_),
+                var_type: Variable::Event(_),
                 ..
             } => Box::new([LambdaType::et().clone(), LambdaType::t().clone()].into_iter()),
             Expr::Binary(b, _, _) => Box::new(b.get_argument_type().into_iter().cloned()),
@@ -429,7 +431,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
             LambdaExpr::LanguageOfThoughtExpr(x) => match x {
                 Expr::Quantifier {
                     quantifier,
-                    var,
+                    var_type: var,
                     restrictor,
                     subformula,
                 } => {

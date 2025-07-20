@@ -136,7 +136,9 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 
         for quantifier in quantifiers {
             if let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                var, subformula, ..
+                var_type: var,
+                subformula,
+                ..
             }) = self.get(quantifier)
             {
                 let has_variable = self
@@ -189,7 +191,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                     let mut fresher = Fresher::new_rooted(self);
                     LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                         quantifier,
-                        var: fresher.fresh(actor_or_event),
+                        var_type: fresher.fresh(actor_or_event),
                         restrictor: children.next().unwrap().into(),
                         subformula: children.next().unwrap().into(),
                     })

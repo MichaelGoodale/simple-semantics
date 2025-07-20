@@ -173,12 +173,12 @@ impl Display for Quantifier {
 ///which is handled elsewhere.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Expr<'a> {
-    ///A quantified expression
+    ///A quantified expression. Variables are implemented with DeBruijn indices.
     Quantifier {
         ///What kind of quantifier
         quantifier: Quantifier,
-        ///The bound variable
-        var: Variable,
+        ///The type of bound variable
+        var_type: ActorOrEvent,
         ///An expression defining the restrictor of the quantifier.
         restrictor: ExprRef,
         ///An expression defining the subformula of the quantifier.
@@ -272,6 +272,7 @@ impl<'a> LanguageExpression<'a> {
             start: Instant::now(),
 
             config: &config.unwrap_or_default(),
+            quantifier_depth: 0,
         }
         .interp(self.start, scenario, &mut variables)
     }
@@ -295,6 +296,8 @@ struct Execution<'a, 'b> {
     #[cfg(not(target_arch = "wasm32"))]
     start: Instant,
     config: &'b ExecutionConfig,
+
+    quantifier_depth: usize,
 }
 
 impl Execution<'_, '_> {
@@ -321,16 +324,16 @@ impl Execution<'_, '_> {
 struct VariableBuffer<'a>(Vec<Option<Entity<'a>>>);
 
 impl<'a> VariableBuffer<'a> {
-    fn set(&mut self, v: Variable, x: Entity<'a>) {
-        let i = v.id() as usize;
+    fn set(&mut self, i: usize, x: Entity<'a>) {
         if self.0.len() <= i {
             self.0.resize(i + 1, None);
         }
         self.0[i] = Some(x);
     }
 
-    fn get(&self, v: Variable) -> Option<LanguageResult<'a>> {
-        match self.0.get(v.id() as usize) {
+    fn get(&self, v: Variable, quantifier_depth: usize) -> Option<LanguageResult<'a>> {
+        let pos = quantifier_depth.checked_sub(v.id() as usize)?;
+        match self.0.get(pos) {
             Some(x) => match (v, x) {
                 (Variable::Actor(_), Some(Entity::Actor(a))) => Some(LanguageResult::Actor(a)),
                 (Variable::Event(_), Some(Entity::Event(e))) => Some(LanguageResult::Event(*e)),
@@ -559,20 +562,21 @@ impl<'a, 'b> Execution<'a, 'b> {
     fn quantification(
         &mut self,
         quantifier: &Quantifier,
-        var: &Variable,
+        var_type: &ActorOrEvent,
         restrictor: ExprRef,
         subformula: ExprRef,
         scenario: &Scenario<'a>,
         variables: &mut VariableBuffer<'a>,
     ) -> Result<LanguageResult<'a>, LanguageTypeError> {
+        self.quantifier_depth += 1;
         let mut variables = variables.clone();
         let domain: Vec<Entity> = match self.pool.get_type(restrictor) {
             LanguageResultType::Bool => {
                 let mut domain = vec![];
-                match var {
-                    Variable::Actor(_) => {
+                match var_type {
+                    ActorOrEvent::Actor => {
                         for e in scenario.actors.iter() {
-                            variables.set(*var, Entity::Actor(e));
+                            variables.set(self.quantifier_depth, Entity::Actor(e));
                             let truth_value_for_e: bool = self
                                 .interp(restrictor, scenario, &mut variables)?
                                 .try_into()?;
@@ -581,9 +585,9 @@ impl<'a, 'b> Execution<'a, 'b> {
                             }
                         }
                     }
-                    Variable::Event(_) => {
+                    ActorOrEvent::Event => {
                         for e in scenario.events() {
-                            variables.set(*var, Entity::Event(e));
+                            variables.set(self.quantifier_depth, Entity::Event(e));
                             let truth_value_for_e: bool = self
                                 .interp(restrictor, scenario, &mut variables)?
                                 .try_into()?;
@@ -630,7 +634,7 @@ impl<'a, 'b> Execution<'a, 'b> {
             Quantifier::Existential => false,
         };
         for e in domain {
-            variables.set(*var, e);
+            variables.set(self.quantifier_depth, e);
             let subformula_value: bool = self
                 .interp(subformula, scenario, &mut variables)?
                 .try_into()?;
@@ -639,6 +643,7 @@ impl<'a, 'b> Execution<'a, 'b> {
                 Quantifier::Existential => subformula_value || result,
             };
         }
+        self.quantifier_depth -= 1;
         Ok(LanguageResult::Bool(result))
     }
 
@@ -652,19 +657,19 @@ impl<'a, 'b> Execution<'a, 'b> {
         Ok(match self.pool.get(expr) {
             Expr::Quantifier {
                 quantifier,
-                var,
+                var_type,
                 restrictor,
                 subformula,
             } => self.quantification(
                 quantifier,
-                var,
+                var_type,
                 *restrictor,
                 *subformula,
                 scenario,
                 variables,
             )?,
             Expr::Variable(i) => variables
-                .get(*i)
+                .get(*i, self.quantifier_depth)
                 .ok_or(LanguageTypeError::MissingVariable(*i))?,
             Expr::Actor(a) => LanguageResult::Actor(a),
             Expr::Event(a) => LanguageResult::Event(*a),
@@ -850,14 +855,14 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
-                var: Variable::Event(1),
+                var_type: ActorOrEvent::Event,
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
@@ -880,14 +885,14 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
-                var: Variable::Event(1),
+                var_type: ActorOrEvent::Event,
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
@@ -1007,14 +1012,14 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
-                var: Variable::Event(1),
+                var_type: ActorOrEvent::Event,
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
@@ -1061,7 +1066,7 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
@@ -1081,7 +1086,7 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
@@ -1120,14 +1125,14 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Property("534", ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
-                var: Variable::Event(1),
+                var_type: ActorOrEvent::Event,
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
@@ -1149,14 +1154,14 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(2),
             },
             Expr::Constant(Constant::Property("2", ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
-                var: Variable::Event(1),
+                var_type: ActorOrEvent::Event,
                 restrictor: ExprRef(3),
                 subformula: ExprRef(4),
             },
@@ -1191,7 +1196,7 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(6),
             },
@@ -1202,7 +1207,7 @@ mod tests {
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
-                var: Variable::Actor(1),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(7),
                 subformula: ExprRef(8),
             },
@@ -1223,7 +1228,7 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
-                var: Variable::Actor(0),
+                var_type: ActorOrEvent::Actor,
                 restrictor: ExprRef(1),
                 subformula: ExprRef(6),
             },
@@ -1234,7 +1239,7 @@ mod tests {
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
-                var: Variable::Event(1),
+                var_type: ActorOrEvent::Event,
                 restrictor: ExprRef(7),
                 subformula: ExprRef(8),
             },
