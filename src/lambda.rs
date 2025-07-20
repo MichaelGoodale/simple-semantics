@@ -462,10 +462,6 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
         self.0.push(expr);
         LambdaExprRef(idx.try_into().expect("Too many exprs in the pool"))
     }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut LambdaExpr<'src, T>> {
-        self.0.iter_mut()
-    }
 }
 
 ///Iterate over a lambda pool in breadth-first search
@@ -566,10 +562,23 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
     }
 }
 
+impl<'src, T: Clone> LambdaExpr<'src, T> {
+    ///Adjusts bind variables to a new depth)
+    fn depth_remap(&self, depth: usize) -> LambdaExpr<'src, T> {
+        match self {
+            LambdaExpr::BoundVariable(i, lambda_type) => {
+                LambdaExpr::BoundVariable(i + depth, lambda_type.clone())
+            }
+            _ => self.clone(),
+        }
+    }
+}
+
 impl<'src, T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<'src, T>
 where
     T: Clone,
 {
+    #[allow(dead_code)]
     pub(crate) fn bfs_from_mut<'a>(
         &'a mut self,
         x: LambdaExprRef,
@@ -623,10 +632,10 @@ where
 
         let to_replace = self
             .bfs_from(root)
-            .filter_map(|(x, _)| match self.get(x) {
+            .filter_map(|(x, d)| match self.get(x) {
                 LambdaExpr::FreeVariable(var, t) if *var == fvar => {
                     if t == &arg_t {
-                        Some(Ok(x))
+                        Some(Ok((x, d)))
                     } else {
                         Some(Err(LambdaError::BadFreeVariableApp {
                             free_var: t.clone(),
@@ -642,37 +651,41 @@ where
         Ok(())
     }
 
-    fn clone_section_return_expr(&mut self, source: LambdaExprRef) -> LambdaExpr<'src, T> {
-        let mut expr = self.get(source).clone();
+    fn clone_section_return_expr(
+        &mut self,
+        source: LambdaExprRef,
+        depth: usize,
+    ) -> LambdaExpr<'src, T> {
+        let mut expr = self.get(source).depth_remap(depth);
         let new_children: Vec<_> = expr
             .get_children()
-            .map(|child| self.clone_section(child))
+            .map(|child| self.clone_section(child, depth))
             .collect();
         expr.change_children(&new_children);
         expr
     }
 
-    fn clone_section(&mut self, source: LambdaExprRef) -> LambdaExprRef {
-        let mut expr = self.get(source).clone();
+    fn clone_section(&mut self, source: LambdaExprRef, depth: usize) -> LambdaExprRef {
+        let mut expr = self.get(source).depth_remap(depth);
         let new_children: Vec<_> = expr
             .get_children()
-            .map(|child| self.clone_section(child))
+            .map(|child| self.clone_section(child, depth))
             .collect();
         expr.change_children(&new_children);
         self.0.push(expr);
         LambdaExprRef(self.0.len() as u32 - 1)
     }
 
-    fn replace_section(&mut self, to_replace: &[LambdaExprRef], to_copy: LambdaExprRef) {
+    fn replace_section(&mut self, to_replace: &[(LambdaExprRef, usize)], to_copy: LambdaExprRef) {
         let n = to_replace.len();
-        for (i, x) in to_replace.iter().enumerate() {
+        for (i, (x, depth)) in to_replace.iter().enumerate() {
             if i != n - 1 {
                 //We have more to add so we need to copy.
-                let expr = self.clone_section_return_expr(to_copy);
+                let expr = self.clone_section_return_expr(to_copy, *depth);
                 *self.get_mut(*x) = expr;
             } else {
                 //Last iteration so we don't need to copy anymore.
-                *self.get_mut(*x) = self.get(to_copy).clone();
+                *self.get_mut(*x) = self.get(to_copy).depth_remap(*depth);
             }
         }
     }
@@ -712,7 +725,7 @@ where
                 self.bfs_from(inner_term)
                     .filter_map(|(x, n)| {
                         if let LambdaExpr::BoundVariable(i, _) = self.get(x) {
-                            if *i == n { Some(x) } else { None }
+                            if *i == n { Some((x, n)) } else { None }
                         } else {
                             None
                         }
@@ -1272,10 +1285,10 @@ mod test {
             RootedLambdaPool::parse("lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))")?;
         let every =
             RootedLambdaPool::parse("lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))")?;
-        dbg!(&every);
 
         let phi = every.clone().merge(man.clone()).unwrap();
         let mut phi = phi.merge(sleeps.clone()).unwrap();
+        println!("{phi}");
         phi.reduce()?;
         let pool = phi.into_pool()?;
         assert_eq!(

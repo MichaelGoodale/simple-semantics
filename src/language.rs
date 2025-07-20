@@ -96,15 +96,6 @@ impl Display for ActorOrEvent {
     }
 }
 
-impl ActorOrEvent {
-    fn to_variable(self, n: u32) -> Variable {
-        match self {
-            ActorOrEvent::Actor => Variable::Actor(n),
-            ActorOrEvent::Event => Variable::Event(n),
-        }
-    }
-}
-
 impl From<ActorOrEvent> for LambdaType {
     fn from(value: ActorOrEvent) -> Self {
         match value {
