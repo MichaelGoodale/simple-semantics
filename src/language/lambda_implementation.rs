@@ -522,6 +522,7 @@ pub(super) fn add_parenthesis_for_bin_op(x: BinOp, data: AssociativityData) -> b
 mod test {
     use super::to_var;
 
+    use crate::lambda::{FreeVar, types::LambdaType};
     use crate::{Entity, Scenario, ThetaRoles, lambda::RootedLambdaPool, parse_executable};
 
     #[test]
@@ -652,6 +653,26 @@ mod test {
         dbg!(&pool);
         assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
 
+        Ok(())
+    }
+
+    #[test]
+    fn alpha_check() -> anyhow::Result<()> {
+        let everyone = RootedLambdaPool::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
+        let someone = RootedLambdaPool::parse("lambda <a,t> P (some(x, all_a, P(x)))")?;
+        let mut likes = RootedLambdaPool::parse(
+            "lambda a x (lambda a y (some_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e))))",
+        )?;
+
+        likes.apply_new_free_variable(FreeVar::Anonymous(0))?;
+        let mut sentence = likes.merge(someone).unwrap();
+        sentence.lambda_abstract_free_variable(FreeVar::Anonymous(0), LambdaType::A, true)?;
+        let mut sentence = sentence.merge(everyone).unwrap();
+        sentence.reduce()?;
+        assert_eq!(
+            sentence.to_string(),
+            "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
+        );
         Ok(())
     }
 }
