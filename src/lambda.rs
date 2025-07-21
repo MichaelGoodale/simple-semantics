@@ -550,7 +550,7 @@ impl<'a, 'src: 'a, T: LambdaLanguageOfThought + 'a> MutableLambdaPoolBFSIterator
 }
 
 impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIterator<'a, 'src, T> {
-    type Item = (&'a mut LambdaExpr<'src, T>, usize);
+    type Item = (&'a mut LambdaExpr<'src, T>, usize, LambdaExprRef);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((x, lambda_depth)) = self.queue.pop_front() {
@@ -575,6 +575,7 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
             Some((
                 unsafe { self.pool.as_mut().unwrap().get_mut(x) },
                 lambda_depth,
+                x,
             ))
         } else {
             None
@@ -693,7 +694,7 @@ where
 
                 *self.get_mut(*x) = head.unwrap();
             } else {
-                for (x, d) in self.bfs_from_mut(to_copy) {
+                for (x, d, _) in self.bfs_from_mut(to_copy) {
                     if let LambdaExpr::BoundVariable(bound_depth, _) = x
                         && *bound_depth >= d
                     {
@@ -738,10 +739,18 @@ where
             (
                 inner_term,
                 *argument,
-                self.bfs_from(inner_term)
-                    .filter_map(|(x, n)| {
-                        if let LambdaExpr::BoundVariable(i, _) = self.get(x) {
-                            if *i == n { Some((x, n)) } else { None }
+                self.bfs_from_mut(inner_term)
+                    .filter_map(|(expr, d, expr_ref)| {
+                        if let LambdaExpr::BoundVariable(b_d, _) = expr {
+                            if *b_d > d {
+                                //Decrement locally free variables
+                                *b_d -= 1;
+                                None
+                            } else if *b_d == d {
+                                Some((expr_ref, *b_d))
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
@@ -752,12 +761,11 @@ where
             return Err(ReductionError::NotApplication(app));
         };
 
-        self.replace_section(&subformula_vars, argument);
-
         //We used to swap this, but that will cause an insanely arcane bug.
         //This is because the same term may be referred to by multiple instructions so if you swap
         //them, it gets invalidated.
         self.0[app.0 as usize] = self.0[inner_term.0 as usize].clone();
+        self.replace_section(&subformula_vars, argument);
         //self.0.swap(inner_term.0 as usize, app.0 as usize); <- BAD
 
         Ok(())

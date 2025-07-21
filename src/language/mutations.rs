@@ -149,7 +149,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         //By reversing, we ensure that we fix inner quantifiers before outer ones.
         for (quantifier, subformula) in quantifiers.into_iter().rev() {
             *self.pool.get_mut(quantifier) = self.pool.get(subformula).clone();
-            self.pool.bfs_from_mut(quantifier).for_each(|(x, d)| {
+            self.pool.bfs_from_mut(quantifier).for_each(|(x, d, _)| {
                 if let LambdaExpr::BoundVariable(b_d, _) = x
                     && *b_d > d
                 {

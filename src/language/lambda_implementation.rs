@@ -178,14 +178,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         if !quantifier_restrictions.is_empty() {
             //Go over and add app of bound variable to each lambda expr for each quantifier
             for (quantifer, restrictor, var) in quantifier_restrictions {
-                let var = pool
-                    .pool
-                    .add(LambdaExpr::LanguageOfThoughtExpr(Expr::Variable(
-                        match var {
-                            ActorOrEvent::Actor => Variable::Actor(0),
-                            ActorOrEvent::Event => Variable::Event(0),
-                        },
-                    )));
+                let var = pool.pool.add(LambdaExpr::BoundVariable(0, var.into()));
                 let new_restrictor = pool.pool.add(LambdaExpr::Application {
                     subformula: restrictor,
                     argument: var,
@@ -307,14 +300,9 @@ impl VarContext {
         }
     }
 
-    pub(super) fn inc_depth_q(mut self, t: ActorOrEvent) -> (Self, String) {
-        let d = self.depth;
+    pub(super) fn inc_depth_q(self, t: ActorOrEvent) -> (Self, String) {
         let t: LambdaType = t.into();
-        let map = self.get_map_mut(Some(&t));
-        let n_var = map.len();
-        map.insert(d, n_var);
-        self.depth += 1;
-        (self, to_var(n_var, Some(&t)))
+        self.inc_depth(&t)
     }
 
     pub(super) fn inc_depth(mut self, t: &LambdaType) -> (Self, String) {
@@ -641,6 +629,10 @@ mod test {
         dbg!(&pool);
         assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
 
+        let pool = RootedLambdaPool::parse(
+            "every_e(x, pe_laughs, every(y, lambda a z pe_sleeps(x), pa_woman(y)))",
+        )?;
+        println!("{}", pool.into_pool()?);
         Ok(())
     }
 
