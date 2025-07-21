@@ -13,7 +13,6 @@ use crate::{
 #[derive(Debug, Copy, Clone)]
 pub(super) enum SampleDetails {
     LambdaExpr,
-    LambdaVar(usize),
     Other(usize),
 }
 
@@ -21,7 +20,6 @@ impl SampleDetails {
     fn new(e: &UnbuiltExpr) -> Self {
         match e {
             UnbuiltExpr::Lambda(..) => SampleDetails::LambdaExpr,
-            UnbuiltExpr::BoundVariable(n, _) => SampleDetails::LambdaVar(*n),
             _ => panic!(),
         }
     }
@@ -30,15 +28,13 @@ impl SampleDetails {
 #[derive(Debug, Clone, Copy)]
 pub struct RandomExprConfig {
     lambda_weight: f64,
-    variable_weight: f64,
     depth_rapidness: f64,
 }
 
 impl RandomExprConfig {
-    pub fn new(lambda_weight: f64, variable_weight: f64, depth_weight: f64) -> Self {
+    pub fn new(lambda_weight: f64, depth_weight: f64) -> Self {
         Self {
             lambda_weight,
-            variable_weight,
             depth_rapidness: depth_weight,
         }
     }
@@ -48,7 +44,6 @@ impl Default for RandomExprConfig {
     fn default() -> Self {
         Self {
             lambda_weight: 1.0,
-            variable_weight: 1.0,
             depth_rapidness: 4.0,
         }
     }
@@ -100,11 +95,6 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
                                 let pareto =
                                     (2.0) / (((depth / config.depth_rapidness) + 1.5).powf(3.0));
                                 config.lambda_weight * pareto.abs()
-                            }
-                            SampleDetails::LambdaVar(_) => {
-                                let pareto =
-                                    (1.0) / (((depth / config.depth_rapidness) + 1.5).powf(2.0));
-                                config.variable_weight * pareto.abs()
                             }
                             SampleDetails::Other(n_args) => {
                                 //This is the pareto PDF with x_m=1 and alpha=(n_args+1)
@@ -255,10 +245,11 @@ impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
             possibilities.push((e, det));
         }
 
-        possibilities.extend(context.variables(lambda_type).map(|e| {
-            let d = SampleDetails::new(&e);
-            (Cow::Owned(e), d)
-        }));
+        possibilities.extend(
+            context
+                .variables(lambda_type)
+                .map(|e| (Cow::Owned(e), SampleDetails::Other(0))),
+        );
 
         if possibilities.is_empty() {
             return Err(SamplingError::CantFindExpr(lambda_type.clone()));
