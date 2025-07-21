@@ -1,6 +1,7 @@
 //! The module that defines the basic lambda calculus used to compose expressions in the langauge
 //! of thought.
 
+use crate::utils::ArgumentIterator;
 use std::{
     collections::{HashSet, VecDeque},
     fmt::{Debug, Display},
@@ -119,7 +120,7 @@ pub trait LambdaLanguageOfThought {
     fn get_type(&self) -> &LambdaType;
 
     ///Get the type of all children in order.
-    fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a>;
+    fn get_arguments(&self) -> impl Iterator<Item = LambdaType>;
 
     ///Convert from a [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]. May return an
     ///error if there are any lambda terms left in the [`RootedLambdaPool<T>`] (e.g. not fully
@@ -151,8 +152,8 @@ impl LambdaLanguageOfThought for () {
         false
     }
 
-    fn get_arguments<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaType> + 'a> {
-        Box::new(empty())
+    fn get_arguments(&self) -> impl Iterator<Item = LambdaType> {
+        empty()
     }
 
     fn to_pool(_: RootedLambdaPool<Self>) -> Result<Self::Pool, ()> {
@@ -488,17 +489,17 @@ impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
         }
     }
 
-    pub(crate) fn get_children<'a>(&'a self) -> Box<dyn Iterator<Item = LambdaExprRef> + 'a> {
+    pub(crate) fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
         match self {
-            LambdaExpr::Lambda(x, _) => Box::new([x].into_iter().copied()),
+            LambdaExpr::Lambda(x, _) => ArgumentIterator::A([x].into_iter().copied()),
             LambdaExpr::Application {
                 subformula,
                 argument,
-            } => Box::new([subformula, argument].into_iter().copied()),
+            } => ArgumentIterator::B([subformula, argument].into_iter().copied()),
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => {
-                Box::new(std::iter::empty())
+                ArgumentIterator::C(std::iter::empty())
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => Box::new(x.get_children()),
+            LambdaExpr::LanguageOfThoughtExpr(x) => ArgumentIterator::D(x.get_children()),
         }
     }
 }

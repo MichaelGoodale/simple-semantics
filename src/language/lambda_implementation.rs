@@ -1,3 +1,4 @@
+use crate::utils::ArgumentIterator;
 use ahash::HashMap;
 use std::iter::empty;
 use thiserror::Error;
@@ -223,23 +224,31 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         })
     }
 
-    fn get_arguments<'b>(&'b self) -> Box<dyn Iterator<Item = LambdaType> + 'b> {
+    fn get_arguments(&self) -> impl Iterator<Item = LambdaType> {
         match self {
             Expr::Quantifier {
                 var_type: ActorOrEvent::Actor,
                 ..
-            } => Box::new([LambdaType::at().clone(), LambdaType::t().clone()].into_iter()),
+            } => {
+                ArgumentIterator::A([LambdaType::at().clone(), LambdaType::t().clone()].into_iter())
+            }
             Expr::Quantifier {
                 var_type: ActorOrEvent::Event,
                 ..
-            } => Box::new([LambdaType::et().clone(), LambdaType::t().clone()].into_iter()),
-            Expr::Binary(b, _, _) => Box::new(b.get_argument_type().into_iter().cloned()),
-            Expr::Unary(mon_op, _) => Box::new([mon_op.get_argument_type().clone()].into_iter()),
+            } => {
+                ArgumentIterator::A([LambdaType::et().clone(), LambdaType::t().clone()].into_iter())
+            }
+            Expr::Binary(b, _, _) => {
+                ArgumentIterator::B(b.get_argument_type().into_iter().cloned())
+            }
+            Expr::Unary(mon_op, _) => {
+                ArgumentIterator::C([mon_op.get_argument_type().clone()].into_iter())
+            }
             Expr::Variable(Variable::Event(_))
             | Expr::Variable(Variable::Actor(_))
             | Expr::Actor(_)
             | Expr::Event(_)
-            | Expr::Constant(_) => Box::new(empty()),
+            | Expr::Constant(_) => ArgumentIterator::D(empty()),
         }
     }
 }
