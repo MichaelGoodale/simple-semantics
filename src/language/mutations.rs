@@ -123,38 +123,39 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     pub fn prune_quantifiers(&mut self) {
         let quantifiers = self
             .pool
-            .0
-            .iter()
-            .enumerate()
-            .filter_map(|(i, x)| match x {
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { .. }) => {
-                    Some(LambdaExprRef(i as u32))
+            .bfs_from(self.root)
+            .filter_map(|(i, _)| match self.get(i) {
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { subformula, .. }) => {
+                    if !self
+                        .pool
+                        .bfs_from(LambdaExprRef(subformula.0))
+                        .any(|(x, d)| {
+                            if let LambdaExpr::BoundVariable(v, _) = self.get(x) {
+                                *v == d
+                            } else {
+                                false
+                            }
+                        })
+                    {
+                        Some((i, LambdaExprRef(subformula.0)))
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             })
             .collect::<Vec<_>>();
 
-        for quantifier in quantifiers {
-            if let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                var_type: _,
-                subformula,
-                ..
-            }) = self.get(quantifier)
-            {
-                let has_variable = self
-                    .pool
-                    .bfs_from(LambdaExprRef(subformula.0))
-                    .any(|(x, d)| {
-                        if let LambdaExpr::BoundVariable(v, _) = self.get(x) {
-                            *v == d
-                        } else {
-                            false
-                        }
-                    });
-                if !has_variable {
-                    self.pool.0[quantifier.0 as usize] = self.pool.0[subformula.0 as usize].clone();
+        //By reversing, we ensure that we fix inner quantifiers before outer ones.
+        for (quantifier, subformula) in quantifiers.into_iter().rev() {
+            *self.pool.get_mut(quantifier) = self.pool.get(subformula).clone();
+            self.pool.bfs_from_mut(quantifier).for_each(|(x, d)| {
+                if let LambdaExpr::BoundVariable(b_d, _) = x
+                    && *b_d > d
+                {
+                    *b_d -= 1;
                 }
-            }
+            });
         }
         self.root = self.pool.cleanup(self.root);
     }
@@ -277,6 +278,50 @@ mod test {
         pool.prune_quantifiers();
 
         assert_eq!(pool.to_string(), "~pa_2(a_0)");
+        let mut pool = RootedLambdaPool::new(
+            LambdaPool(vec![
+                LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::E),
+                LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::T),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                    quantifier: Quantifier::Universal,
+                    var_type: ActorOrEvent::Actor,
+                    restrictor: ExprRef(3),
+                    subformula: ExprRef(4),
+                }),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(Constant::Property(
+                    "1",
+                    ActorOrEvent::Actor,
+                ))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                    quantifier: Quantifier::Existential,
+                    var_type: ActorOrEvent::Actor,
+                    restrictor: ExprRef(5),
+                    subformula: ExprRef(6),
+                }),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(Constant::Property(
+                    "0",
+                    ActorOrEvent::Actor,
+                ))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                    MonOp::Property("3", ActorOrEvent::Event),
+                    ExprRef(7),
+                )),
+                LambdaExpr::BoundVariable(3, LambdaType::E),
+            ]),
+            LambdaExprRef(0),
+        );
+
+        assert_eq!(
+            pool.to_string(),
+            "lambda e x lambda t phi every(y, pa_1, some(z, pa_0, pe_3(x)))"
+        );
+
+        let mut parsed_pool = RootedLambdaPool::parse(
+            "lambda e x lambda t phi every(y, pa_1, some(z, pa_0, pe_3(x)))",
+        )?;
+        parsed_pool.prune_quantifiers();
+        pool.prune_quantifiers();
+        assert_eq!(pool.to_string(), "lambda e x lambda t phi pe_3(x)");
 
         Ok(())
     }
@@ -287,7 +332,7 @@ mod test {
         let actors = ["0", "1"];
         let available_actor_properties = ["0", "1", "2"];
         let available_event_properties = ["2", "3", "4"];
-        for _ in 0..200 {
+        for _ in 0..2000 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
             let mut pool = RootedLambdaPool::random_expr(
@@ -319,7 +364,7 @@ mod test {
         let available_actor_properties = ["0", "1", "2"];
         let available_event_properties = ["2", "3", "4"];
         let mut lengths = vec![];
-        for _ in 0..200 {
+        for _ in 0..2000 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
             let pool = RootedLambdaPool::random_expr(
@@ -333,7 +378,7 @@ mod test {
             lengths.push(pool.len());
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
-            let pool = pool.resample_from_expr(
+            let mut pool = pool.resample_from_expr(
                 &actors,
                 &available_actor_properties,
                 &available_event_properties,
@@ -342,6 +387,8 @@ mod test {
             )?;
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
+            pool.prune_quantifiers();
+            println!("{pool}");
         }
         println!("{lengths:?}");
         Ok(())
@@ -353,7 +400,7 @@ mod test {
         let actors = ["0", "1"];
         let available_actor_properties = ["0", "1", "2"];
         let available_event_properties = ["2", "3", "4"];
-        for _ in 0..200 {
+        for _ in 0..2000 {
             let t = LambdaType::random_no_e(&mut rng);
             let pool = RootedLambdaPool::random_expr(
                 &t,

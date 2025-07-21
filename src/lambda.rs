@@ -191,8 +191,6 @@ impl<'a> From<usize> for FreeVar<'a> {
     }
 }
 
-//TODO: Implement Eq for LambdaPool so that it ignores dangling refs
-
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 ///The core expression type of a lambda term
 pub enum LambdaExpr<'a, T> {
@@ -238,8 +236,24 @@ impl ExpressionType {
         }
     }
 }
+impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
+    pub(crate) fn root(&self) -> LambdaExprRef {
+        self.root
+    }
 
-impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'src, T> {
+    ///Get the expression of a lambda term.
+    pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
+        self.pool.get(x)
+    }
+
+    ///The length of an expression
+    #[allow(clippy::len_without_is_empty)]
+    pub(crate) fn len(&self) -> usize {
+        self.pool.0.len()
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///Clean up dangling references.
     pub fn cleanup(&mut self) {
         self.root = self.pool.cleanup(self.root);
@@ -280,21 +294,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
                 arguments: x.get_arguments().collect(),
             }),
         }
-    }
-
-    pub(crate) fn root(&self) -> LambdaExprRef {
-        self.root
-    }
-
-    ///Get the expression of a lambda term.
-    pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
-        self.pool.get(x)
-    }
-
-    ///The length of an expression
-    #[allow(clippy::len_without_is_empty)]
-    pub(crate) fn len(&self) -> usize {
-        self.pool.0.len()
     }
 
     ///The type of the lambda expression
@@ -583,7 +582,16 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + std::fmt::Debug> LambdaPool<'src, T>
+impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
+    pub(crate) fn bfs_from(&self, x: LambdaExprRef) -> LambdaPoolBFSIterator<T> {
+        LambdaPoolBFSIterator {
+            pool: self,
+            queue: VecDeque::from([(x, 0)]),
+        }
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T>
 where
     T: Clone,
 {
@@ -592,13 +600,6 @@ where
         x: LambdaExprRef,
     ) -> MutableLambdaPoolBFSIterator<'a, 'src, T> {
         MutableLambdaPoolBFSIterator::new(self, x)
-    }
-
-    pub(crate) fn bfs_from(&self, x: LambdaExprRef) -> LambdaPoolBFSIterator<T> {
-        LambdaPoolBFSIterator {
-            pool: self,
-            queue: VecDeque::from([(x, 0)]),
-        }
     }
 
     fn check_type_clash(&self, x: LambdaExprRef) -> Result<LambdaType, ReductionError> {
@@ -660,8 +661,6 @@ where
     }
 
     fn replace_section(&mut self, to_replace: &[(LambdaExprRef, usize)], to_copy: LambdaExprRef) {
-        //TODO: Increment only locally free bound variables (e.g. bound variables that are bound
-        //higher than either applicant).
         let n = to_replace.len();
         for (i, (x, depth)) in to_replace.iter().enumerate() {
             if i != n - 1 {
@@ -689,8 +688,7 @@ where
                                 Some(expr)
                             }
                         })
-                        .collect::<Vec<_>>(), //TODO: There may be a way to remove this allocation, not
-                                              //sure
+                        .collect::<Vec<_>>(),
                 );
 
                 *self.get_mut(*x) = head.unwrap();
