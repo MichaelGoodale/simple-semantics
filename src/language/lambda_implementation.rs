@@ -652,6 +652,22 @@ mod test {
             sentence.to_string(),
             "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
         );
+
+        let everyone = RootedLambdaPool::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
+        let someone = RootedLambdaPool::parse("lambda <a,t> P (some(x, all_a, P(x)))")?;
+        let mut likes = RootedLambdaPool::parse(
+            "lambda a x (lambda a y ( some_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e)) | some(w, all_a, every_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e)))))",
+        )?;
+
+        likes.apply_new_free_variable(FreeVar::Anonymous(0))?;
+        let mut sentence = likes.merge(someone).unwrap();
+        sentence.lambda_abstract_free_variable(FreeVar::Anonymous(0), LambdaType::A, true)?;
+        let mut sentence = sentence.merge(everyone).unwrap();
+        sentence.reduce()?;
+        assert_eq!(
+            sentence.to_string(),
+            "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z)) | some(z, all_a, every_e(a, all_e, AgentOf(y, a) & pe_likes(a) & PatientOf(x, a)))))"
+        );
         Ok(())
     }
 }
