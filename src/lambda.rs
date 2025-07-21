@@ -764,8 +764,8 @@ where
         //We used to swap this, but that will cause an insanely arcane bug.
         //This is because the same term may be referred to by multiple instructions so if you swap
         //them, it gets invalidated.
-        self.0[app.0 as usize] = self.0[inner_term.0 as usize].clone();
         self.replace_section(&subformula_vars, argument);
+        self.0[app.0 as usize] = self.0[inner_term.0 as usize].clone();
         //self.0.swap(inner_term.0 as usize, app.0 as usize); <- BAD
 
         Ok(())
@@ -1532,6 +1532,21 @@ mod test {
         e.lift()?;
         assert_eq!(e.to_string(), "lambda <a,t> P P(a_john)");
 
+        Ok(())
+    }
+
+    #[test]
+    fn lambda_abstractions() -> anyhow::Result<()> {
+        let mut e = RootedLambdaPool::parse(
+            "(lambda t phi phi)(some_e(x, all_e, AgentOf(a_m, x) & PatientOf(blarg#a, x) & pe_likes(x)))",
+        )?;
+        e.reduce()?;
+        e.lambda_abstract_free_variable(FreeVar::Named("blarg"), LambdaType::A, false)
+            .unwrap();
+        assert_eq!(
+            e.to_string(),
+            "lambda a x some_e(y, all_e, AgentOf(a_m, y) & PatientOf(x, y) & pe_likes(y))"
+        );
         Ok(())
     }
 }
