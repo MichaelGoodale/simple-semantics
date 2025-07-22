@@ -7,8 +7,9 @@ use super::*;
 use crate::{
     Actor, Event, PropertyLabel,
     lambda::{
-        Bvar, ExpressionType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
-        types::LambdaType,
+        Bvar, ExpressionType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought,
+        LambdaPool,
+        types::{LambdaType, TypeError},
     },
     language::mutations::samplers::SamplingError,
 };
@@ -28,6 +29,9 @@ pub enum MutationError {
 
     #[error("Sampling Error: {0}")]
     SamplingError(#[from] SamplingError),
+
+    #[error("Type Error already present: {0}")]
+    TypeError(#[from] TypeError),
 }
 
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
@@ -38,6 +42,8 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             if n == position {
                 pos_context = Some(c);
                 break;
+                //We don't break so that we go over the entire context and see if all lambdas have
+                //been used.
             }
         }
         pos_context
@@ -45,7 +51,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 
     ///Choose a random expression and resample its children.
     pub fn resample_from_expr(
-        self,
+        mut self,
         available_actors: &[Actor<'src>],
         available_actor_properties: &[PropertyLabel<'src>],
         available_event_properties: &[PropertyLabel<'src>],
@@ -62,6 +68,26 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             config,
         );
 
+        let lambda_type = self.pool.get_type(position)?;
+
+        //Make children of position invalid so that we don't use them when evaluating context.
+        match self.pool.get_mut(position) {
+            LambdaExpr::Lambda(lambda_expr_ref, _) => {
+                *lambda_expr_ref = LambdaExprRef(u32::MAX);
+            }
+            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
+            LambdaExpr::Application {
+                subformula,
+                argument,
+            } => {
+                *subformula = LambdaExprRef(u32::MAX);
+                *argument = LambdaExprRef(u32::MAX);
+            }
+            LambdaExpr::LanguageOfThoughtExpr(e) => {
+                e.change_children(std::iter::repeat_n(LambdaExprRef(u32::MAX), e.n_children()));
+            }
+        }
+
         let context = self
             .get_context_for_expr(position)
             .expect("Couldn't find the {position}th expression");
@@ -75,8 +101,6 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         let context = context.into_owned_lambdas(&lambdas);
 
         let (root, pool) = (self.root, self.pool);
-
-        let lambda_type = pool.get_type(position).unwrap();
         let mut pool: Vec<Option<LambdaExpr<_>>> = pool.into();
         pool[position.0 as usize] = None;
 
@@ -177,6 +201,13 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             &config,
         );
 
+        //If the expr is a bound variable, we switch it to a free one so that context doesn't
+        //include it when check if something has been used.
+        let x = self.pool.get_mut(position);
+        if let LambdaExpr::BoundVariable(_, t) = x {
+            *x = LambdaExpr::FreeVariable(FreeVar::Anonymous(0), t.clone());
+        }
+
         let context = self
             .get_context_for_expr(position)
             .unwrap_or_else(|| panic!("Couldn't find {}th expr!", position.0));
@@ -251,6 +282,8 @@ fn build_out_pool<'src, 'typ>(
 
 #[cfg(test)]
 mod test {
+    use crate::lambda::LambdaSummaryStats;
+
     use super::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
@@ -415,6 +448,41 @@ mod test {
             let pool2 = RootedLambdaPool::parse(s.as_str())?;
             assert_eq!(s, pool2.to_string());
         }
+        Ok(())
+    }
+    #[test]
+    fn reparse_randomsdfasf() -> anyhow::Result<()> {
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let actors = ["0", "1"];
+        let available_actor_properties = ["0", "1", "2"];
+        let available_event_properties = ["2", "3", "4"];
+        let mut n = 0;
+        for _ in 0..2000 {
+            let t = LambdaType::from_string("<a,<a,t>>")?;
+            let pool = RootedLambdaPool::random_expr(
+                &t,
+                &actors,
+                &available_actor_properties,
+                &available_event_properties,
+                None,
+                &mut rng,
+            )?;
+
+            let s = pool.to_string();
+            let LambdaSummaryStats::WellFormed {
+                constant_function, ..
+            } = pool.stats()
+            else {
+                panic!()
+            };
+
+            if constant_function {
+                n += 1;
+            }
+            println!("{s}");
+        }
+        println!("constant proportion {}", (n as f64) / (2000.0));
+        panic!();
         Ok(())
     }
 }

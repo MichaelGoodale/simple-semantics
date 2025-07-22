@@ -15,6 +15,18 @@ pub enum UnbuiltExpr<'src, 't> {
 }
 
 impl UnbuiltExpr<'_, '_> {
+    pub fn n_children(&self) -> usize {
+        match self {
+            UnbuiltExpr::Quantifier(..) => 2,
+            UnbuiltExpr::Actor(_) => 0,
+            UnbuiltExpr::Event(_) => 0,
+            UnbuiltExpr::Binary(..) => 1,
+            UnbuiltExpr::Unary(..) => 1,
+            UnbuiltExpr::Constant(_) => 0,
+            UnbuiltExpr::Lambda(..) => 1,
+            UnbuiltExpr::BoundVariable(..) => 0,
+        }
+    }
     pub fn get_expression_type(&self) -> ExpressionType {
         match self {
             UnbuiltExpr::Quantifier(_, actor_or_event) => ExpressionType {
@@ -140,6 +152,7 @@ pub fn add_expr<'src, 'pool>(
             LambdaExpr::Lambda(LambdaExprRef(cur_size + 1), lhs.clone())
         }
         UnbuiltExpr::BoundVariable(bvar, lambda_type) => {
+            context.add_bound_var(bvar);
             LambdaExpr::BoundVariable(bvar, lambda_type.clone())
         }
     };

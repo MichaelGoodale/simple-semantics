@@ -246,6 +246,11 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
         self.pool.get(x)
     }
 
+    ///Get the expression of a lambda term.
+    pub(crate) fn get_opt(&self, x: LambdaExprRef) -> Option<&LambdaExpr<T>> {
+        self.pool.0.get(x.0 as usize)
+    }
+
     ///The length of an expression
     #[allow(clippy::len_without_is_empty)]
     pub(crate) fn len(&self) -> usize {
