@@ -895,8 +895,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
         let lambda_type = lambda_type.unwrap();
         let n_nodes = self.pool.0.len();
 
-        match self.lambda_has_variable(self.root, vec![]) {
-            Ok((has_variable, _)) => LambdaSummaryStats::WellFormed {
+        match self.all_lambda_has_variable(self.root) {
+            Ok(has_variable) => LambdaSummaryStats::WellFormed {
                 lambda_type,
                 constant_function: !has_variable,
                 n_nodes,
@@ -906,52 +906,60 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
         }
     }
 
-    fn lambda_has_variable(
-        &self,
-        i: LambdaExprRef,
-        mut previous_lambdas: Vec<bool>,
-    ) -> Result<(bool, Vec<bool>), LambdaError> {
-        let expr = self.get(i);
-
-        match expr {
-            LambdaExpr::Lambda(..) => {
-                previous_lambdas.push(false);
-            }
-            LambdaExpr::BoundVariable(lambda, _) => {
-                let n_lambdas = previous_lambdas.len();
-                if *lambda >= previous_lambdas.len() {
-                    return Err(LambdaError::BadBoundVariable {
-                        var: i,
-                        depth: previous_lambdas.len(),
-                    });
+    fn all_lambda_has_variable(&self, i: LambdaExprRef) -> Result<bool, LambdaError> {
+        let mut found = vec![];
+        let mut stack = vec![(i, vec![])];
+        while let Some((expr_ref, mut lambdas)) = stack.pop() {
+            match self.get(expr_ref) {
+                LambdaExpr::Lambda(lambda_expr_ref, _) => {
+                    found.push(false);
+                    lambdas.push(found.len() - 1);
+                    stack.push((*lambda_expr_ref, lambdas));
                 }
-                *previous_lambdas.get_mut(n_lambdas - 1 - lambda).unwrap() = true;
+                LambdaExpr::BoundVariable(d, _) => {
+                    if let Some(index) = lambdas.len().checked_sub(d + 1) {
+                        if let Some(found_index) = lambdas.get(index) {
+                            if let Some(found) = found.get_mut(*found_index) {
+                                *found = true;
+                            } else {
+                                return Err(LambdaError::BadBoundVariable {
+                                    var: expr_ref,
+                                    depth: lambdas.len(),
+                                });
+                            }
+                        } else {
+                            return Err(LambdaError::BadBoundVariable {
+                                var: expr_ref,
+                                depth: lambdas.len(),
+                            });
+                        }
+                    } else {
+                        return Err(LambdaError::BadBoundVariable {
+                            var: expr_ref,
+                            depth: lambdas.len(),
+                        });
+                    }
+                }
+                LambdaExpr::FreeVariable(..) => (),
+                LambdaExpr::Application {
+                    subformula,
+                    argument,
+                } => {
+                    stack.push((*subformula, lambdas.clone()));
+                    stack.push((*argument, lambdas));
+                }
+
+                LambdaExpr::LanguageOfThoughtExpr(x) => {
+                    if x.inc_depth() {
+                        found.push(false);
+                        lambdas.push(found.len() - 1);
+                    }
+                    stack.extend(x.get_children().map(|x| (x, lambdas.clone())));
+                }
             }
-            _ => (),
         }
 
-        let n_lambdas = previous_lambdas.len();
-
-        // Use to check if any child has a constant lambda
-        let mut has_variable = true;
-        for child in expr.get_children() {
-            let (is_lambda, v) = self.lambda_has_variable(child, previous_lambdas.clone())?;
-            has_variable &= is_lambda;
-
-            previous_lambdas
-                .iter_mut()
-                .zip(v[0..n_lambdas].iter())
-                .for_each(|(a, b)| *a |= b);
-        }
-
-        if let LambdaExpr::Lambda(..) = expr {
-            Ok((
-                has_variable && previous_lambdas.pop().unwrap(),
-                previous_lambdas,
-            ))
-        } else {
-            Ok((has_variable, previous_lambdas))
-        }
+        Ok(found.iter().all(|x| *x))
     }
 }
 
@@ -1547,6 +1555,45 @@ mod test {
             e.to_string(),
             "lambda a x some_e(y, all_e, AgentOf(a_m, y) & PatientOf(x, y) & pe_likes(y))"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn is_constant_function() -> anyhow::Result<()> {
+        let constants = [
+            "lambda a x a_John",
+            "lambda a x lambda a y pa_man(x)",
+            "lambda a x some_e(y, all_e, pe_runs(y))",
+        ];
+        for s in constants {
+            println!("{s}");
+            let LambdaSummaryStats::WellFormed {
+                lambda_type: _,
+                constant_function,
+                n_nodes: _,
+            } = RootedLambdaPool::parse(s).unwrap().stats()
+            else {
+                panic!("{s} is poorly formed")
+            };
+            assert!(constant_function);
+        }
+
+        let not_constants = [
+            "lambda a x x",
+            "lambda a x lambda a y pa_man(x) & pa_woman(y)",
+        ];
+        for s in not_constants {
+            println!("{s}");
+            let LambdaSummaryStats::WellFormed {
+                lambda_type: _,
+                constant_function,
+                n_nodes: _,
+            } = RootedLambdaPool::parse(s).unwrap().stats()
+            else {
+                panic!("{s} is poorly formed")
+            };
+            assert!(!constant_function);
+        }
         Ok(())
     }
 }

@@ -523,7 +523,7 @@ mod test {
             "lambda <a,t> P P(a_man) & ~P(a_woman)",
             "loves#<a,<a,t>>(a_john, a_mary)",
             "gives#<a,<a,<a,t>>>(a_john, a_mary, a_present)",
-            "lambda a x lambda a y loves#<a,<a,t>>(x, y)",
+            "lambda e x lambda a y loves#<e,<a,t>>(x, y)",
         ] {
             println!("{s}");
             let p = RootedLambdaPool::parse(s)?;
