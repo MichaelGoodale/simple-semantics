@@ -1,166 +1,78 @@
-use super::UnbuiltExpr;
 use ahash::HashMap;
-use rand::seq::{IndexedRandom, WeightError};
 use std::{borrow::Cow, collections::hash_map::Entry};
 
 use super::*;
-use crate::{
-    Actor, PropertyLabel,
-    lambda::{ExpressionType, types::LambdaType},
-};
-
-#[allow(dead_code)]
-#[derive(Debug, Copy, Clone)]
-pub(super) enum SampleDetails {
-    LambdaExpr,
-    Other(usize),
-}
-
-impl SampleDetails {
-    fn new(e: &UnbuiltExpr) -> Self {
-        match e {
-            UnbuiltExpr::Lambda(..) => SampleDetails::LambdaExpr,
-            _ => panic!(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RandomExprConfig {
-    lambda_weight: f64,
-    depth_rapidness: f64,
-}
-
-impl RandomExprConfig {
-    pub fn new(lambda_weight: f64, depth_weight: f64) -> Self {
-        Self {
-            lambda_weight,
-            depth_rapidness: depth_weight,
-        }
-    }
-}
-
-impl Default for RandomExprConfig {
-    fn default() -> Self {
-        Self {
-            lambda_weight: 1.0,
-            depth_rapidness: 4.0,
-        }
-    }
-}
-pub enum ExprDistribution<'a, 'src, 'typ, 'conf> {
-    KnownChildren {
-        exprs: Vec<Cow<'a, UnbuiltExpr<'src, 'typ>>>,
-    },
-    UnknownChildren {
-        exprs: Vec<(Cow<'a, UnbuiltExpr<'src, 'typ>>, SampleDetails)>,
-        depth: usize,
-        config: &'conf RandomExprConfig,
-    },
-}
-
-#[derive(Debug, Clone, Error)]
-pub enum SamplingError {
-    #[error("Can't find an expr of type {0}!")]
-    CantFindExpr(LambdaType),
-    #[error("Can't find an expr of type {t} with args {}!", args.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "))]
-    CantFindExprWithArgs {
-        t: LambdaType,
-        args: Vec<LambdaType>,
-    },
-    #[error("Issue with sampling: {0}!")]
-    DistributionError(#[from] WeightError),
-}
-
-impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
-    pub fn choose(self, rng: &mut impl Rng) -> Result<UnbuiltExpr<'src, 'typ>, SamplingError> {
-        match self {
-            ExprDistribution::KnownChildren { exprs } => {
-                let e = exprs.choose(rng).unwrap();
-                Ok(e.clone().into_owned())
-            }
-            ExprDistribution::UnknownChildren {
-                exprs,
-                config,
-                depth,
-            } => {
-                if depth == 0 {
-                    let e = exprs.choose(rng).unwrap().clone().0;
-                    Ok(e.into_owned())
-                } else {
-                    let depth = depth as f64;
-                    let e = &exprs
-                        .choose_weighted(rng, |(_, e)| match e {
-                            SampleDetails::LambdaExpr => {
-                                let pareto =
-                                    (2.0) / (((depth / config.depth_rapidness) + 1.5).powf(3.0));
-                                config.lambda_weight * pareto.abs()
-                            }
-                            SampleDetails::Other(n_args) => {
-                                //This is the pareto PDF with x_m=1 and alpha=(n_args+1)
-                                //scaled by depth_rapidness and shifted to the right by 1
-                                let n_args = *n_args as f64;
-                                ((n_args + 1.0)
-                                    / (((depth / config.depth_rapidness) + 1.5).powf(n_args + 2.0)))
-                                .abs()
-                            }
-                        })?
-                        .0;
-                    Ok(e.clone().into_owned())
-                }
-            }
-        }
-    }
-}
+use crate::{Actor, PropertyLabel, lambda::types::LambdaType};
 
 #[derive(Debug, Clone)]
-pub struct PossibleExpressions<'src, 'typ, 'conf> {
-    expressions: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<UnbuiltExpr<'src, 'typ>>>>,
-    config: &'conf RandomExprConfig,
+pub struct PossibleExpressions<'src, T> {
+    expressions: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>,
 }
 
-impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
+impl<'src> PossibleExpressions<'src, Expr<'src>> {
     pub fn new(
         actors: &[Actor<'src>],
         actor_properties: &[PropertyLabel<'src>],
         event_properties: &[PropertyLabel<'src>],
-        config: &'conf RandomExprConfig,
     ) -> Self {
-        let mut all_expressions: Vec<UnbuiltExpr> = vec![
-            UnbuiltExpr::Constant(Constant::Everyone),
-            UnbuiltExpr::Constant(Constant::EveryEvent),
-            UnbuiltExpr::Unary(MonOp::Not),
-            UnbuiltExpr::Binary(BinOp::And),
-            UnbuiltExpr::Binary(BinOp::Or),
-            UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Actor),
-            UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Actor),
-            UnbuiltExpr::Quantifier(Quantifier::Existential, ActorOrEvent::Event),
-            UnbuiltExpr::Quantifier(Quantifier::Universal, ActorOrEvent::Event),
-            UnbuiltExpr::Binary(BinOp::AgentOf),
-            UnbuiltExpr::Binary(BinOp::PatientOf),
-        ];
+        let bad_ref = ExprRef(0);
+        let mut all_expressions: Vec<_> = [
+            Expr::Constant(Constant::Everyone),
+            Expr::Constant(Constant::EveryEvent),
+            Expr::Unary(MonOp::Not, bad_ref),
+            Expr::Binary(BinOp::And, bad_ref, bad_ref),
+            Expr::Binary(BinOp::Or, bad_ref, bad_ref),
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var_type: ActorOrEvent::Actor,
+                subformula: bad_ref,
+                restrictor: bad_ref,
+            },
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var_type: ActorOrEvent::Actor,
+                subformula: bad_ref,
+                restrictor: bad_ref,
+            },
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var_type: ActorOrEvent::Event,
+                subformula: bad_ref,
+                restrictor: bad_ref,
+            },
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var_type: ActorOrEvent::Event,
+                subformula: bad_ref,
+                restrictor: bad_ref,
+            },
+            Expr::Binary(BinOp::AgentOf, bad_ref, bad_ref),
+            Expr::Binary(BinOp::PatientOf, bad_ref, bad_ref),
+        ]
+        .to_vec();
 
-        all_expressions.extend(actors.iter().map(|x| UnbuiltExpr::Actor(x)));
+        all_expressions.extend(actors.iter().map(|x| Expr::Actor(x)));
 
         all_expressions.extend(actor_properties.iter().flat_map(|i| {
             [
-                UnbuiltExpr::Unary(MonOp::Property(i, ActorOrEvent::Actor)),
-                UnbuiltExpr::Constant(Constant::Property(i, ActorOrEvent::Actor)),
+                Expr::Unary(MonOp::Property(i, ActorOrEvent::Actor), bad_ref),
+                Expr::Constant(Constant::Property(i, ActorOrEvent::Actor)),
             ]
         }));
         all_expressions.extend(event_properties.iter().flat_map(|i| {
             [
-                UnbuiltExpr::Unary(MonOp::Property(i, ActorOrEvent::Event)),
-                UnbuiltExpr::Constant(Constant::Property(i, ActorOrEvent::Event)),
+                Expr::Unary(MonOp::Property(i, ActorOrEvent::Event), bad_ref),
+                Expr::Constant(Constant::Property(i, ActorOrEvent::Event)),
             ]
         }));
 
         let mut expressions: HashMap<LambdaType, HashMap<_, Vec<_>>> = HashMap::default();
-        for expr in all_expressions {
-            let ExpressionType { output, arguments } = expr.get_expression_type();
-
+        for expr in all_expressions.into_iter() {
+            let output = expr.get_type();
+            let arguments = expr.get_arguments().collect();
+            let expr = LambdaExpr::LanguageOfThoughtExpr(expr);
             //Annoying match to avoid cloning arguments
-            match expressions.entry(output) {
+            match expressions.entry(output.clone()) {
                 Entry::Occupied(mut occupied) => {
                     let inner_h: &mut HashMap<_, _> = occupied.get_mut();
                     match inner_h.entry(arguments) {
@@ -176,90 +88,73 @@ impl<'src, 'typ, 'conf> PossibleExpressions<'src, 'typ, 'conf> {
             }
         }
 
-        PossibleExpressions {
-            expressions,
-            config,
-        }
+        PossibleExpressions { expressions }
     }
+    /*
+        pub fn possiblities_fixed_children<'a>(
+            &'a self,
+            lambda_type: &'typ LambdaType,
+            arguments: &'typ [LambdaType],
+            context: &Context<'typ>,
+        ) -> Result<ExprDistribution<'a, 'src, 'typ, 'conf>, SamplingError> {
+            let mut possibilities: Vec<Cow<'a, UnbuiltExpr<'src, 'typ>>> = self
+                .expressions
+                .get(lambda_type)
+                .map(|x| {
+                    x.get(arguments)
+                        .map(|x| x.iter().map(Cow::Borrowed).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
 
-    pub fn possiblities_fixed_children<'a>(
-        &'a self,
-        lambda_type: &'typ LambdaType,
-        arguments: &'typ [LambdaType],
-        context: &Context<'typ>,
-    ) -> Result<ExprDistribution<'a, 'src, 'typ, 'conf>, SamplingError> {
-        let mut possibilities: Vec<Cow<'a, UnbuiltExpr<'src, 'typ>>> = self
-            .expressions
-            .get(lambda_type)
-            .map(|x| {
-                x.get(arguments)
-                    .map(|x| x.iter().map(Cow::Borrowed).collect::<Vec<_>>())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-
-        if arguments.len() == 1 {
-            if let Ok((lhs, rhs)) = lambda_type.split() {
-                if rhs == arguments.first().unwrap() {
-                    possibilities.push(Cow::Owned(UnbuiltExpr::Lambda(lhs, rhs)));
+            if arguments.len() == 1 {
+                if let Ok((lhs, rhs)) = lambda_type.split() {
+                    if rhs == arguments.first().unwrap() {
+                        possibilities.push(Cow::Owned(UnbuiltExpr::Lambda(lhs, rhs)));
+                    }
                 }
+            } else if arguments.is_empty() {
+                possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
             }
-        } else if arguments.is_empty() {
-            possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
+
+            if possibilities.is_empty() {
+                return Err(SamplingError::CantFindExprWithArgs {
+                    t: lambda_type.clone(),
+                    args: arguments.to_vec(),
+                });
+            }
+
+            Ok(ExprDistribution::KnownChildren {
+                exprs: possibilities,
+            })
         }
+    */
+}
 
-        if possibilities.is_empty() {
-            return Err(SamplingError::CantFindExprWithArgs {
-                t: lambda_type.clone(),
-                args: arguments.to_vec(),
-            });
-        }
-
-        Ok(ExprDistribution::KnownChildren {
-            exprs: possibilities,
-        })
-    }
-
-    pub fn possibilities<'a>(
+impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
+    pub(super) fn possibilities<'a>(
         &'a self,
-        lambda_type: &'typ LambdaType,
-        context: &Context<'typ>,
-    ) -> Result<ExprDistribution<'a, 'src, 'typ, 'conf>, SamplingError> {
+        lambda_type: &LambdaType,
+        context: &Context,
+    ) -> Vec<Cow<'a, LambdaExpr<'src, T>>> {
         let mut possibilities: Vec<_> = self
             .expressions
             .get(lambda_type)
             .map(|x| {
                 x.iter()
                     .filter(|(k, _)| !has_e_argument(k) || context.can_sample_event())
-                    .flat_map(|(k, v)| {
-                        v.iter()
-                            .map(|x| (Cow::Borrowed(x), SampleDetails::Other(k.len())))
-                    })
+                    .flat_map(|(_, v)| v.iter().map(Cow::Borrowed))
                     .collect()
             })
             .unwrap_or_default();
 
-        if let Ok((lhs, rhs)) = lambda_type.split() {
-            let e = Cow::Owned(UnbuiltExpr::Lambda(lhs, rhs));
-            let det = SampleDetails::new(&e);
-            possibilities.push((e, det));
+        if let Ok((lhs, _)) = lambda_type.split() {
+            let e = Cow::Owned(LambdaExpr::Lambda(LambdaExprRef(0), lhs.clone()));
+            possibilities.push(e);
         }
 
-        possibilities.extend(
-            context
-                .variables(lambda_type)
-                .map(|e| (Cow::Owned(e), SampleDetails::Other(0))),
-        );
-
-        if possibilities.is_empty() {
-            return Err(SamplingError::CantFindExpr(lambda_type.clone()));
-        }
-
-        Ok(ExprDistribution::UnknownChildren {
-            exprs: possibilities,
-            config: self.config,
-            depth: context.depth(),
-        })
+        possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
+        possibilities
     }
 }
 

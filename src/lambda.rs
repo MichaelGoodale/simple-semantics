@@ -110,6 +110,9 @@ pub trait LambdaLanguageOfThought {
     ///indices
     fn inc_depth(&self) -> bool;
 
+    ///Returns the type of the bound variable at an instruction
+    fn var_type(&self) -> Option<&LambdaType>;
+
     ///Given a list of new references for all children of an expr, change its children.
     fn change_children(&mut self, new_children: impl Iterator<Item = LambdaExprRef>);
 
@@ -140,6 +143,11 @@ impl LambdaLanguageOfThought for () {
     fn n_children(&self) -> usize {
         0
     }
+
+    fn var_type(&self) -> Option<&LambdaType> {
+        None
+    }
+
     fn remap_refs(&mut self, _: &[usize]) {}
 
     fn change_children(&mut self, _: impl Iterator<Item = LambdaExprRef>) {}
@@ -211,6 +219,27 @@ pub enum LambdaExpr<'a, T> {
     ///Any expression which is not part of the lambda calculus directly (e.g. primitives). See
     ///[`crate::Expr`] for an example.
     LanguageOfThoughtExpr(T),
+}
+
+impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
+    pub(crate) fn var_type(&self) -> Option<&LambdaType> {
+        match self {
+            LambdaExpr::Lambda(_, lambda_type) => Some(lambda_type),
+            LambdaExpr::LanguageOfThoughtExpr(e) => e.var_type(),
+            LambdaExpr::BoundVariable(..)
+            | LambdaExpr::FreeVariable(..)
+            | LambdaExpr::Application { .. } => None,
+        }
+    }
+    pub(crate) fn inc_depth(&self) -> bool {
+        match self {
+            LambdaExpr::Lambda(..) => true,
+            LambdaExpr::LanguageOfThoughtExpr(e) => e.inc_depth(),
+            LambdaExpr::BoundVariable(..)
+            | LambdaExpr::FreeVariable(..)
+            | LambdaExpr::Application { .. } => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -478,7 +507,7 @@ pub(crate) struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
 }
 
 impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
-    fn n_children(&self) -> usize {
+    pub(crate) fn n_children(&self) -> usize {
         match self {
             LambdaExpr::Lambda(..) => 1,
             LambdaExpr::BoundVariable(..) => 0,

@@ -1,120 +1,133 @@
 use super::*;
 
-#[derive(Debug, Default, Clone)]
-pub(super) struct Context<'t> {
-    lambdas: Vec<&'t LambdaType>,
-    depth: usize,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Context {
+    lambdas: Vec<(LambdaType, bool)>,
+    pub pool_index: usize,
+    pub position: usize,
+    pub depth: usize,
+    done: bool,
+    pub open_nodes: usize,
+    constant_function: bool,
 }
 
-impl<'t> Context<'t> {
-    pub fn lambdas(&self) -> &[&LambdaType] {
-        &self.lambdas
+impl PartialOrd for Context {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
+}
 
-    pub fn depth(&self) -> usize {
-        self.depth
+impl Ord for Context {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other
+            .done
+            .cmp(&self.done)
+            .then(self.open_depth_score().cmp(&other.open_depth_score()))
+            .then(self.constant_function.cmp(&other.constant_function))
     }
+}
+impl Context {
+    fn open_depth_score(&self) -> usize {
+        self.depth + self.open_nodes.pow(2)
+    }
+}
 
-    pub fn into_owned_lambdas<'b>(self, new_lambdas: &'b [LambdaType]) -> Context<'b> {
+impl Context {
+    pub fn new(position: usize, lambdas: Vec<(LambdaType, bool)>) -> Self {
         Context {
-            lambdas: new_lambdas.iter().collect(),
-            depth: self.depth,
+            lambdas,
+            pool_index: 0,
+            position,
+            done: false,
+            depth: 0,
+            open_nodes: 1,
+            constant_function: false,
         }
     }
 
-    pub fn add_var(&mut self, actor_or_event: ActorOrEvent) {
-        self.lambdas.push(match actor_or_event {
-            ActorOrEvent::Actor => LambdaType::a(),
-            ActorOrEvent::Event => LambdaType::e(),
-        })
+    pub fn add_lambda(&mut self, t: &LambdaType) {
+        self.lambdas.push((t.clone(), false));
     }
 
-    pub fn add_lambda(&mut self, lhs: &'t LambdaType) {
-        self.lambdas.push(lhs);
+    pub fn pop_lambda(&mut self) {
+        let (_, used) = self.lambdas.pop().unwrap();
+        self.constant_function |= !used;
+    }
+
+    pub fn use_bvar(&mut self, b: usize) {
+        let n = self.lambdas.len() - b - 1;
+        self.lambdas.get_mut(n).unwrap().1 = true;
     }
 
     pub fn can_sample_event(&self) -> bool {
-        self.lambdas.iter().any(|lam| *lam == LambdaType::e())
+        self.lambdas.iter().any(|(lam, _)| lam == LambdaType::e())
     }
 
-    pub fn variables<'a>(
+    pub fn variables<'src, T: LambdaLanguageOfThought>(
         &self,
         lambda_type: &LambdaType,
-    ) -> impl Iterator<Item = UnbuiltExpr<'a, 't>> {
+    ) -> impl Iterator<Item = LambdaExpr<'src, T>> {
         let n = self.lambdas.len();
-        self.lambdas.iter().enumerate().filter_map(move |(i, t)| {
-            if *t == lambda_type {
-                Some(UnbuiltExpr::BoundVariable(n - i - 1, t))
-            } else {
-                None
-            }
-        })
+        self.lambdas
+            .iter()
+            .enumerate()
+            .filter_map(move |(i, (lambda, _))| {
+                if lambda == lambda_type {
+                    Some(LambdaExpr::BoundVariable(n - i - 1, lambda.clone()))
+                } else {
+                    None
+                }
+            })
     }
 }
 
-pub(super) struct ContextBFSIterator<'src, 'a> {
-    pool: &'a RootedLambdaPool<'src, Expr<'src>>,
-    queue: VecDeque<(LambdaExprRef, Context<'a>)>,
-}
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_context() -> anyhow::Result<()> {
+        let a = Context {
+            depth: 1,
+            done: false,
+            lambdas: vec![],
+            pool_index: 0,
+            position: 0,
+            open_nodes: 0,
+            constant_function: false,
+        };
+        let b = Context {
+            depth: 2,
+            done: false,
+            lambdas: vec![],
+            pool_index: 0,
+            position: 0,
+            open_nodes: 0,
+            constant_function: false,
+        };
+        let c = Context {
+            depth: 5,
+            done: true,
+            lambdas: vec![],
+            pool_index: 0,
+            position: 0,
+            open_nodes: 0,
+            constant_function: false,
+        };
+        let d = Context {
+            depth: 5,
+            done: true,
+            lambdas: vec![],
+            pool_index: 0,
+            position: 0,
+            open_nodes: 54,
+            constant_function: false,
+        };
 
-impl<'src, 'a> Iterator for ContextBFSIterator<'src, 'a> {
-    type Item = (LambdaExprRef, Context<'a>);
+        assert!(a < b);
+        assert!(c < b);
+        assert!(c < a);
+        assert!(c < d);
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some((x, context)) = self.queue.pop_front() {
-            match self.pool.get(x) {
-                LambdaExpr::Lambda(x, c) => {
-                    let mut context = context.clone();
-                    context.lambdas.push(c);
-                    context.depth += 1;
-                    self.queue.push_back((*x, context))
-                }
-                LambdaExpr::Application {
-                    subformula,
-                    argument,
-                } => {
-                    let mut context = context.clone();
-                    context.depth += 1;
-                    self.queue.push_back((*subformula, context.clone()));
-                    self.queue.push_back((*argument, context));
-                }
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                    var_type: var,
-                    restrictor,
-                    subformula,
-                    ..
-                }) => {
-                    let mut context = context.clone();
-                    context.add_var(*var);
-                    context.depth += 1;
-                    self.queue
-                        .push_back((LambdaExprRef(restrictor.0), context.clone()));
-                    self.queue.push_back((LambdaExprRef(subformula.0), context));
-                }
-                LambdaExpr::LanguageOfThoughtExpr(x) => x.get_children().for_each(|x| {
-                    let mut context = context.clone();
-                    context.depth += 1;
-                    self.queue.push_back((x, context))
-                }),
-                LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-            }
-            Some((x, context))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'src> RootedLambdaPool<'src, Expr<'src>> {
-    pub(super) fn context_bfs_iter<'a>(&'a self) -> ContextBFSIterator<'src, 'a> {
-        let mut queue = VecDeque::new();
-        queue.push_back((
-            self.root,
-            Context {
-                lambdas: vec![],
-                depth: 0,
-            },
-        ));
-        ContextBFSIterator { pool: self, queue }
+        Ok(())
     }
 }

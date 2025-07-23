@@ -1,6 +1,6 @@
 use crate::utils::ArgumentIterator;
 use ahash::HashMap;
-use std::iter::empty;
+use std::{borrow::Cow, iter::empty};
 use thiserror::Error;
 
 use super::{
@@ -53,6 +53,16 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
     fn inc_depth(&self) -> bool {
         matches!(self, Expr::Quantifier { .. })
+    }
+
+    fn var_type(&self) -> Option<&LambdaType> {
+        match self {
+            Expr::Quantifier { var_type, .. } => match var_type {
+                ActorOrEvent::Actor => Some(LambdaType::a()),
+                ActorOrEvent::Event => Some(LambdaType::e()),
+            },
+            _ => None,
+        }
     }
 
     fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
