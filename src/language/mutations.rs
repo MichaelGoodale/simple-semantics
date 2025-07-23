@@ -41,7 +41,6 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         for (n, c) in self.context_bfs_iter() {
             if n == position {
                 pos_context = Some(c);
-                break;
                 //We don't break so that we go over the entire context and see if all lambdas have
                 //been used.
             }
@@ -88,9 +87,10 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             }
         }
 
-        let context = self
+        let mut context = self
             .get_context_for_expr(position)
             .expect("Couldn't find the {position}th expression");
+        context.clear_future_branches();
 
         //Here we extract the lambdas and reborrow them to avoid borrowing crap.
         let lambdas = context
@@ -208,9 +208,11 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             *x = LambdaExpr::FreeVariable(FreeVar::Anonymous(0), t.clone());
         }
 
-        let context = self
+        let mut context = self
             .get_context_for_expr(position)
             .unwrap_or_else(|| panic!("Couldn't find {}th expr!", position.0));
+        context.clear_future_branches();
+
         let ExpressionType { output, arguments } = self.get_expression_type(position).unwrap();
         let replacement = possible_expressions
             .possiblities_fixed_children(&output, &arguments, &context)?

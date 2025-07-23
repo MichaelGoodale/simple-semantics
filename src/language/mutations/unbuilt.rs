@@ -27,6 +27,39 @@ impl UnbuiltExpr<'_, '_> {
             UnbuiltExpr::BoundVariable(..) => 0,
         }
     }
+
+    pub fn children_type(&self) -> Vec<LambdaType> {
+        match self {
+            UnbuiltExpr::Quantifier(_, actor_or_event) => {
+                vec![
+                    match actor_or_event {
+                        ActorOrEvent::Actor => LambdaType::at().clone(),
+                        ActorOrEvent::Event => LambdaType::et().clone(),
+                    },
+                    LambdaType::t().clone(),
+                ]
+            }
+            UnbuiltExpr::Actor(_)
+            | UnbuiltExpr::Event(_)
+            | UnbuiltExpr::BoundVariable(..)
+            | UnbuiltExpr::Constant(_) => vec![],
+            UnbuiltExpr::Binary(b) => match b {
+                BinOp::AgentOf | BinOp::PatientOf => {
+                    vec![LambdaType::a().clone(), LambdaType::e().clone()]
+                }
+                BinOp::And | BinOp::Or => vec![LambdaType::t().clone(), LambdaType::t().clone()],
+            },
+            UnbuiltExpr::Unary(m) => match m {
+                MonOp::Not => vec![LambdaType::t().clone()],
+                MonOp::Property(_, actor_or_event) => vec![match actor_or_event {
+                    ActorOrEvent::Actor => LambdaType::a().clone(),
+                    ActorOrEvent::Event => LambdaType::e().clone(),
+                }],
+            },
+            UnbuiltExpr::Lambda(_, rhs) => vec![(*rhs).clone()],
+        }
+    }
+
     pub fn get_expression_type(&self) -> ExpressionType {
         match self {
             UnbuiltExpr::Quantifier(_, actor_or_event) => ExpressionType {
@@ -159,8 +192,10 @@ pub fn add_expr<'src, 'pool>(
 
     pool[pos as usize] = Some(expr);
     pool.resize(pool.len() + children.len(), None);
+    let n = children.len();
     children
         .into_iter()
-        .map(|(a, b)| (a, b, context.clone()))
+        .enumerate()
+        .map(|(i, (a, b))| (a, b, context.clone().with_future_branch(n - i - 1)))
         .collect()
 }

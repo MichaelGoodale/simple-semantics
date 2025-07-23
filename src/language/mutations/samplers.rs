@@ -1,5 +1,6 @@
 use super::UnbuiltExpr;
 use ahash::HashMap;
+use core::net;
 use rand::seq::{IndexedRandom, WeightError};
 use std::{borrow::Cow, collections::hash_map::Entry};
 
@@ -69,7 +70,7 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
         match self {
             ExprDistribution::KnownChildren { exprs, context } => {
                 let e = exprs
-                    .choose_weighted(rng, |e| e.can_satisfy(context).to_f64())
+                    .choose_weighted(rng, |e| e.can_satisfy(context).as_f64())
                     .unwrap();
                 Ok(e.clone().into_owned())
             }
@@ -81,7 +82,7 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
             } => {
                 if depth == 0 {
                     let e = exprs
-                        .choose_weighted(rng, |e| e.can_satisfy(context).to_f64())
+                        .choose_weighted(rng, |e| e.can_satisfy(context).as_f64())
                         .unwrap()
                         .clone();
                     Ok(e.into_owned())
@@ -95,7 +96,7 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
                         let score = ((n_args + 1.0)
                             / (((depth / config.depth_rapidness) + 1.5).powf(n_args + 2.0)))
                         .abs();
-                        score + e.can_satisfy(context).to_f64()
+                        score + e.can_satisfy(context).as_f64()
                     })?;
                     Ok((*e).clone().into_owned())
                 }
@@ -104,70 +105,96 @@ impl<'src, 'typ> ExprDistribution<'_, 'src, 'typ, '_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum Satisfaction {
-    ImmediatelySatisfy,
-    DirectlySatisfy,
-    IndirectlySatify,
-    CantSatify,
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct Satisfaction {
+    net_var: i64,
+    removed_vars: Vec<usize>,
+    adds_opportunity: i64,
 }
 
 impl Satisfaction {
-    fn to_f64(self) -> f64 {
-        match self {
-            Satisfaction::ImmediatelySatisfy => 8000.0,
-            Satisfaction::DirectlySatisfy => 3000.0,
-            Satisfaction::IndirectlySatify => 2.0,
-            Satisfaction::CantSatify => 1.0,
-        }
+    fn as_f64(&self) -> f64 {
+        println!("{self:?}");
+        let n = self.adds_opportunity as f64;
+        let net = self.net_var as f64;
+        1.0
     }
 }
 
 impl<'src, 'typ> UnbuiltExpr<'src, 'typ> {
     ///Whether a given expr can lead to a variable being satified
     fn can_satisfy(&self, context: &Context<'typ>) -> Satisfaction {
-        let s = Satisfaction::CantSatify;
-        if let UnbuiltExpr::BoundVariable(k, b) = self {
-            if context
-                .all_variables()
-                .filter(|(_, d, _)| !d)
-                .any(|(t, _, id)| id == *k && t == *b)
+        print!("{self:?}\t");
+        let mut net_var = match self {
+            UnbuiltExpr::Quantifier(..) | UnbuiltExpr::Lambda(..) => 1,
+            _ => 0,
+        };
+        let mut removed_vars = vec![];
+
+        let mut vars = context
+            .all_variables()
+            .filter(|x| !x.has_been_used())
+            .collect::<Vec<_>>();
+
+        if vars.is_empty() {
+            return Satisfaction {
+                net_var,
+                removed_vars,
+                adds_opportunity: 0,
+            };
+        }
+        net_var += vars.len() as i64;
+
+        if let UnbuiltExpr::BoundVariable(d, t) = self {
+            if let Some(x) = vars
+                .iter()
+                .find(|x| x.lambda_id() == *d && x.lambda_type() == *t)
             {
-                Satisfaction::ImmediatelySatisfy
-            } else {
-                Satisfaction::CantSatify
+                net_var -= 1;
+                removed_vars.push(x.future_opportunities());
+            }
+            Satisfaction {
+                net_var,
+                removed_vars,
+                adds_opportunity: 0,
             }
         } else {
             if self.n_children() == 0 {
-                return Satisfaction::CantSatify;
+                return Satisfaction {
+                    net_var,
+                    removed_vars,
+                    adds_opportunity: 0,
+                };
             }
-            let ExpressionType { arguments, .. } = self.get_expression_type();
 
-            let arguments: Vec<_> = arguments.into_iter().map(Some).collect();
-            let mut nothing_to_satisfy = true;
-            let mut has_all = true;
-            for t in context
-                .all_variables()
-                .filter_map(|(t, used, _)| if used { None } else { Some(t) })
-            {
-                nothing_to_satisfy = false;
+            let arguments = self.children_type();
 
-                ///check if an argument has been used somehow
-                if !arguments.contains(t) {
-                    has_all = false;
+            let mut arguments: Vec<_> = arguments.into_iter().map(Some).collect();
+
+            //We want to make sure that we remove the args of things with fewer opportunities
+            //first.
+            vars.sort_by_key(|x| x.future_opportunities());
+
+            for t in vars.iter() {
+                //Remove once an argument has been used.
+                if let Some(i) = arguments
+                    .iter()
+                    .position(|x| x.as_ref() == Some(t.lambda_type()))
+                {
+                    arguments[i] = None;
+                    net_var -= 1;
+                    removed_vars.push(t.future_opportunities());
                 }
             }
 
-            if nothing_to_satisfy {
-                return Satisfaction::CantSatify;
-            } else if has_all {
-                return Satisfaction::DirectlySatisfy;
-            }
-
-            if arguments.contains(LambdaType::t()) {
-                Satisfaction::IndirectlySatify
-            } else {
-                Satisfaction::CantSatify
+            Satisfaction {
+                net_var,
+                removed_vars,
+                adds_opportunity: if arguments.iter().any(|x| x.is_some()) {
+                    1
+                } else {
+                    0
+                },
             }
         }
     }
