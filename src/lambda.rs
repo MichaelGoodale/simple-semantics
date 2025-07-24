@@ -259,6 +259,12 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
         self.pool.get(x)
     }
+
+    ///Get the length of a lambda tree
+    #[allow(clippy::len_without_is_empty)]
+    pub(crate) fn len(&self) -> usize {
+        self.pool.0.len()
+    }
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
@@ -788,7 +794,7 @@ where
 }
 
 impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
-    fn change_children(&mut self, mut children: impl Iterator<Item = LambdaExprRef>) {
+    pub(crate) fn change_children(&mut self, mut children: impl Iterator<Item = LambdaExprRef>) {
         match self {
             LambdaExpr::Lambda(lambda_expr_ref, _) => *lambda_expr_ref = children.next().unwrap(),
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),

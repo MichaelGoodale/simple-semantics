@@ -1,10 +1,20 @@
-use std::{cmp::Reverse, collections::BinaryHeap};
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, VecDeque},
+};
 
+use ahash::HashMap;
+use rand::{
+    Rng,
+    distr::Distribution,
+    seq::{IndexedRandom, IteratorRandom},
+};
 use thiserror::Error;
 
 use super::*;
 use crate::lambda::{
-    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, types::LambdaType,
+    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
+    types::{LambdaType, TypeError},
 };
 
 mod context;
@@ -61,7 +71,7 @@ impl<'src, T: LambdaLanguageOfThought> Default for UnfinishedLambdaPool<'src, T>
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> UnfinishedLambdaPool<'src, T> {
+impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
     fn add_expr(&mut self, mut expr: LambdaExpr<'src, T>, c: &mut Context, t: &LambdaType) {
         c.depth += 1;
         c.open_nodes += expr.n_children();
@@ -100,16 +110,101 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> UnfinishedLambd
 }
 
 #[derive(Debug, Clone)]
-pub struct LambdaSampler<'src, T: LambdaLanguageOfThought> {
+pub struct LambdaEnumerator<'src, T: LambdaLanguageOfThought> {
     pools: Vec<UnfinishedLambdaPool<'src, T>>,
     pq: BinaryHeap<Reverse<Context>>,
     possible_expressions: PossibleExpressions<'src, T>,
+    n_yielded: usize,
 }
 
-impl<'src, T: std::fmt::Debug + LambdaLanguageOfThought + Clone> Iterator
+///Provides detail about a generated lambda expression
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct ExprDetails {
+    id: usize,
+    constant_function: bool,
+    size: usize,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TypeAgnosticSampler<'src, T: LambdaLanguageOfThought> {
+    type_to_sampler: HashMap<LambdaType, (usize, LambdaSampler<'src, T>)>,
+    max_expr: usize,
+    max_types: usize,
+    possible_expressions: PossibleExpressions<'src, T>,
+}
+
+impl<'src, T: LambdaLanguageOfThought + Clone> TypeAgnosticSampler<'src, T> {
+    pub fn sample(
+        &mut self,
+        lambda_type: LambdaType,
+        rng: &mut impl Rng,
+    ) -> RootedLambdaPool<'src, T> {
+        let (counts, exprs) = self
+            .type_to_sampler
+            .entry(lambda_type)
+            .or_insert_with_key(|t| {
+                (
+                    1,
+                    RootedLambdaPool::sampler(t, self.possible_expressions.clone(), self.max_expr),
+                )
+            });
+        *counts += 1;
+        let sample = exprs.sample(rng);
+
+        if self.type_to_sampler.len() > self.max_types {
+            let (_, k) = self
+                .type_to_sampler
+                .iter()
+                .map(|(k, (n_visits, _))| (n_visits, k))
+                .min_by_key(|x| x.0)
+                .unwrap();
+
+            let t = k.clone();
+            self.type_to_sampler.remove(&t);
+        }
+
+        sample
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
+    ///Create a sampler which can sample arbitrary types.
+    pub fn typeless_sampler(
+        possible_expressions: PossibleExpressions<'src, T>,
+        max_expr: usize,
+        max_types: usize,
+    ) -> TypeAgnosticSampler<'src, T> {
+        assert!(max_types >= 1);
+        assert!(max_expr >= 1);
+        TypeAgnosticSampler {
+            possible_expressions,
+            max_expr,
+            max_types,
+            type_to_sampler: HashMap::default(),
+        }
+    }
+}
+
+///A struct which samples expressions from a distribution.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct LambdaSampler<'src, T: LambdaLanguageOfThought> {
+    lambdas: Vec<RootedLambdaPool<'src, T>>,
+    expr_details: Vec<ExprDetails>,
+}
+
+impl<'src, T: LambdaLanguageOfThought + Clone> Distribution<RootedLambdaPool<'src, T>>
     for LambdaSampler<'src, T>
 {
-    type Item = RootedLambdaPool<'src, T>;
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> RootedLambdaPool<'src, T> {
+        self.lambdas
+            .choose(rng)
+            .expect("The Lambda Sampler has no lambdas to sample :(")
+            .clone()
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + Clone> Iterator for LambdaEnumerator<'src, T> {
+    type Item = (RootedLambdaPool<'src, T>, ExprDetails);
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(Reverse(mut c)) = self.pq.pop() {
@@ -144,15 +239,23 @@ impl<'src, T: std::fmt::Debug + LambdaLanguageOfThought + Clone> Iterator
                         //If the parent is None, we're done!
                         let root = LambdaExprRef(c.position as u32);
                         let p = std::mem::take(&mut self.pools[c.pool_index]);
-                        return Some(RootedLambdaPool {
-                            pool: LambdaPool(
-                                p.pool
-                                    .into_iter()
-                                    .map(|x| LambdaExpr::try_from(x).unwrap())
-                                    .collect(),
-                            ),
-                            root,
-                        });
+                        self.n_yielded += 1;
+                        return Some((
+                            RootedLambdaPool {
+                                pool: LambdaPool(
+                                    p.pool
+                                        .into_iter()
+                                        .map(|x| LambdaExpr::try_from(x).unwrap())
+                                        .collect(),
+                                ),
+                                root,
+                            },
+                            ExprDetails {
+                                id: self.n_yielded - 1,
+                                size: c.depth,
+                                constant_function: c.is_constant(),
+                            },
+                        ));
                     }
                 }
             };
@@ -219,10 +322,10 @@ impl<'src, T: Clone + LambdaLanguageOfThought> From<RootedLambdaPool<'src, T>>
 
 impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///Create a [`LambdaSampler`] of a given type.
-    pub fn sampler(
+    pub fn enumerator(
         t: &LambdaType,
         possible_expressions: PossibleExpressions<'src, T>,
-    ) -> LambdaSampler<'src, T> {
+    ) -> LambdaEnumerator<'src, T> {
         let context = Context::new(0, vec![]);
         let mut pq = BinaryHeap::default();
         pq.push(Reverse(context));
@@ -230,10 +333,31 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
             pool: vec![ExprOrType::Type(t.clone(), None)],
         }];
 
-        LambdaSampler {
+        LambdaEnumerator {
             pools,
             possible_expressions,
+            n_yielded: 0,
             pq,
+        }
+    }
+
+    ///Creates a reusable random sampler by enumerating over the first `max_expr` expressions
+    pub fn sampler(
+        t: &LambdaType,
+        possible_expressions: PossibleExpressions<'src, T>,
+        max_expr: usize,
+    ) -> LambdaSampler<'src, T> {
+        let enumerator = RootedLambdaPool::enumerator(t, possible_expressions);
+        let mut lambdas = Vec::with_capacity(max_expr);
+        let mut expr_details = Vec::with_capacity(max_expr);
+        for (lambda, detail) in enumerator.take(max_expr) {
+            lambdas.push(lambda);
+            expr_details.push(detail);
+        }
+
+        LambdaSampler {
+            lambdas,
+            expr_details,
         }
     }
 }
@@ -278,8 +402,6 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         }
         self.root = self.pool.cleanup(self.root);
     }
-}
-/*
 
     ///Replace a random expression with something else of the same type.
     pub fn swap_expr(
@@ -288,64 +410,46 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         available_actor_properties: &[PropertyLabel<'src>],
         available_event_properties: &[PropertyLabel<'src>],
         rng: &mut impl Rng,
-    ) -> Result<(), SamplingError> {
-        let config = RandomExprConfig::default();
+    ) -> Result<(), TypeError> {
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
         let possible_expressions = PossibleExpressions::new(
             available_actors,
             available_actor_properties,
             available_event_properties,
-            &config,
         );
 
-        let context = self
-            .get_context_for_expr(position)
-            .unwrap_or_else(|| panic!("Couldn't find {}th expr!", position.0));
-        let ExpressionType { output, arguments } = self.get_expression_type(position).unwrap();
-        let replacement = possible_expressions
-            .possiblities_fixed_children(&output, &arguments, &context)?
-            .choose(rng)?;
+        let context = Context::from_pos(self, position);
 
-        let new_expr = {
-            let mut children = self.get(position).get_children();
-            match replacement {
-                UnbuiltExpr::Quantifier(quantifier, actor_or_event) => {
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                        quantifier,
-                        var_type: actor_or_event,
-                        restrictor: children.next().unwrap().into(),
-                        subformula: children.next().unwrap().into(),
-                    })
-                }
-                UnbuiltExpr::Actor(a) => LambdaExpr::LanguageOfThoughtExpr(Expr::Actor(a)),
-                UnbuiltExpr::Event(e) => LambdaExpr::LanguageOfThoughtExpr(Expr::Event(e)),
-                UnbuiltExpr::Binary(bin_op) => LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
-                    bin_op,
-                    children.next().unwrap().into(),
-                    children.next().unwrap().into(),
-                )),
-                UnbuiltExpr::Unary(mon_op) => LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                    mon_op,
-                    children.next().unwrap().into(),
-                )),
-                UnbuiltExpr::Constant(constant) => {
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(constant))
-                }
-                UnbuiltExpr::Lambda(lhs, _) => {
-                    LambdaExpr::Lambda(children.next().unwrap(), lhs.clone())
-                }
-                UnbuiltExpr::BoundVariable(var, lambda_type) => {
-                    LambdaExpr::BoundVariable(var, lambda_type.clone())
-                }
-            }
-        };
+        let output = self.pool.get_type(position)?;
 
+        let arguments: Vec<_> = self
+            .pool
+            .get(position)
+            .get_children()
+            .map(|x| self.pool.get_type(x).unwrap())
+            .collect();
+
+        let replacements =
+            possible_expressions.possiblities_fixed_children(&output, &arguments, &context);
+
+        let choice = replacements.choose(rng).unwrap_or_else(|| {
+            panic!(
+                "There is no node with output {output} and arguments {}",
+                arguments
+                    .into_iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        });
+
+        let mut new_expr = choice.clone().into_owned();
+        new_expr.change_children(self.pool.get(position).get_children());
         self.pool.0[position.0 as usize] = new_expr;
 
         Ok(())
     }
 }
-*/
 
 #[cfg(test)]
 mod test {
@@ -431,21 +535,52 @@ mod test {
         let actors = ["0", "1"];
         let available_actor_properties = ["0", "1", "2"];
         let available_event_properties = ["2", "3", "4"];
-        for _ in 0..2000 {
+        let possible_expressions = PossibleExpressions::new(
+            &actors,
+            &available_event_properties,
+            &available_event_properties,
+        );
+
+        for _ in 0..10 {
+            let t = LambdaType::random_no_e(&mut rng);
+            println!("making sampler: {t}");
+            let sampler = RootedLambdaPool::sampler(&t, possible_expressions.clone(), 100);
+            println!("done sampler");
+            for _ in 0..2000 {
+                println!("{t}");
+                let mut pool: RootedLambdaPool<Expr> = sampler.sample(&mut rng);
+                println!("{t}: {pool}");
+                assert_eq!(t, pool.get_type()?);
+                pool.swap_expr(
+                    &actors,
+                    &available_actor_properties,
+                    &available_event_properties,
+                    &mut rng,
+                )?;
+                println!("{t}: {pool}");
+                assert_eq!(t, pool.get_type()?);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fancy_randomness() -> anyhow::Result<()> {
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let actors = ["0", "1"];
+        let actor_properties = ["0", "1", "2"];
+        let event_properties = ["2", "3", "4"];
+        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
+
+        let mut sampler = RootedLambdaPool::typeless_sampler(possibles, 10000, 1000);
+        for _ in 0..100 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
-            let mut pool = todo!();
-            /*
-            println!("{t}: {pool}");
+            let pool: RootedLambdaPool<Expr> = sampler.sample(t.clone(), &mut rng);
             assert_eq!(t, pool.get_type()?);
-            pool.swap_expr(
-                &actors,
-                &available_actor_properties,
-                &available_event_properties,
-                &mut rng,
-            )?;
-            println!("{t}: {pool}");
-            assert_eq!(t, pool.get_type()?);*/
+            let s = pool.to_string();
+            let pool2 = RootedLambdaPool::parse(s.as_str())?;
+            assert_eq!(s, pool2.to_string());
         }
         Ok(())
     }
@@ -454,56 +589,25 @@ mod test {
     fn randomness() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let actors = ["0", "1"];
-        let available_actor_properties = ["0", "1", "2"];
-        let available_event_properties = ["2", "3", "4"];
-        let mut lengths = vec![0];
-        for _ in 0..2000 {
+        let actor_properties = ["0", "1", "2"];
+        let event_properties = ["2", "3", "4"];
+
+        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
+        for _ in 0..10 {
             let t = LambdaType::random_no_e(&mut rng);
-            todo!();
-            /*
-            println!("{t}");
-            let pool = RootedLambdaPool::random_expr(
-                &t,
-                &actors,
-                &available_actor_properties,
-                &available_event_properties,
-                None,
-                &mut rng,
-            )?;
-            lengths.push(pool.len());
-            println!("{t}: {pool}");
-            assert_eq!(t, pool.get_type()?);
-            let mut pool = pool.resample_from_expr(
-                &actors,
-                &available_actor_properties,
-                &available_event_properties,
-                None,
-                &mut rng,
-            )?;
-            println!("{t}: {pool}");
-            assert_eq!(t, pool.get_type()?);
-            pool.prune_quantifiers();
-            println!("{pool}");*/
+            println!("making sampler: {t}");
+            let sampler = RootedLambdaPool::sampler(&t, possibles.clone(), 100);
+            println!("done sampler");
+            for _ in 0..2000 {
+                println!("{t}");
+                let pool: RootedLambdaPool<Expr> = sampler.sample(&mut rng);
+                assert_eq!(t, pool.get_type()?);
+                let s = pool.to_string();
+                let pool2 = RootedLambdaPool::parse(s.as_str())?;
+                assert_eq!(s, pool2.to_string());
+            }
         }
-        println!("{lengths:?}");
-        Ok(())
-    }
 
-    #[test]
-    fn reparse_random() -> anyhow::Result<()> {
-        let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = ["0", "1"];
-        let available_actor_properties = ["0", "1", "2"];
-        let available_event_properties = ["2", "3", "4"];
-        for _ in 0..2000 {
-            let t = LambdaType::random_no_e(&mut rng);
-
-            let pool: RootedLambdaPool<Expr> = todo!();
-
-            let s = pool.to_string();
-            let pool2 = RootedLambdaPool::parse(s.as_str())?;
-            assert_eq!(s, pool2.to_string());
-        }
         Ok(())
     }
 
@@ -513,14 +617,14 @@ mod test {
         let actor_properties = ["a"];
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
-        let p = RootedLambdaPool::sampler(LambdaType::at(), possibles);
+        let p = RootedLambdaPool::enumerator(LambdaType::at(), possibles);
         let mut n = 0;
-        for x in p.take(200) {
-            println!("{x}");
+        for (p, _) in p.take(1_000) {
+            println!("{p}");
             n += 1;
         }
-        println!("{n}");
-        panic!();
+
+        assert_eq!(n, 1_000);
 
         Ok(())
     }
@@ -531,7 +635,7 @@ mod test {
             "lambda e x lambda t phi every(y, pa_1, some(z, pa_0, pe_3(x)))",
         )?;
 
-        let pool = UnfinishedLambdaPool::from(phi);
+        let _ = UnfinishedLambdaPool::from(phi);
 
         Ok(())
     }

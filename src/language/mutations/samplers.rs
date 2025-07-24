@@ -8,7 +8,7 @@ use crate::{Actor, PropertyLabel, lambda::types::LambdaType};
 ///The outer HashMap is for the return types of expressions and the inner HashMap is for their
 ///arguments. Then there is a vector of all possible lambda expressions with that output type and
 ///input arguments.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PossibleExpressions<'src, T> {
     expressions: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>,
 }
@@ -105,45 +105,6 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
 
         PossibleExpressions { expressions }
     }
-    /*
-        pub fn possiblities_fixed_children<'a>(
-            &'a self,
-            lambda_type: &'typ LambdaType,
-            arguments: &'typ [LambdaType],
-            context: &Context<'typ>,
-        ) -> Result<ExprDistribution<'a, 'src, 'typ, 'conf>, SamplingError> {
-            let mut possibilities: Vec<Cow<'a, UnbuiltExpr<'src, 'typ>>> = self
-                .expressions
-                .get(lambda_type)
-                .map(|x| {
-                    x.get(arguments)
-                        .map(|x| x.iter().map(Cow::Borrowed).collect::<Vec<_>>())
-                        .unwrap_or_default()
-                })
-                .unwrap_or_default();
-
-            if arguments.len() == 1 {
-                if let Ok((lhs, rhs)) = lambda_type.split() {
-                    if rhs == arguments.first().unwrap() {
-                        possibilities.push(Cow::Owned(UnbuiltExpr::Lambda(lhs, rhs)));
-                    }
-                }
-            } else if arguments.is_empty() {
-                possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
-            }
-
-            if possibilities.is_empty() {
-                return Err(SamplingError::CantFindExprWithArgs {
-                    t: lambda_type.clone(),
-                    args: arguments.to_vec(),
-                });
-            }
-
-            Ok(ExprDistribution::KnownChildren {
-                exprs: possibilities,
-            })
-        }
-    */
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
@@ -169,6 +130,38 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
         }
 
         possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
+        possibilities
+    }
+
+    pub(super) fn possiblities_fixed_children<'a>(
+        &'a self,
+        lambda_type: &LambdaType,
+        arguments: &[LambdaType],
+        context: &Context,
+    ) -> Vec<Cow<'a, LambdaExpr<'src, T>>> {
+        let mut possibilities: Vec<Cow<'a, LambdaExpr<'src, T>>> = self
+            .expressions
+            .get(lambda_type)
+            .map(|x| {
+                x.get(arguments)
+                    .map(|x| x.iter().map(Cow::Borrowed).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+
+        if arguments.len() == 1 {
+            if let Ok((lhs, rhs)) = lambda_type.split() {
+                if rhs == arguments.first().unwrap() {
+                    possibilities.push(Cow::Owned(LambdaExpr::Lambda(
+                        LambdaExprRef(0),
+                        lhs.clone(),
+                    )));
+                }
+            }
+        } else if arguments.is_empty() {
+            possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
+        }
+
         possibilities
     }
 }

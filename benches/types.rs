@@ -60,7 +60,7 @@ fn enumeration() {
     let event_properties = &["1", "2", "3", "4", "5"];
 
     let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
-    for p in RootedLambdaPool::sampler(LambdaType::at(), poss).take(100_000) {}
+    for p in RootedLambdaPool::enumerator(LambdaType::at(), poss).take(100_000) {}
 }
 
 #[divan::bench(args = ["every_e(x,pe_dance,AgentOf(a_Phil,x))",

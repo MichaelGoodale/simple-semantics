@@ -33,6 +33,33 @@ impl Context {
 }
 
 impl Context {
+    pub(super) fn from_pos<'src, T: LambdaLanguageOfThought>(
+        pool: &RootedLambdaPool<'src, T>,
+        pos: LambdaExprRef,
+    ) -> Context {
+        let mut context = Context::new(0, vec![]);
+        let mut stack = VecDeque::from([(pool.root, 0)]);
+        while let Some((x, mut n_lambdas)) = stack.pop_front() {
+            context.depth += 1;
+            let e = pool.get(x);
+            if let Some(v) = e.var_type() {
+                context.add_lambda(v);
+                n_lambdas += 1;
+            } else if let LambdaExpr::BoundVariable(n, _) = e {
+                context.use_bvar(*n);
+            } else if context.lambdas.len() != n_lambdas {
+                context.pop_lambda();
+            }
+
+            if pos == x {
+                break;
+            }
+
+            stack.extend(e.get_children().map(|x| (x, n_lambdas)));
+        }
+        context
+    }
+
     pub fn new(position: usize, lambdas: Vec<(LambdaType, bool)>) -> Self {
         Context {
             lambdas,
@@ -57,6 +84,10 @@ impl Context {
     pub fn use_bvar(&mut self, b: usize) {
         let n = self.lambdas.len() - b - 1;
         self.lambdas.get_mut(n).unwrap().1 = true;
+    }
+
+    pub fn is_constant(&self) -> bool {
+        self.constant_function
     }
 
     pub fn can_sample_event(&self) -> bool {
