@@ -168,6 +168,11 @@ impl<'src, T: LambdaLanguageOfThought + Clone> TypeAgnosticSampler<'src, T> {
 
         sample
     }
+
+    ///Get a reference to the [`PossibleExpressions`] used by the model
+    pub fn possibles(&self) -> &PossibleExpressions<'src, T> {
+        &self.possible_expressions
+    }
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
