@@ -785,7 +785,7 @@ mod lambda_implementation;
 mod mutations;
 
 #[cfg(feature = "sampling")]
-pub use mutations::PossibleExpressions;
+pub use mutations::{LambdaEnumerator, LambdaSampler, PossibleExpressions, TypeAgnosticSampler};
 
 mod serializations;
 

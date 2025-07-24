@@ -6,14 +6,14 @@ use std::{
 use ahash::HashMap;
 use rand::{
     Rng,
-    distr::Distribution,
+    distr::{Distribution, uniform::SampleRange},
     seq::{IndexedRandom, IteratorRandom},
 };
 use thiserror::Error;
 
 use super::*;
 use crate::lambda::{
-    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
+    LambdaError, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
     types::{LambdaType, TypeError},
 };
 
@@ -110,6 +110,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
 }
 
 #[derive(Debug, Clone)]
+///An iterator that enumerates over all possible expressions of a given type.
 pub struct LambdaEnumerator<'src, T: LambdaLanguageOfThought> {
     pools: Vec<UnfinishedLambdaPool<'src, T>>,
     pq: BinaryHeap<Reverse<Context>>,
@@ -126,6 +127,7 @@ pub struct ExprDetails {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+///A re-usable sampler for sampling expressions of arbitrary types while caching frequent types
 pub struct TypeAgnosticSampler<'src, T: LambdaLanguageOfThought> {
     type_to_sampler: HashMap<LambdaType, (usize, LambdaSampler<'src, T>)>,
     max_expr: usize,
@@ -134,6 +136,7 @@ pub struct TypeAgnosticSampler<'src, T: LambdaLanguageOfThought> {
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> TypeAgnosticSampler<'src, T> {
+    ///Samples an expression of a given type
     pub fn sample(
         &mut self,
         lambda_type: LambdaType,
@@ -321,6 +324,59 @@ impl<'src, T: Clone + LambdaLanguageOfThought> From<RootedLambdaPool<'src, T>>
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
+    ///Create a [`LambdaSampler`] of a given type.
+    pub fn resample_from_expr(
+        &mut self,
+        possible_expressions: PossibleExpressions<'src, T>,
+        take_n: usize,
+        rng: &mut impl Rng,
+    ) -> Result<(), LambdaError> {
+        let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
+        let mut pools: Vec<_> = self
+            .enumerate_from_expr(position, possible_expressions)?
+            .take(take_n)
+            .collect();
+
+        if let Ok(i) = (0..pools.len()).sample_single(rng) {
+            let (x, _) = pools.remove(i);
+            let offset = self.len() as u32;
+            let new_root = x.root.0 + offset;
+            self.pool.0.extend(x.pool.0.into_iter().map(|mut x| {
+                let children: Vec<_> = x
+                    .get_children()
+                    .map(|x| LambdaExprRef(x.0 + offset))
+                    .collect();
+                x.change_children(children.into_iter());
+                x
+            }));
+            self.pool.0.swap(position.0 as usize, new_root as usize);
+            self.cleanup();
+        }
+        Ok(())
+    }
+
+    fn enumerate_from_expr(
+        &self,
+        position: LambdaExprRef,
+        possible_expressions: PossibleExpressions<'src, T>,
+    ) -> Result<LambdaEnumerator<'src, T>, TypeError> {
+        let context = Context::from_pos(self, position);
+        let output = self.pool.get_type(position)?;
+        let mut pq = BinaryHeap::default();
+        pq.push(Reverse(context));
+        let pools = vec![UnfinishedLambdaPool {
+            pool: vec![ExprOrType::Type(output, None)],
+        }];
+        let enumerator = LambdaEnumerator {
+            pools,
+            possible_expressions,
+            n_yielded: 0,
+            pq,
+        };
+
+        Ok(enumerator)
+    }
+
     ///Create a [`LambdaSampler`] of a given type.
     pub fn enumerator(
         t: &LambdaType,
@@ -599,12 +655,19 @@ mod test {
             let sampler = RootedLambdaPool::sampler(&t, possibles.clone(), 100);
             println!("done sampler");
             for _ in 0..2000 {
-                println!("{t}");
                 let pool: RootedLambdaPool<Expr> = sampler.sample(&mut rng);
                 assert_eq!(t, pool.get_type()?);
                 let s = pool.to_string();
                 let pool2 = RootedLambdaPool::parse(s.as_str())?;
                 assert_eq!(s, pool2.to_string());
+            }
+
+            for _ in 0..100 {
+                let mut pool: RootedLambdaPool<Expr> = sampler.sample(&mut rng);
+                print!("From {pool} to ");
+                pool.resample_from_expr(possibles.clone(), 10, &mut rng)?;
+                println!("{pool:?}");
+                println!("{pool}")
             }
         }
 

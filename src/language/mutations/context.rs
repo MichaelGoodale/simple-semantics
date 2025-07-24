@@ -40,6 +40,10 @@ impl Context {
         let mut context = Context::new(0, vec![]);
         let mut stack = VecDeque::from([(pool.root, 0)]);
         while let Some((x, mut n_lambdas)) = stack.pop_front() {
+            if pos == x {
+                break;
+            }
+
             context.depth += 1;
             let e = pool.get(x);
             if let Some(v) = e.var_type() {
@@ -48,13 +52,10 @@ impl Context {
             } else if let LambdaExpr::BoundVariable(n, _) = e {
                 context.use_bvar(*n);
             } else if context.lambdas.len() != n_lambdas {
-                context.pop_lambda();
+                for _ in 0..(context.lambdas.len() - n_lambdas) {
+                    context.pop_lambda();
+                }
             }
-
-            if pos == x {
-                break;
-            }
-
             stack.extend(e.get_children().map(|x| (x, n_lambdas)));
         }
         context
