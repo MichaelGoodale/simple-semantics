@@ -1,19 +1,16 @@
-use std::{
-    cmp::Reverse,
-    collections::{BinaryHeap, VecDeque},
-};
+use std::{cmp::Reverse, collections::BinaryHeap};
 
 use thiserror::Error;
 
 use super::*;
 use crate::lambda::{
-    self, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, types::LambdaType,
+    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, types::LambdaType,
 };
 
 mod context;
 mod samplers;
 use context::Context;
-use samplers::PossibleExpressions;
+pub use samplers::PossibleExpressions;
 
 #[derive(Debug, Error, Clone)]
 pub struct ExprOrTypeError();
@@ -22,26 +19,6 @@ impl Display for ExprOrTypeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "This ExprOrType is not an Expr!")
     }
-}
-
-#[derive(Debug, Error, Clone)]
-pub enum MutationError {
-    #[error("You cannot make an expression that returns 'e'")]
-    InvalidType,
-
-    #[error("Sampling Error: {0}")]
-    SamplingError(#[from] SamplingError),
-}
-
-#[derive(Debug, Clone, Error)]
-pub enum SamplingError {
-    #[error("Can't find an expr of type {0}!")]
-    CantFindExpr(LambdaType),
-    #[error("Can't find an expr of type {t} with args {}!", args.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "))]
-    CantFindExprWithArgs {
-        t: LambdaType,
-        args: Vec<LambdaType>,
-    },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -180,6 +157,9 @@ impl<'src, T: std::fmt::Debug + LambdaLanguageOfThought + Clone> Iterator
                 }
             };
             let n = possibles.len();
+            if n == 0 {
+                panic!("There is no possible expression of type {lambda_type}");
+            }
             let n_pools = self.pools.len();
 
             for _ in 0..n.saturating_sub(1) {
@@ -257,94 +237,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
         }
     }
 }
-/*
-impl<'src> RootedLambdaPool<'src, Expr<'src>> {
-    fn get_context_for_expr(&self, position: LambdaExprRef) -> Option<Context> {
-        let mut pos_context = None;
-
-        for (n, c) in self.context_bfs_iter() {
-            if n == position {
-                pos_context = Some(c);
-                break;
-            }
-        }
-        pos_context
-    }
-
-    ///Choose a random expression and resample its children.
-    pub fn resample_from_expr(
-        self,
-        available_actors: &[Actor<'src>],
-        available_actor_properties: &[PropertyLabel<'src>],
-        available_event_properties: &[PropertyLabel<'src>],
-        config: Option<RandomExprConfig>,
-        rng: &mut impl Rng,
-    ) -> Result<Self, MutationError> {
-        let config = &config.unwrap_or_default();
-        let position = LambdaExprRef(rng.random_range(0..self.len()) as u32);
-
-        let possible_expressions = PossibleExpressions::new(
-            available_actors,
-            available_actor_properties,
-            available_event_properties,
-        );
-
-        let context = self
-            .get_context_for_expr(position)
-            .expect("Couldn't find the {position}th expression");
-
-        //Here we extract the lambdas and reborrow them to avoid borrowing crap.
-        let lambdas = context
-            .lambdas()
-            .iter()
-            .map(|x| (*x).clone())
-            .collect::<Vec<_>>();
-        let context = context.into_owned_lambdas(&lambdas);
-
-        let (root, pool) = (self.root, self.pool);
-
-        let lambda_type = pool.get_type(position).unwrap();
-        let mut pool: Vec<Option<LambdaExpr<_>>> = pool.into();
-        pool[position.0 as usize] = None;
-
-        let mut pool = build_out_pool(
-            pool,
-            &lambda_type,
-            position.0,
-            context,
-            possible_expressions,
-            rng,
-        )?;
-        let root = pool.cleanup(root);
-
-        Ok(RootedLambdaPool { pool, root })
-    }
-
-    ///Create a random expression of `lambda_type`.
-    pub fn random_expr(
-        lambda_type: &LambdaType,
-        available_actors: &[Actor<'src>],
-        available_actor_properties: &[PropertyLabel<'src>],
-        available_event_properties: &[PropertyLabel<'src>],
-        config: Option<RandomExprConfig>,
-        rng: &mut impl Rng,
-    ) -> Result<Self, MutationError> {
-        if lambda_type == LambdaType::e() {
-            return Err(MutationError::InvalidType);
-        }
-        let pool = vec![None];
-        let config = &config.unwrap_or_default();
-
-        let possible_expressions = PossibleExpressions::new(
-            available_actors,
-            available_actor_properties,
-            available_event_properties,
-        );
-        let context = Context::default();
-        let pool = build_out_pool(pool, lambda_type, 0, context, possible_expressions, rng)?;
-        Ok(RootedLambdaPool::new(pool, LambdaExprRef(0)))
-    }
-*/
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     ///Remove quantifiers which do not use their variable in their body.
     pub fn prune_quantifiers(&mut self) {
@@ -454,31 +346,6 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     }
 }
 */
-
-/*
-fn build_out_pool<'src, 'typ>(
-    mut pool: Vec<Option<LambdaExpr<'src, Expr<'src>>>>,
-    lambda_type: &'typ LambdaType,
-    start_pos: u32,
-    context: Context,
-    possible_expressions: PossibleExpressions<'src, 'typ, '_>,
-    rng: &mut impl Rng,
-) -> Result<LambdaPool<'src, Expr<'src>>, SamplingError> {
-    let e = possible_expressions
-        .possibilities(lambda_type, &context)?
-        .choose(rng)?;
-
-    let mut stack = add_expr(e, start_pos, context, &mut pool);
-
-    while let Some((pos, lambda_type, context)) = stack.pop() {
-        let e = possible_expressions
-            .possibilities(lambda_type, &context)?
-            .choose(rng)?;
-
-        stack.extend(add_expr(e, pos, context, &mut pool));
-    }
-    Ok(pool.try_into().unwrap())
-}*/
 
 #[cfg(test)]
 mod test {

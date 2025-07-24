@@ -784,6 +784,9 @@ mod lambda_implementation;
 #[cfg(feature = "sampling")]
 mod mutations;
 
+#[cfg(feature = "sampling")]
+pub use mutations::PossibleExpressions;
+
 mod serializations;
 
 #[cfg(test)]

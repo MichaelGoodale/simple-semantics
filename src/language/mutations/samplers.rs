@@ -4,12 +4,27 @@ use std::{borrow::Cow, collections::hash_map::Entry};
 use super::*;
 use crate::{Actor, PropertyLabel, lambda::types::LambdaType};
 
+///A struct which defines a HashMap of all types and expressions.
+///The outer HashMap is for the return types of expressions and the inner HashMap is for their
+///arguments. Then there is a vector of all possible lambda expressions with that output type and
+///input arguments.
 #[derive(Debug, Clone)]
 pub struct PossibleExpressions<'src, T> {
     expressions: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>,
 }
 
+impl<'src, T> From<HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>>
+    for PossibleExpressions<'src, T>
+{
+    fn from(
+        value: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>,
+    ) -> Self {
+        PossibleExpressions { expressions: value }
+    }
+}
+
 impl<'src> PossibleExpressions<'src, Expr<'src>> {
+    ///Create a new [`PossibleExpressions`] for [`Expr`].
     pub fn new(
         actors: &[Actor<'src>],
         actor_properties: &[PropertyLabel<'src>],

@@ -1,6 +1,6 @@
 use crate::utils::ArgumentIterator;
 use ahash::HashMap;
-use std::{borrow::Cow, iter::empty};
+use std::iter::empty;
 use thiserror::Error;
 
 use super::{

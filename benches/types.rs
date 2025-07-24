@@ -7,6 +7,7 @@ use simple_semantics::{
         RootedLambdaPool,
         types::{LambdaType, TypeParsingError},
     },
+    language::PossibleExpressions,
 };
 
 #[global_allocator]
@@ -53,23 +54,13 @@ fn random_types() {
 }
 
 #[divan::bench]
-fn random_exprs() {
-    let mut rng = ChaCha8Rng::seed_from_u64(32);
+fn enumeration() {
     let actors = &["1", "2", "3", "4", "5"];
     let actor_properties = &["1", "2", "3", "4", "5"];
     let event_properties = &["1", "2", "3", "4", "5"];
 
-    for _ in 0..100 {
-        RootedLambdaPool::random_expr(
-            LambdaType::at(),
-            actors.as_slice(),
-            actor_properties.as_slice(),
-            event_properties.as_slice(),
-            None,
-            &mut rng,
-        )
-        .unwrap();
-    }
+    let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+    for p in RootedLambdaPool::sampler(LambdaType::at(), poss).take(100_000) {}
 }
 
 #[divan::bench(args = ["every_e(x,pe_dance,AgentOf(a_Phil,x))",

@@ -222,6 +222,7 @@ pub enum LambdaExpr<'a, T> {
 }
 
 impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
+    #[allow(dead_code)]
     pub(crate) fn var_type(&self) -> Option<&LambdaType> {
         match self {
             LambdaExpr::Lambda(_, lambda_type) => Some(lambda_type),
@@ -249,22 +250,6 @@ pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
     pub(crate) root: LambdaExprRef,
 }
 
-///Records the input and output of an expression.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub(crate) struct ExpressionType {
-    ///Output of an expression.
-    pub output: LambdaType,
-    ///The arguments (if any) of an expression.
-    pub arguments: Vec<LambdaType>,
-}
-impl ExpressionType {
-    pub fn new_no_args(lambda_type: LambdaType) -> Self {
-        ExpressionType {
-            output: lambda_type,
-            arguments: vec![],
-        }
-    }
-}
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     pub(crate) fn root(&self) -> LambdaExprRef {
         self.root
@@ -274,55 +259,12 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
         self.pool.get(x)
     }
-
-    ///The length of an expression
-    #[allow(clippy::len_without_is_empty)]
-    pub(crate) fn len(&self) -> usize {
-        self.pool.0.len()
-    }
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///Clean up dangling references.
     pub fn cleanup(&mut self) {
         self.root = self.pool.cleanup(self.root);
-    }
-
-    pub(crate) fn get_expression_type(
-        &self,
-        i: LambdaExprRef,
-    ) -> Result<ExpressionType, TypeError> {
-        match self.get(i) {
-            LambdaExpr::Lambda(lambda_expr_ref, lambda_type) => {
-                let arguments = vec![self.pool.get_type(*lambda_expr_ref)?];
-                Ok(ExpressionType {
-                    output: LambdaType::compose(
-                        lambda_type.clone(),
-                        arguments.first().unwrap().clone(),
-                    ),
-                    arguments,
-                })
-            }
-            LambdaExpr::BoundVariable(_, lambda_type)
-            | LambdaExpr::FreeVariable(_, lambda_type) => Ok(ExpressionType {
-                output: lambda_type.clone(),
-                arguments: vec![],
-            }),
-            LambdaExpr::Application {
-                subformula,
-                argument,
-            } => {
-                let subformula_type = self.pool.get_type(*subformula)?;
-                Ok(ExpressionType {
-                    output: subformula_type.rhs()?.clone(),
-                    arguments: vec![subformula_type, self.pool.get_type(*argument)?],
-                })
-            }
-            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(ExpressionType {
-                output: x.get_type().clone(),
-                arguments: x.get_arguments().collect(),
-            }),
-        }
     }
 
     ///The type of the lambda expression
@@ -1515,51 +1457,6 @@ mod test {
             "every_e(x, pe_4, AgentOf(a_3, x)) & ~every_e(x, pe_4, AgentOf(a_1, x))"
         );
 
-        Ok(())
-    }
-
-    #[test]
-    fn expr_type_checks() -> anyhow::Result<()> {
-        let a = RootedLambdaPool::parse(
-            "lambda a x (every_e(z, all_e, AgentOf(a_0, (lambda e y ((lambda e w (w))(y)))(z))))",
-        )?;
-        assert_eq!(
-            a.get_expression_type(a.root)?,
-            ExpressionType {
-                output: LambdaType::at().clone(),
-                arguments: vec![LambdaType::t().clone()]
-            }
-        );
-
-        assert_eq!(
-            //all_e
-            a.get_expression_type(LambdaExprRef(0))?,
-            ExpressionType {
-                output: LambdaType::et().clone(),
-                arguments: vec![]
-            }
-        );
-
-        assert_eq!(
-            //agentof
-            a.get_expression_type(LambdaExprRef(9))?,
-            ExpressionType {
-                output: LambdaType::t().clone(),
-                arguments: vec![LambdaType::a().clone(), LambdaType::e().clone()]
-            }
-        );
-
-        assert_eq!(
-            //(lambda e w (w))(y)
-            a.get_expression_type(LambdaExprRef(8))?,
-            ExpressionType {
-                output: LambdaType::e().clone(),
-                arguments: vec![
-                    LambdaType::compose(LambdaType::e().clone(), LambdaType::e().clone()),
-                    LambdaType::e().clone()
-                ]
-            }
-        );
         Ok(())
     }
 
