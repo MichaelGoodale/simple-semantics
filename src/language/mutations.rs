@@ -4,6 +4,7 @@ use std::{
 };
 
 use ahash::HashMap;
+use chumsky::container::Container;
 use rand::{
     Rng,
     distr::{Distribution, uniform::SampleRange},
@@ -109,13 +110,56 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
     }
 }
 
-#[derive(Debug, Clone)]
-///An iterator that enumerates over all possible expressions of a given type.
-pub struct LambdaEnumerator<'src, T: LambdaLanguageOfThought> {
-    pools: Vec<UnfinishedLambdaPool<'src, T>>,
+pub struct NormalEnumeration(BinaryHeap<Reverse<Context>>, VecDeque<ExprDetails>);
+
+impl EnumerationType for NormalEnumeration {
+    fn pop(&mut self) -> Option<Context> {
+        self.0.pop().map(|x| x.0)
+    }
+
+    fn push(&mut self, context: Context) {
+        self.0.push(Reverse(context))
+    }
+
+    fn get_yield(&mut self) -> Option<ExprDetails> {
+        self.1.pop_front()
+    }
+
+    fn push_yield(&mut self, e: ExprDetails) {
+        self.1.push(e);
+    }
+}
+
+impl ExprDetails {
+    fn score(&self) -> f64 {
+        1.0 / (self.size as f64)
+    }
+}
+impl PartialOrd for ExprDetails {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ExprDetails {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score().partial_cmp(&other.score()).unwrap()
+    }
+}
+
+struct ProbabilisticEnumeration<'a, R: Rng> {
+    rng: &'a mut R,
+    reservoir_size: usize,
+    reservoir: BinaryHeap<ExprDetails>,
     pq: BinaryHeap<Reverse<Context>>,
+}
+
+#[derive(Debug)]
+///An iterator that enumerates over all possible expressions of a given type.
+pub struct LambdaEnumerator<'src, T: LambdaLanguageOfThought, E = NormalEnumeration> {
+    pools: Vec<UnfinishedLambdaPool<'src, T>>,
     possible_expressions: PossibleExpressions<'src, T>,
-    n_yielded: usize,
+    pq: E,
 }
 
 ///Provides detail about a generated lambda expression
@@ -123,6 +167,7 @@ pub struct LambdaEnumerator<'src, T: LambdaLanguageOfThought> {
 pub struct ExprDetails {
     id: usize,
     constant_function: bool,
+    root: LambdaExprRef,
     size: usize,
 }
 
@@ -211,11 +256,51 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Distribution<RootedLambdaPool<'sr
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone> Iterator for LambdaEnumerator<'src, T> {
+trait EnumerationType {
+    fn pop(&mut self) -> Option<Context>;
+    fn push(&mut self, context: Context);
+    fn get_yield(&mut self) -> Option<ExprDetails>;
+    fn push_yield(&mut self, e: ExprDetails);
+}
+
+fn try_yield<'src, T, E>(
+    x: &mut LambdaEnumerator<'src, T, E>,
+) -> Option<(RootedLambdaPool<'src, T>, ExprDetails)>
+where
+    T: LambdaLanguageOfThought,
+    E: EnumerationType,
+{
+    if let Some(item) = x.pq.get_yield() {
+        let p = std::mem::take(&mut x.pools[item.id]);
+        return Some((
+            RootedLambdaPool {
+                pool: LambdaPool(
+                    p.pool
+                        .into_iter()
+                        .map(|x| LambdaExpr::try_from(x).unwrap())
+                        .collect(),
+                ),
+                root: item.root,
+            },
+            item,
+        ));
+    }
+    None
+}
+
+impl<'src, T, E> Iterator for LambdaEnumerator<'src, T, E>
+where
+    T: LambdaLanguageOfThought + Clone,
+    E: EnumerationType,
+{
     type Item = (RootedLambdaPool<'src, T>, ExprDetails);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(Reverse(mut c)) = self.pq.pop() {
+        while let Some(mut c) = self.pq.pop() {
+            if let Some(x) = try_yield(self) {
+                return Some(x);
+            }
+
             let (possibles, lambda_type) = match &self.pools[c.pool_index].pool[c.position] {
                 ExprOrType::Type(lambda_type, _) => (
                     self.possible_expressions.possibilities(lambda_type, &c),
@@ -231,7 +316,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Iterator for LambdaEnumerator<'sr
                         .find(|child| self.pools[c.pool_index].pool[*child].is_type())
                     {
                         c.position = child;
-                        push_context(&mut self.pq, c);
+                        self.pq.push(c);
                         continue;
                     }
 
@@ -241,29 +326,17 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Iterator for LambdaEnumerator<'sr
 
                     if let Some(p) = p {
                         c.position = *p;
-                        push_context(&mut self.pq, c);
+                        self.pq.push(c);
                         continue;
                     } else {
                         //If the parent is None, we're done!
-                        let root = LambdaExprRef(c.position as u32);
-                        let p = std::mem::take(&mut self.pools[c.pool_index]);
-                        self.n_yielded += 1;
-                        return Some((
-                            RootedLambdaPool {
-                                pool: LambdaPool(
-                                    p.pool
-                                        .into_iter()
-                                        .map(|x| LambdaExpr::try_from(x).unwrap())
-                                        .collect(),
-                                ),
-                                root,
-                            },
-                            ExprDetails {
-                                id: self.n_yielded - 1,
-                                size: c.depth,
-                                constant_function: c.is_constant(),
-                            },
-                        ));
+                        self.pq.push_yield(ExprDetails {
+                            id: c.pool_index,
+                            root: LambdaExprRef(c.position as u32),
+                            size: c.depth,
+                            constant_function: c.is_constant(),
+                        });
+                        continue;
                     }
                 }
             };
@@ -287,44 +360,15 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Iterator for LambdaEnumerator<'sr
                 c.pool_index = pool_id;
                 let pool = self.pools.get_mut(pool_id).unwrap();
                 pool.add_expr(expr.into_owned(), &mut c, &lambda_type);
-                push_context(&mut self.pq, c);
+                self.pq.push(c);
             }
         }
-        None
-    }
-}
 
-fn push_context(b: &mut BinaryHeap<Reverse<Context>>, context: Context) {
-    b.push(Reverse(context))
-}
-
-impl<'src, T: Clone + LambdaLanguageOfThought> From<RootedLambdaPool<'src, T>>
-    for UnfinishedLambdaPool<'src, T>
-{
-    fn from(mut value: RootedLambdaPool<'src, T>) -> Self {
-        value.cleanup();
-        let RootedLambdaPool { root, pool } = value;
-
-        let mut pool: Vec<_> = pool
-            .0
-            .into_iter()
-            .map(|expr| ExprOrType::Expr(expr, None))
-            .collect();
-
-        //Set parents
-        let root = root.0 as usize;
-        let mut stack = vec![(root, None)];
-        while let Some((i, parent)) = stack.pop() {
-            let ExprOrType::Expr(expr, e_parent) =
-                pool.get_mut(i).expect("The pool was malformed!")
-            else {
-                panic!()
-            };
-            *e_parent = parent;
-            stack.extend(expr.get_children().map(|x| (x.0 as usize, Some(i))));
+        //If we've somehow exhausted the pq, lets yield anything remaining that's done.
+        if let Some(x) = try_yield(self) {
+            return Some(x);
         }
-
-        Self { pool }
+        None
     }
 }
 
@@ -375,8 +419,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
         let enumerator = LambdaEnumerator {
             pools,
             possible_expressions,
-            n_yielded: 0,
-            pq,
+            pq: NormalEnumeration(pq, VecDeque::default()),
         };
 
         Ok(enumerator)
@@ -397,8 +440,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
         LambdaEnumerator {
             pools,
             possible_expressions,
-            n_yielded: 0,
-            pq,
+            pq: NormalEnumeration(pq, VecDeque::default()),
         }
     }
 
@@ -411,9 +453,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
         let enumerator = RootedLambdaPool::enumerator(t, possible_expressions);
         let mut lambdas = Vec::with_capacity(max_expr);
         let mut expr_details = Vec::with_capacity(max_expr);
-        for (lambda, detail) in enumerator.take(max_expr) {
+        for (lambda, expr_detail) in enumerator.take(max_expr) {
             lambdas.push(lambda);
-            expr_details.push(detail);
+            expr_details.push(expr_detail);
         }
 
         LambdaSampler {
@@ -693,17 +735,6 @@ mod test {
         }
 
         assert_eq!(n, 1_000);
-
-        Ok(())
-    }
-
-    #[test]
-    fn convert_pool() -> anyhow::Result<()> {
-        let phi = RootedLambdaPool::parse(
-            "lambda e x lambda t phi every(y, pa_1, some(z, pa_0, pe_3(x)))",
-        )?;
-
-        let _ = UnfinishedLambdaPool::from(phi);
 
         Ok(())
     }
