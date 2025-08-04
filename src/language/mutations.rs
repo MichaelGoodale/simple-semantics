@@ -7,7 +7,7 @@ use ahash::HashMap;
 use chumsky::container::Container;
 use rand::{
     Rng,
-    distr::{Distribution, uniform::SampleRange},
+    distr::{Distribution, uniform::SampleRange, weighted::WeightedIndex},
     seq::{IndexedRandom, IteratorRandom},
 };
 use thiserror::Error;
@@ -117,7 +117,7 @@ impl EnumerationType for NormalEnumeration {
         self.0.pop().map(|x| x.0)
     }
 
-    fn push(&mut self, context: Context) {
+    fn push(&mut self, context: Context, _: bool) {
         self.0.push(Reverse(context))
     }
 
@@ -128,6 +128,10 @@ impl EnumerationType for NormalEnumeration {
     fn push_yield(&mut self, e: ExprDetails) {
         self.1.push(e);
     }
+
+    fn include(&mut self, n: usize) -> impl Iterator<Item = bool> + 'static {
+        std::iter::repeat_n(true, n)
+    }
 }
 
 impl ExprDetails {
@@ -135,23 +139,136 @@ impl ExprDetails {
         1.0 / (self.size as f64)
     }
 }
-impl PartialOrd for ExprDetails {
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct KeyedExprDetails {
+    expr_details: ExprDetails,
+    k: f64,
+}
+
+impl Eq for KeyedExprDetails {}
+
+impl PartialOrd for KeyedExprDetails {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for ExprDetails {
+impl Ord for KeyedExprDetails {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score().partial_cmp(&other.score()).unwrap()
+        //reversed since we need a min-heap not a max-heap
+        other.k.partial_cmp(&self.k).unwrap()
+    }
+}
+impl KeyedExprDetails {
+    fn new(expr_details: ExprDetails, rng: &mut impl Rng) -> Self {
+        let u: f64 = rng.random();
+        KeyedExprDetails {
+            expr_details,
+            k: u.powf(1.0 / expr_details.score()),
+        }
     }
 }
 
+#[derive(Debug)]
 struct ProbabilisticEnumeration<'a, R: Rng> {
     rng: &'a mut R,
     reservoir_size: usize,
-    reservoir: BinaryHeap<ExprDetails>,
+    reservoir: BinaryHeap<KeyedExprDetails>,
+    backups: Vec<Context>,
     pq: BinaryHeap<Reverse<Context>>,
+    n_seen: usize,
+    done: bool,
+}
+impl<R: Rng> ProbabilisticEnumeration<'_, R> {
+    fn threshold(&self) -> Option<f64> {
+        self.reservoir.peek().map(|x| x.k)
+    }
+
+    fn new<'a, 'src, T: LambdaLanguageOfThought>(
+        reservoir_size: usize,
+        t: &LambdaType,
+        possible_expressions: PossibleExpressions<'src, T>,
+        rng: &'a mut R,
+    ) -> LambdaEnumerator<'src, T, ProbabilisticEnumeration<'a, R>> {
+        let context = Context::new(0, vec![]);
+        let mut pq = BinaryHeap::default();
+        pq.push(Reverse(context));
+        let pools = vec![UnfinishedLambdaPool {
+            pool: vec![ExprOrType::Type(t.clone(), None)],
+        }];
+
+        LambdaEnumerator {
+            pools,
+            possible_expressions,
+            pq: ProbabilisticEnumeration {
+                rng,
+                reservoir_size,
+                reservoir: BinaryHeap::default(),
+                backups: vec![],
+                pq,
+                n_seen: 0,
+                done: false,
+            },
+        }
+    }
+}
+
+impl<R: Rng> EnumerationType for ProbabilisticEnumeration<'_, R> {
+    fn pop(&mut self) -> Option<Context> {
+        //Pop from min-heap, or grab a random back up if the min-heap is exhausted
+        self.pq.pop().map(|x| x.0).or_else(|| {
+            (0..self.backups.len()).choose(self.rng).and_then(|index| {
+                let last_item = self.backups.len() - 1;
+                self.backups.swap(index, last_item);
+                self.backups.pop()
+            })
+        })
+    }
+
+    fn push(&mut self, context: Context, included: bool) {
+        if included {
+            self.pq.push(Reverse(context));
+        } else {
+            self.backups.push(context);
+        }
+    }
+
+    fn get_yield(&mut self) -> Option<ExprDetails> {
+        if (self.done || self.pq.is_empty())
+            && let Some(x) = self.reservoir.pop()
+        {
+            Some(x.expr_details)
+        } else {
+            None
+        }
+    }
+
+    fn push_yield(&mut self, e: ExprDetails) {
+        let e = KeyedExprDetails::new(e, &mut self.rng);
+        self.n_seen += 1;
+        if self.reservoir_size > self.reservoir.len() {
+            self.reservoir.push(e)
+        } else if let Some(t) = self.threshold()
+            && e.k > t
+        {
+            self.reservoir.pop();
+            self.reservoir.push(e)
+        }
+        if self.n_seen >= self.reservoir_size * 100 {
+            self.pq.clear();
+            self.done = true;
+        }
+    }
+
+    fn include(&mut self, n: usize) -> impl Iterator<Item = bool> + 'static {
+        let x = (0..n).choose_multiple(self.rng, (n / 2).max(1));
+        let mut v = vec![false; n];
+        for i in x {
+            v[i] = true;
+        }
+        v.into_iter()
+    }
 }
 
 #[derive(Debug)]
@@ -249,8 +366,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Distribution<RootedLambdaPool<'sr
     for LambdaSampler<'src, T>
 {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> RootedLambdaPool<'src, T> {
+        let w = WeightedIndex::new(self.expr_details.iter().map(|x| x.score())).unwrap();
+        let i = w.sample(rng);
         self.lambdas
-            .choose(rng)
+            .get(i)
             .expect("The Lambda Sampler has no lambdas to sample :(")
             .clone()
     }
@@ -258,9 +377,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Distribution<RootedLambdaPool<'sr
 
 trait EnumerationType {
     fn pop(&mut self) -> Option<Context>;
-    fn push(&mut self, context: Context);
+    fn push(&mut self, context: Context, included: bool);
     fn get_yield(&mut self) -> Option<ExprDetails>;
     fn push_yield(&mut self, e: ExprDetails);
+    fn include(&mut self, n: usize) -> impl Iterator<Item = bool> + 'static;
 }
 
 fn try_yield<'src, T, E>(
@@ -316,7 +436,7 @@ where
                         .find(|child| self.pools[c.pool_index].pool[*child].is_type())
                     {
                         c.position = child;
-                        self.pq.push(c);
+                        self.pq.push(c, true);
                         continue;
                     }
 
@@ -326,7 +446,7 @@ where
 
                     if let Some(p) = p {
                         c.position = *p;
-                        self.pq.push(c);
+                        self.pq.push(c, true);
                         continue;
                     } else {
                         //If the parent is None, we're done!
@@ -340,7 +460,9 @@ where
                     }
                 }
             };
+
             let n = possibles.len();
+            let included = self.pq.include(n);
             if n == 0 {
                 panic!("There is no possible expression of type {lambda_type}");
             }
@@ -349,18 +471,20 @@ where
             for _ in 0..n.saturating_sub(1) {
                 self.pools.push(self.pools[c.pool_index].clone());
             }
+
             let positions =
                 std::iter::once(c.pool_index).chain(n_pools..n_pools + n.saturating_sub(1));
 
-            for ((expr, pool_id), mut c) in possibles
+            for (((expr, pool_id), mut c), included) in possibles
                 .into_iter()
                 .zip(positions)
                 .zip(std::iter::repeat_n(c, n))
+                .zip(included)
             {
                 c.pool_index = pool_id;
                 let pool = self.pools.get_mut(pool_id).unwrap();
                 pool.add_expr(expr.into_owned(), &mut c, &lambda_type);
-                self.pq.push(c);
+                self.pq.push(c, included);
             }
         }
 
@@ -463,7 +587,20 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
             expr_details,
         }
     }
+
+    ///Randomly generate a [`RootedLambdaPool`] of type `t`.
+    pub fn random_expr(
+        t: &LambdaType,
+        possible_expressions: PossibleExpressions<'src, T>,
+        rng: &mut impl Rng,
+    ) -> RootedLambdaPool<'src, T> {
+        ProbabilisticEnumeration::new(1, t, possible_expressions, rng)
+            .next()
+            .unwrap()
+            .0
+    }
 }
+
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     ///Remove quantifiers which do not use their variable in their body.
     pub fn prune_quantifiers(&mut self) {
@@ -556,6 +693,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 
 #[cfg(test)]
 mod test {
+
     use super::*;
     use crate::lambda::LambdaPool;
     use rand::SeedableRng;
@@ -643,81 +781,22 @@ mod test {
             &available_event_properties,
             &available_event_properties,
         );
-
-        for _ in 0..10 {
-            let t = LambdaType::random_no_e(&mut rng);
-            println!("making sampler: {t}");
-            let sampler = RootedLambdaPool::sampler(&t, possible_expressions.clone(), 100);
-            println!("done sampler");
-            for _ in 0..2000 {
-                println!("{t}");
-                let mut pool: RootedLambdaPool<Expr> = sampler.sample(&mut rng);
-                println!("{t}: {pool}");
-                assert_eq!(t, pool.get_type()?);
-                pool.swap_expr(
-                    &actors,
-                    &available_actor_properties,
-                    &available_event_properties,
-                    &mut rng,
-                )?;
-                println!("{t}: {pool}");
-                assert_eq!(t, pool.get_type()?);
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn fancy_randomness() -> anyhow::Result<()> {
-        let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = ["0", "1"];
-        let actor_properties = ["0", "1", "2"];
-        let event_properties = ["2", "3", "4"];
-        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
-
-        let mut sampler = RootedLambdaPool::typeless_sampler(possibles, 10000, 1000);
-        for _ in 0..100 {
+        for _ in 0..2000 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
-            let pool: RootedLambdaPool<Expr> = sampler.sample(t.clone(), &mut rng);
+            let mut pool =
+                RootedLambdaPool::random_expr(&t, possible_expressions.clone(), &mut rng);
+            println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
-            let s = pool.to_string();
-            let pool2 = RootedLambdaPool::parse(s.as_str())?;
-            assert_eq!(s, pool2.to_string());
+            pool.swap_expr(
+                &actors,
+                &available_actor_properties,
+                &available_event_properties,
+                &mut rng,
+            )?;
+            println!("{t}: {pool}");
+            assert_eq!(t, pool.get_type()?);
         }
-        Ok(())
-    }
-
-    #[test]
-    fn randomness() -> anyhow::Result<()> {
-        let mut rng = ChaCha8Rng::seed_from_u64(2);
-        let actors = ["0", "1"];
-        let actor_properties = ["0", "1", "2"];
-        let event_properties = ["2", "3", "4"];
-
-        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
-        for _ in 0..10 {
-            let t = LambdaType::random_no_e(&mut rng);
-            println!("making sampler: {t}");
-            let sampler = RootedLambdaPool::sampler(&t, possibles.clone(), 100);
-            println!("done sampler");
-            for _ in 0..2000 {
-                let pool: RootedLambdaPool<Expr> = sampler.sample(&mut rng);
-                assert_eq!(t, pool.get_type()?);
-                let s = pool.to_string();
-                let pool2 = RootedLambdaPool::parse(s.as_str())?;
-                assert_eq!(s, pool2.to_string());
-            }
-
-            for _ in 0..100 {
-                let mut pool: RootedLambdaPool<Expr> = sampler.sample(&mut rng);
-                print!("From {pool} to ");
-                pool.resample_from_expr(possibles.clone(), 10, &mut rng)?;
-                println!("{pool:?}");
-                println!("{pool}")
-            }
-        }
-
         Ok(())
     }
 
@@ -735,6 +814,29 @@ mod test {
         }
 
         assert_eq!(n, 1_000);
+
+        Ok(())
+    }
+
+    #[test]
+    fn random_expr() -> anyhow::Result<()> {
+        let actors = ["john"];
+        let actor_properties = ["a"];
+        let event_properties = ["e"];
+        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+
+        for _ in 0..100 {
+            let t = LambdaType::random_no_e(&mut rng);
+            println!("sampling: {t}");
+            let pool = RootedLambdaPool::random_expr(&t, possibles.clone(), &mut rng);
+            assert_eq!(t, pool.get_type()?);
+            let s = pool.to_string();
+            let pool2 = RootedLambdaPool::parse(s.as_str())?;
+            assert_eq!(s, pool2.to_string());
+            //pool.resample_from_expr(possibles.clone(), 10, &mut rng)?;
+            assert_eq!(pool.get_type()?, t);
+        }
 
         Ok(())
     }

@@ -54,13 +54,16 @@ fn random_types() {
 }
 
 #[divan::bench]
-fn enumeration() {
+fn random(bencher: divan::Bencher) {
     let actors = &["1", "2", "3", "4", "5"];
     let actor_properties = &["1", "2", "3", "4", "5"];
     let event_properties = &["1", "2", "3", "4", "5"];
 
-    let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
-    for p in RootedLambdaPool::enumerator(LambdaType::at(), poss).take(1000) {}
+    bencher.bench(|| {
+        let mut rng = ChaCha8Rng::from_os_rng();
+        let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+        RootedLambdaPool::random_expr(LambdaType::at(), poss, &mut rng)
+    });
 }
 
 #[divan::bench(args = ["every_e(x,pe_dance,AgentOf(a_Phil,x))",
