@@ -63,7 +63,7 @@ fn random(bencher: divan::Bencher) {
         let mut rng = ChaCha8Rng::from_os_rng();
         let t = LambdaType::random_no_e(&mut rng);
         let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
-        RootedLambdaPool::random_expr(&t, poss, &mut rng)
+        RootedLambdaPool::random_expr(&t, &poss, &mut rng)
     });
 }
 

@@ -188,9 +188,9 @@ impl<R: Rng> ProbabilisticEnumeration<'_, R> {
     fn new<'a, 'src, T: LambdaLanguageOfThought>(
         reservoir_size: usize,
         t: &LambdaType,
-        possible_expressions: PossibleExpressions<'src, T>,
+        possible_expressions: &'a PossibleExpressions<'src, T>,
         rng: &'a mut R,
-    ) -> LambdaEnumerator<'src, T, ProbabilisticEnumeration<'a, R>> {
+    ) -> LambdaEnumerator<'a, 'src, T, ProbabilisticEnumeration<'a, R>> {
         let context = Context::new(0, vec![]);
         let mut pq = BinaryHeap::default();
         pq.push(Reverse(context));
@@ -273,9 +273,9 @@ impl<R: Rng> EnumerationType for ProbabilisticEnumeration<'_, R> {
 
 #[derive(Debug)]
 ///An iterator that enumerates over all possible expressions of a given type.
-pub struct LambdaEnumerator<'src, T: LambdaLanguageOfThought, E = NormalEnumeration> {
+pub struct LambdaEnumerator<'a, 'src, T: LambdaLanguageOfThought, E = NormalEnumeration> {
     pools: Vec<UnfinishedLambdaPool<'src, T>>,
-    possible_expressions: PossibleExpressions<'src, T>,
+    possible_expressions: &'a PossibleExpressions<'src, T>,
     pq: E,
 }
 
@@ -310,7 +310,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> TypeAgnosticSampler<'src, T> {
             .or_insert_with_key(|t| {
                 (
                     1,
-                    RootedLambdaPool::sampler(t, self.possible_expressions.clone(), self.max_expr),
+                    RootedLambdaPool::sampler(t, &self.possible_expressions, self.max_expr),
                 )
             });
         *counts += 1;
@@ -383,8 +383,8 @@ trait EnumerationType {
     fn include(&mut self, n: usize) -> impl Iterator<Item = bool> + 'static;
 }
 
-fn try_yield<'src, T, E>(
-    x: &mut LambdaEnumerator<'src, T, E>,
+fn try_yield<'a, 'src, T, E>(
+    x: &mut LambdaEnumerator<'a, 'src, T, E>,
 ) -> Option<(RootedLambdaPool<'src, T>, ExprDetails)>
 where
     T: LambdaLanguageOfThought,
@@ -408,7 +408,7 @@ where
     None
 }
 
-impl<'src, T, E> Iterator for LambdaEnumerator<'src, T, E>
+impl<'a, 'src, T, E> Iterator for LambdaEnumerator<'a, 'src, T, E>
 where
     T: LambdaLanguageOfThought + Clone,
     E: EnumerationType,
@@ -498,9 +498,9 @@ where
 
 impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///Create a [`LambdaSampler`] of a given type.
-    pub fn resample_from_expr(
+    pub fn resample_from_expr<'a>(
         &mut self,
-        possible_expressions: PossibleExpressions<'src, T>,
+        possible_expressions: &'a PossibleExpressions<'src, T>,
         take_n: usize,
         rng: &mut impl Rng,
     ) -> Result<(), LambdaError> {
@@ -528,11 +528,11 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
         Ok(())
     }
 
-    fn enumerate_from_expr(
+    fn enumerate_from_expr<'a>(
         &self,
         position: LambdaExprRef,
-        possible_expressions: PossibleExpressions<'src, T>,
-    ) -> Result<LambdaEnumerator<'src, T>, TypeError> {
+        possible_expressions: &'a PossibleExpressions<'src, T>,
+    ) -> Result<LambdaEnumerator<'a, 'src, T>, TypeError> {
         let context = Context::from_pos(self, position);
         let output = self.pool.get_type(position)?;
         let mut pq = BinaryHeap::default();
@@ -550,10 +550,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     }
 
     ///Create a [`LambdaSampler`] of a given type.
-    pub fn enumerator(
+    pub fn enumerator<'a>(
         t: &LambdaType,
-        possible_expressions: PossibleExpressions<'src, T>,
-    ) -> LambdaEnumerator<'src, T> {
+        possible_expressions: &'a PossibleExpressions<'src, T>,
+    ) -> LambdaEnumerator<'a, 'src, T> {
         let context = Context::new(0, vec![]);
         let mut pq = BinaryHeap::default();
         pq.push(Reverse(context));
@@ -571,7 +571,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///Creates a reusable random sampler by enumerating over the first `max_expr` expressions
     pub fn sampler(
         t: &LambdaType,
-        possible_expressions: PossibleExpressions<'src, T>,
+        possible_expressions: &PossibleExpressions<'src, T>,
         max_expr: usize,
     ) -> LambdaSampler<'src, T> {
         let enumerator = RootedLambdaPool::enumerator(t, possible_expressions);
@@ -591,7 +591,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///Randomly generate a [`RootedLambdaPool`] of type `t`.
     pub fn random_expr(
         t: &LambdaType,
-        possible_expressions: PossibleExpressions<'src, T>,
+        possible_expressions: &PossibleExpressions<'src, T>,
         rng: &mut impl Rng,
     ) -> RootedLambdaPool<'src, T> {
         ProbabilisticEnumeration::new(1, t, possible_expressions, rng)
@@ -784,8 +784,7 @@ mod test {
         for _ in 0..2000 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
-            let mut pool =
-                RootedLambdaPool::random_expr(&t, possible_expressions.clone(), &mut rng);
+            let mut pool = RootedLambdaPool::random_expr(&t, &possible_expressions, &mut rng);
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
             pool.swap_expr(
@@ -806,7 +805,7 @@ mod test {
         let actor_properties = ["a"];
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
-        let p = RootedLambdaPool::enumerator(LambdaType::at(), possibles);
+        let p = RootedLambdaPool::enumerator(LambdaType::at(), &possibles);
         let mut n = 0;
         for (p, _) in p.take(1_000) {
             println!("{p}");
@@ -829,7 +828,7 @@ mod test {
         for _ in 0..100 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("sampling: {t}");
-            let pool = RootedLambdaPool::random_expr(&t, possibles.clone(), &mut rng);
+            let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
             assert_eq!(t, pool.get_type()?);
             let s = pool.to_string();
             let pool2 = RootedLambdaPool::parse(s.as_str())?;
