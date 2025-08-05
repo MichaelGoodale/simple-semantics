@@ -255,7 +255,7 @@ impl<R: Rng> EnumerationType for ProbabilisticEnumeration<'_, R> {
             self.reservoir.pop();
             self.reservoir.push(e)
         }
-        if self.n_seen >= self.reservoir_size * 100 {
+        if self.n_seen >= self.reservoir_size * 50 {
             self.pq.clear();
             self.done = true;
         }
