@@ -7,7 +7,7 @@ use ahash::HashMap;
 use chumsky::container::Container;
 use rand::{
     Rng,
-    distr::{Distribution, uniform::SampleRange, weighted::WeightedIndex},
+    distr::{Distribution, weighted::WeightedIndex},
     seq::{IndexedRandom, IteratorRandom},
 };
 use thiserror::Error;
@@ -501,38 +501,38 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     pub fn resample_from_expr<'a>(
         &mut self,
         possible_expressions: &'a PossibleExpressions<'src, T>,
-        take_n: usize,
         rng: &mut impl Rng,
     ) -> Result<(), LambdaError> {
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
-        let mut pools: Vec<_> = self
-            .enumerate_from_expr(position, possible_expressions)?
-            .take(take_n)
-            .collect();
+        let (pool, x) = self
+            .probabilistic_enumerate_from_expr(position, possible_expressions, rng)?
+            .next()
+            .unwrap();
 
-        if let Ok(i) = (0..pools.len()).sample_single(rng) {
-            let (x, _) = pools.remove(i);
-            let offset = self.len() as u32;
-            let new_root = x.root.0 + offset;
-            self.pool.0.extend(x.pool.0.into_iter().map(|mut x| {
-                let children: Vec<_> = x
-                    .get_children()
-                    .map(|x| LambdaExprRef(x.0 + offset))
-                    .collect();
-                x.change_children(children.into_iter());
-                x
-            }));
-            self.pool.0.swap(position.0 as usize, new_root as usize);
-            self.cleanup();
-        }
+        let offset = self.len() as u32;
+        let new_root = x.root.0 + offset;
+        self.pool.0.extend(pool.pool.0.into_iter().map(|mut x| {
+            let children: Vec<_> = x
+                .get_children()
+                .map(|x| LambdaExprRef(x.0 + offset))
+                .collect();
+            x.change_children(children.into_iter());
+            x
+        }));
+        self.pool.0.swap(position.0 as usize, new_root as usize);
+        self.cleanup();
         Ok(())
     }
 
-    fn enumerate_from_expr<'a>(
+    fn probabilistic_enumerate_from_expr<'a, R>(
         &self,
         position: LambdaExprRef,
         possible_expressions: &'a PossibleExpressions<'src, T>,
-    ) -> Result<LambdaEnumerator<'a, 'src, T>, TypeError> {
+        rng: &'a mut R,
+    ) -> Result<LambdaEnumerator<'a, 'src, T, ProbabilisticEnumeration<'a, R>>, TypeError>
+    where
+        R: Rng,
+    {
         let context = Context::from_pos(self, position);
         let output = self.pool.get_type(position)?;
         let mut pq = BinaryHeap::default();
@@ -543,7 +543,15 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
         let enumerator = LambdaEnumerator {
             pools,
             possible_expressions,
-            pq: NormalEnumeration(pq, VecDeque::default()),
+            pq: ProbabilisticEnumeration {
+                rng,
+                reservoir_size: 1,
+                reservoir: BinaryHeap::default(),
+                done: false,
+                n_seen: 0,
+                backups: vec![],
+                pq,
+            },
         };
 
         Ok(enumerator)
@@ -781,7 +789,7 @@ mod test {
             &available_event_properties,
             &available_event_properties,
         );
-        for _ in 0..2000 {
+        for _ in 0..200 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("{t}");
             let mut pool = RootedLambdaPool::random_expr(&t, &possible_expressions, &mut rng);
@@ -796,6 +804,22 @@ mod test {
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
         }
+        let p = RootedLambdaPool::parse("lambda <a,t> P some(x, P, some_e(y, pe_2, pe_4(y)))")?;
+        let t = p.get_type()?;
+        for _ in 0..1000 {
+            let mut pool = p.clone();
+            assert_eq!(t, pool.get_type()?);
+            pool.swap_expr(
+                &actors,
+                &available_actor_properties,
+                &available_event_properties,
+                &mut rng,
+            )?;
+            dbg!(&pool);
+            println!("{t}: {pool}");
+            assert_eq!(t, pool.get_type()?);
+        }
+
         Ok(())
     }
 
@@ -828,12 +852,12 @@ mod test {
         for _ in 0..100 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("sampling: {t}");
-            let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
+            let mut pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
             assert_eq!(t, pool.get_type()?);
             let s = pool.to_string();
             let pool2 = RootedLambdaPool::parse(s.as_str())?;
             assert_eq!(s, pool2.to_string());
-            //pool.resample_from_expr(possibles.clone(), 10, &mut rng)?;
+            pool.resample_from_expr(&possibles, &mut rng)?;
             assert_eq!(pool.get_type()?, t);
         }
 

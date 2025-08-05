@@ -222,7 +222,6 @@ pub enum LambdaExpr<'a, T> {
 }
 
 impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
-    #[allow(dead_code)]
     pub(crate) fn var_type(&self) -> Option<&LambdaType> {
         match self {
             LambdaExpr::Lambda(_, lambda_type) => Some(lambda_type),
