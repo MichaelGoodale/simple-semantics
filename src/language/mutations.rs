@@ -190,16 +190,23 @@ impl KeyedExprDetails {
 }
 
 #[derive(Debug)]
-struct ProbabilisticEnumeration<'a, R: Rng> {
+struct ProbabilisticEnumeration<'a, R: Rng, F>
+where
+    F: Fn(&ExprDetails) -> bool,
+{
     rng: &'a mut R,
     reservoir_size: usize,
     reservoir: BinaryHeap<KeyedExprDetails>,
     backups: Vec<Context>,
     pq: BinaryHeap<Reverse<Context>>,
+    filter: F,
     n_seen: usize,
     done: bool,
 }
-impl<R: Rng> ProbabilisticEnumeration<'_, R> {
+impl<R: Rng, F> ProbabilisticEnumeration<'_, R, F>
+where
+    F: Fn(&ExprDetails) -> bool,
+{
     fn threshold(&self) -> Option<f64> {
         self.reservoir.peek().map(|x| x.k)
     }
@@ -208,8 +215,9 @@ impl<R: Rng> ProbabilisticEnumeration<'_, R> {
         reservoir_size: usize,
         t: &LambdaType,
         possible_expressions: &'a PossibleExpressions<'src, T>,
+        filter: F,
         rng: &'a mut R,
-    ) -> LambdaEnumerator<'a, 'src, T, ProbabilisticEnumeration<'a, R>> {
+    ) -> LambdaEnumerator<'a, 'src, T, ProbabilisticEnumeration<'a, R, F>> {
         let context = Context::new(0, vec![]);
         let mut pq = BinaryHeap::default();
         pq.push(Reverse(context));
@@ -225,6 +233,7 @@ impl<R: Rng> ProbabilisticEnumeration<'_, R> {
                 reservoir_size,
                 reservoir: BinaryHeap::default(),
                 backups: vec![],
+                filter,
                 pq,
                 n_seen: 0,
                 done: false,
@@ -233,7 +242,10 @@ impl<R: Rng> ProbabilisticEnumeration<'_, R> {
     }
 }
 
-impl<R: Rng> EnumerationType for ProbabilisticEnumeration<'_, R> {
+impl<R: Rng, F> EnumerationType for ProbabilisticEnumeration<'_, R, F>
+where
+    F: Fn(&ExprDetails) -> bool,
+{
     fn pop(&mut self) -> Option<Context> {
         //Pop from min-heap, or grab a random back up if the min-heap is exhausted
         self.pq.pop().map(|x| x.0).or_else(|| {
@@ -265,18 +277,20 @@ impl<R: Rng> EnumerationType for ProbabilisticEnumeration<'_, R> {
 
     fn push_yield(&mut self, e: ExprDetails) {
         let e = KeyedExprDetails::new(e, &mut self.rng);
-        self.n_seen += 1;
-        if self.reservoir_size > self.reservoir.len() {
-            self.reservoir.push(e)
-        } else if let Some(t) = self.threshold()
-            && e.k > t
-        {
-            self.reservoir.pop();
-            self.reservoir.push(e)
-        }
-        if self.n_seen >= self.reservoir_size * 50 {
-            self.pq.clear();
-            self.done = true;
+        if (self.filter)(&e.expr_details) {
+            self.n_seen += 1;
+            if self.reservoir_size > self.reservoir.len() {
+                self.reservoir.push(e)
+            } else if let Some(t) = self.threshold()
+                && e.k > t
+            {
+                self.reservoir.pop();
+                self.reservoir.push(e)
+            }
+            if self.n_seen >= self.reservoir_size * 50 {
+                self.pq.clear();
+                self.done = true;
+            }
         }
     }
 
@@ -528,7 +542,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
     ) -> Result<(), LambdaError> {
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
         let (pool, x) = self
-            .probabilistic_enumerate_from_expr(position, possible_expressions, rng)?
+            .probabilistic_enumerate_from_expr(position, possible_expressions, |_| true, rng)?
             .next()
             .unwrap();
 
@@ -547,14 +561,16 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
         Ok(())
     }
 
-    fn probabilistic_enumerate_from_expr<'a, R>(
+    fn probabilistic_enumerate_from_expr<'a, R, F>(
         &self,
         position: LambdaExprRef,
         possible_expressions: &'a PossibleExpressions<'src, T>,
+        filter: F,
         rng: &'a mut R,
-    ) -> Result<LambdaEnumerator<'a, 'src, T, ProbabilisticEnumeration<'a, R>>, TypeError>
+    ) -> Result<LambdaEnumerator<'a, 'src, T, ProbabilisticEnumeration<'a, R, F>>, TypeError>
     where
         R: Rng,
+        F: Fn(&ExprDetails) -> bool,
     {
         let (context, is_subformula) = Context::from_pos(self, position);
         let output = self.pool.get_type(position)?;
@@ -572,6 +588,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
                 reservoir: BinaryHeap::default(),
                 done: false,
                 n_seen: 0,
+                filter,
                 backups: vec![],
                 pq,
             },
@@ -625,7 +642,19 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
         possible_expressions: &PossibleExpressions<'src, T>,
         rng: &mut impl Rng,
     ) -> RootedLambdaPool<'src, T> {
-        ProbabilisticEnumeration::new(1, t, possible_expressions, rng)
+        ProbabilisticEnumeration::new(1, t, possible_expressions, |_| true, rng)
+            .next()
+            .unwrap()
+            .0
+    }
+
+    ///Randomly generate a [`RootedLambdaPool`] of type `t` without constant functions.
+    pub fn random_expr_no_constant(
+        t: &LambdaType,
+        possible_expressions: &PossibleExpressions<'src, T>,
+        rng: &mut impl Rng,
+    ) -> RootedLambdaPool<'src, T> {
+        ProbabilisticEnumeration::new(1, t, possible_expressions, |e| !e.constant_function, rng)
             .next()
             .unwrap()
             .0
