@@ -645,10 +645,20 @@ impl<'a, 'b> Execution<'a, 'b> {
             let subformula_value: bool = self
                 .interp(subformula, scenario, &mut variables)?
                 .try_into()?;
-            result = match quantifier {
-                Quantifier::Universal => subformula_value && result,
-                Quantifier::Existential => subformula_value || result,
-            };
+            match quantifier {
+                Quantifier::Universal => {
+                    if !subformula_value {
+                        result = false;
+                        break;
+                    }
+                }
+                Quantifier::Existential => {
+                    if subformula_value {
+                        result = true;
+                        break;
+                    }
+                }
+            }
         }
         self.quantifier_depth -= 1;
         Ok(LanguageResult::Bool(result))
@@ -682,10 +692,10 @@ impl<'a, 'b> Execution<'a, 'b> {
             Expr::Event(a) => LanguageResult::Event(*a),
             Expr::Binary(bin_op, lhs, rhs) => {
                 let lhs = self.interp(*lhs, scenario, variables)?;
-                let rhs = self.interp(*rhs, scenario, variables)?;
                 match bin_op {
                     BinOp::PatientOf | BinOp::AgentOf => {
                         let a: Actor = lhs.try_into()?;
+                        let rhs = self.interp(*rhs, scenario, variables)?;
                         let e: Event = rhs.try_into()?;
                         match bin_op {
                             BinOp::AgentOf => match scenario.thematic_relations[e as usize].agent {
@@ -703,10 +713,23 @@ impl<'a, 'b> Execution<'a, 'b> {
                     }
                     BinOp::Or | BinOp::And => {
                         let phi: bool = lhs.try_into()?;
-                        let psi: bool = rhs.try_into()?;
                         LanguageResult::Bool(match bin_op {
-                            BinOp::And => phi && psi,
-                            BinOp::Or => phi || psi,
+                            BinOp::And => {
+                                if phi {
+                                    let rhs = self.interp(*rhs, scenario, variables)?;
+                                    rhs.try_into()?
+                                } else {
+                                    false
+                                }
+                            }
+                            BinOp::Or => {
+                                if !phi {
+                                    let rhs = self.interp(*rhs, scenario, variables)?;
+                                    rhs.try_into()?
+                                } else {
+                                    true
+                                }
+                            }
                             _ => panic!("impossible because of previous check"),
                         })
                     }
