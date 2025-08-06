@@ -9,6 +9,7 @@ use chumsky::container::Container;
 use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
+    rng,
     seq::{IndexedRandom, IteratorRandom},
 };
 use thiserror::Error;
@@ -189,6 +190,17 @@ impl KeyedExprDetails {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct RandomPQ(Context, f64);
+
+impl Eq for RandomPQ {}
+
+impl RandomPQ {
+    fn new(c: Context, rng: &mut impl Rng) -> Self {
+        RandomPQ(c, rng.random())
+    }
+}
+
 #[derive(Debug)]
 struct ProbabilisticEnumeration<'a, R: Rng, F>
 where
@@ -198,7 +210,7 @@ where
     reservoir_size: usize,
     reservoir: BinaryHeap<KeyedExprDetails>,
     backups: Vec<Context>,
-    pq: BinaryHeap<Reverse<Context>>,
+    pq: BinaryHeap<RandomPQ>,
     filter: F,
     n_seen: usize,
     done: bool,
@@ -220,7 +232,7 @@ where
     ) -> LambdaEnumerator<'a, 'src, T, ProbabilisticEnumeration<'a, R, F>> {
         let context = Context::new(0, vec![]);
         let mut pq = BinaryHeap::default();
-        pq.push(Reverse(context));
+        pq.push(RandomPQ::new(context, rng));
         let pools = vec![UnfinishedLambdaPool {
             pool: vec![ExprOrType::Type(t.clone(), None, false)],
         }];
@@ -259,7 +271,7 @@ where
 
     fn push(&mut self, context: Context, included: bool) {
         if included {
-            self.pq.push(Reverse(context));
+            self.pq.push(RandomPQ::new(context, &mut self.rng));
         } else {
             self.backups.push(context);
         }
@@ -575,7 +587,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
         let (context, is_subformula) = Context::from_pos(self, position);
         let output = self.pool.get_type(position)?;
         let mut pq = BinaryHeap::default();
-        pq.push(Reverse(context));
+        pq.push(RandomPQ::new(context, rng));
         let pools = vec![UnfinishedLambdaPool {
             pool: vec![ExprOrType::Type(output, None, is_subformula)],
         }];
@@ -884,7 +896,9 @@ mod test {
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
 
-        let p = RootedLambdaPool::enumerator(&LambdaType::from_string("<<a,t>,t>")?, &possibles);
+        let t = LambdaType::from_string("<<a,t>,t>")?;
+
+        let p = RootedLambdaPool::enumerator(&t, &possibles);
         let pools: HashSet<_> = p
             .filter_map(|(p, x)| {
                 if !x.has_constant_function() {
@@ -899,6 +913,7 @@ mod test {
         for p in pools {
             println!("{p}");
         }
+
         Ok(())
     }
 
@@ -921,6 +936,30 @@ mod test {
             println!("{pool}");
             pool.resample_from_expr(&possibles, &mut rng)?;
             assert_eq!(pool.get_type()?, t);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn random_expr_s() -> anyhow::Result<()> {
+        let actors = ["john", "mary", "phil", "sue"];
+        let actor_properties = ["a"];
+        let event_properties = ["e"];
+        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+
+        let mut counts: HashMap<_, usize> = HashMap::default();
+        for _ in 0..1000 {
+            let t = LambdaType::A;
+            let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
+            assert_eq!(t, pool.get_type()?);
+            let s = pool.to_string();
+            *counts.entry(s).or_default() += 1;
+        }
+        assert_eq!(counts.len(), 4);
+        for (_, v) in counts.iter() {
+            assert!(200 <= *v && *v <= 300);
         }
 
         Ok(())

@@ -15,6 +15,25 @@ pub(super) struct Context {
     constant_function: bool,
 }
 
+impl PartialOrd for RandomPQ {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+///Reversed to deal with pq
+impl Ord for RandomPQ {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let c = &self.0;
+        let o = &other.0;
+        c.done
+            .cmp(&o.done)
+            .then(o.open_depth_score().cmp(&c.open_depth_score()))
+            .then(o.constant_function.cmp(&c.constant_function))
+            .then(self.1.partial_cmp(&other.1).unwrap())
+    }
+}
+
 impl PartialOrd for Context {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
