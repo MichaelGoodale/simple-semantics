@@ -665,11 +665,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
         t: &LambdaType,
         possible_expressions: &PossibleExpressions<'src, T>,
         rng: &mut impl Rng,
-    ) -> RootedLambdaPool<'src, T> {
+    ) -> Option<RootedLambdaPool<'src, T>> {
         ProbabilisticEnumeration::new(1, t, possible_expressions, |e| !e.constant_function, rng)
             .next()
-            .unwrap()
-            .0
+            .map(|x| x.0)
     }
 }
 
@@ -769,7 +768,7 @@ mod test {
     use std::collections::HashSet;
 
     use super::*;
-    use crate::lambda::LambdaPool;
+    use crate::lambda::{LambdaPool, LambdaSummaryStats};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -942,7 +941,41 @@ mod test {
     }
 
     #[test]
-    fn random_expr_s() -> anyhow::Result<()> {
+    fn constant_exprs() -> anyhow::Result<()> {
+        let actors = ["john", "mary", "phil", "sue"];
+        let actor_properties = ["a"];
+        let event_properties = ["e"];
+        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+
+        let mut constants = 0;
+        for _ in 0..1000 {
+            let t = LambdaType::from_string("<a, <a,t>>")?;
+            println!("sampling: {t}");
+            let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
+            let x = pool.stats();
+            match x {
+                LambdaSummaryStats::WellFormed {
+                    lambda_type,
+                    constant_function,
+                    n_nodes,
+                } => {
+                    if constant_function {
+                        constants += 1;
+                    }
+                }
+                LambdaSummaryStats::Malformed => todo!(),
+            }
+        }
+        println!("{constants}");
+
+        panic!();
+
+        Ok(())
+    }
+
+    #[test]
+    fn random_expr_counts() -> anyhow::Result<()> {
         let actors = ["john", "mary", "phil", "sue"];
         let actor_properties = ["a"];
         let event_properties = ["e"];
@@ -962,6 +995,15 @@ mod test {
             assert!(200 <= *v && *v <= 300);
         }
 
+        counts.clear();
+        for _ in 0..1000 {
+            let t = LambdaType::at().clone();
+            let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
+            assert_eq!(t, pool.get_type()?);
+            let s = pool.to_string();
+            *counts.entry(s).or_default() += 1;
+        }
+        dbg!(counts);
         Ok(())
     }
 }

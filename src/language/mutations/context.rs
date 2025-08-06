@@ -28,8 +28,8 @@ impl Ord for RandomPQ {
         let o = &other.0;
         c.done
             .cmp(&o.done)
-            .then(o.open_depth_score().cmp(&c.open_depth_score()))
             .then(o.constant_function.cmp(&c.constant_function))
+            .then(o.open_depth_score().cmp(&c.open_depth_score()))
             .then(self.1.partial_cmp(&other.1).unwrap())
     }
 }
