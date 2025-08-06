@@ -32,8 +32,8 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
     ) -> Self {
         let bad_ref = ExprRef(0);
         let mut all_expressions: Vec<_> = [
-            Expr::Constant(Constant::Everyone),
-            Expr::Constant(Constant::EveryEvent),
+            //Expr::Constant(Constant::Everyone),
+            //Expr::Constant(Constant::EveryEvent),
             Expr::Unary(MonOp::Not, bad_ref),
             Expr::Binary(BinOp::And, bad_ref, bad_ref),
             Expr::Binary(BinOp::Or, bad_ref, bad_ref),
@@ -71,13 +71,13 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
         all_expressions.extend(actor_properties.iter().flat_map(|i| {
             [
                 Expr::Unary(MonOp::Property(i, ActorOrEvent::Actor), bad_ref),
-                Expr::Constant(Constant::Property(i, ActorOrEvent::Actor)),
+                //Expr::Constant(Constant::Property(i, ActorOrEvent::Actor)),
             ]
         }));
         all_expressions.extend(event_properties.iter().flat_map(|i| {
             [
                 Expr::Unary(MonOp::Property(i, ActorOrEvent::Event), bad_ref),
-                Expr::Constant(Constant::Property(i, ActorOrEvent::Event)),
+                //Expr::Constant(Constant::Property(i, ActorOrEvent::Event)),
             ]
         }));
 

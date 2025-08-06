@@ -870,7 +870,7 @@ mod test {
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
         }
-        let p = RootedLambdaPool::parse("lambda <a,t> P some(x, P, some_e(y, pe_2, pe_4(y)))")?;
+        let p = RootedLambdaPool::parse("lambda <a,t> P some(x, P, some_e(y, pe_2(y), pe_4(y)))")?;
         let t = p.get_type()?;
         for _ in 0..1000 {
             let mut pool = p.clone();
