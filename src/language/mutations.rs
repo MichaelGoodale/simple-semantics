@@ -152,7 +152,11 @@ impl EnumerationType for NormalEnumeration {
 
 impl ExprDetails {
     fn score(&self) -> f64 {
-        1.0 / (self.size as f64)
+        (1.0 / (self.size as f64))
+            + match self.constant_function {
+                true => 0.0,
+                false => 10.0,
+            }
     }
 
     pub fn has_constant_function(&self) -> bool {
