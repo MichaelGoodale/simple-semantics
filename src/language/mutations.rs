@@ -973,8 +973,6 @@ mod test {
         }
         println!("{constants}");
 
-        panic!();
-
         Ok(())
     }
 
