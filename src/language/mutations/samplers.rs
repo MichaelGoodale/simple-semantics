@@ -107,29 +107,72 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PossibleExpr<'a, 'src, T: LambdaLanguageOfThought + Clone> {
+    expr: Cow<'a, LambdaExpr<'src, T>>,
+    app_details: Option<(LambdaType, LambdaType)>,
+}
+
+impl<'a, 'src, T: LambdaLanguageOfThought + Clone> PossibleExpr<'a, 'src, T> {
+    pub fn into_expr(self) -> (LambdaExpr<'src, T>, Option<(LambdaType, LambdaType)>) {
+        (self.expr.into_owned(), self.app_details)
+    }
+
+    fn new_borrowed(expr: &'a LambdaExpr<'src, T>) -> Self {
+        PossibleExpr {
+            expr: Cow::Borrowed(expr),
+            app_details: None,
+        }
+    }
+
+    fn new_owned(expr: LambdaExpr<'src, T>) -> Self {
+        PossibleExpr {
+            expr: Cow::Owned(expr),
+            app_details: None,
+        }
+    }
+
+    fn new_application(subformula: LambdaType, argument: LambdaType) -> Self {
+        PossibleExpr {
+            expr: Cow::Owned(LambdaExpr::Application {
+                subformula: LambdaExprRef(0),
+                argument: LambdaExprRef(0),
+            }),
+            app_details: Some((subformula, argument)),
+        }
+    }
+}
+
 impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
     pub(super) fn possibilities<'a>(
         &'a self,
         lambda_type: &LambdaType,
+        is_subformula: bool,
         context: &Context,
-    ) -> Vec<Cow<'a, LambdaExpr<'src, T>>> {
-        let mut possibilities: Vec<_> = self
-            .expressions
-            .get(lambda_type)
-            .map(|x| {
+    ) -> Vec<PossibleExpr<'a, 'src, T>> {
+        let mut possibilities = vec![];
+        if !is_subformula {
+            if let Some(x) = self.expressions.get(lambda_type).map(|x| {
                 x.iter()
                     .filter(|(k, _)| !has_e_argument(k) || context.can_sample_event())
-                    .flat_map(|(_, v)| v.iter().map(Cow::Borrowed))
-                    .collect()
-            })
-            .unwrap_or_default();
+                    .flat_map(|(_, v)| v.iter().map(PossibleExpr::new_borrowed))
+            }) {
+                possibilities.extend(x);
+            }
 
-        if let Ok((lhs, _)) = lambda_type.split() {
-            let e = Cow::Owned(LambdaExpr::Lambda(LambdaExprRef(0), lhs.clone()));
-            possibilities.push(e);
+            if let Ok((lhs, _)) = lambda_type.split() {
+                let e = PossibleExpr::new_owned(LambdaExpr::Lambda(LambdaExprRef(0), lhs.clone()));
+                possibilities.push(e);
+            }
         }
 
-        possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
+        possibilities.extend(context.variables(lambda_type).map(PossibleExpr::new_owned));
+        possibilities.extend(
+            context
+                .applications(lambda_type)
+                .map(|(subformula, argument)| PossibleExpr::new_application(subformula, argument)),
+        );
+
         possibilities
     }
 
@@ -149,15 +192,23 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
             })
             .unwrap_or_default();
 
-        if arguments.len() == 1 {
-            if let Ok((lhs, rhs)) = lambda_type.split() {
-                if rhs == arguments.first().unwrap() {
-                    possibilities.push(Cow::Owned(LambdaExpr::Lambda(
-                        LambdaExprRef(0),
-                        lhs.clone(),
-                    )));
-                }
-            }
+        if arguments.len() == 2
+            && let Ok((arg_type, return_type)) = arguments.first().unwrap().split()
+            && return_type == lambda_type
+            && arg_type == arguments.last().unwrap()
+        {
+            possibilities.push(Cow::Owned(LambdaExpr::Application {
+                subformula: LambdaExprRef(0),
+                argument: LambdaExprRef(0),
+            }))
+        } else if arguments.len() == 1
+            && let Ok((lhs, rhs)) = lambda_type.split()
+            && rhs == arguments.first().unwrap()
+        {
+            possibilities.push(Cow::Owned(LambdaExpr::Lambda(
+                LambdaExprRef(0),
+                lhs.clone(),
+            )));
         } else if arguments.is_empty() {
             possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
         }

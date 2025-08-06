@@ -9,6 +9,7 @@ ahash = { version = "0.8.11", features = [
   "std",
 ], default-features = false }
 chumsky = { version = "0.10.1", features = ["pratt"] }
+itertools = "0.14.0"
 rand = { version = "0.9.1", optional = true }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"

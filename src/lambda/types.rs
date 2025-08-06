@@ -84,12 +84,52 @@ fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType, extra::Err<Rich<'a,
     core_type_parser().padded().then_ignore(end())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///A struct which recursively gets the right hand side of a given lambda expression
+pub struct RetrievableTypeIterator<'a>(&'a LambdaType);
+
+impl<'a> Iterator for RetrievableTypeIterator<'a> {
+    type Item = (&'a LambdaType, &'a LambdaType);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.0.split() {
+            Ok((lhs, rhs)) => {
+                self.0 = rhs;
+                Some((lhs, rhs))
+            }
+            Err(_) => None,
+        }
+    }
+}
+
 impl LambdaType {
     ///Takes a type x and returns <<x,t>, t>
     pub fn lift_type(self) -> LambdaType {
         let t = LambdaType::compose(self, LambdaType::T);
 
         LambdaType::compose(t, LambdaType::T)
+    }
+
+    ///Get all types which can be created from this type (what you would need to pass before to produce
+    ///that type).
+    ///
+    ///### Examples
+    /// - <a,t> can create t (arg: a)
+    /// - <a,<a,t>> can create t: (arg: a) or <a,t> (arg: a)
+    /// - <a, <<a,t>, <t,t>>> can create <<a,t>, <t,t>> (arg: a), <t,t> (arg: <a,t>) or t
+    ///
+    ///```
+    ///# use simple_semantics::lambda::types::LambdaType;
+    ///let x = LambdaType::from_string("<a, <<a,t>, <t,t>>>")?
+    ///    .retrievable_types()
+    ///    .map(|(_, x)| x.to_string())
+    ///    .collect::<Vec<_>>();
+    ///assert_eq!(x, vec!["<<a,t>,<t,t>>", "<t,t>", "t"]);
+    ///# Ok::<(), anyhow::Error>(())
+    ///```
+    ///
+    pub fn retrievable_types<'a>(&'a self) -> RetrievableTypeIterator<'a> {
+        RetrievableTypeIterator(self)
     }
 
     ///Checks if the type is the lifted version of another.
