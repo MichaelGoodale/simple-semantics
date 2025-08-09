@@ -9,7 +9,6 @@ use chumsky::container::Container;
 use rand::{
     Rng,
     distr::{Distribution, weighted::WeightedIndex},
-    rng,
     seq::{IndexedRandom, IteratorRandom},
 };
 use thiserror::Error;
@@ -303,7 +302,7 @@ where
                 self.reservoir.pop();
                 self.reservoir.push(e)
             }
-            if self.n_seen >= self.reservoir_size * 50 {
+            if self.n_seen >= self.reservoir_size * 20 {
                 self.pq.clear();
                 self.done = true;
             }

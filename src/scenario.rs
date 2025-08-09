@@ -168,18 +168,23 @@ pub fn scenario_parser<'a>()
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, x)| {
-                    x.map(|s| match RootedLambdaPool::parse(s) {
-                        Ok(x) => Ok((i, x)),
-                        Err(e) => Err(e),
+                    x.map(|s: &str| {
+                        s.split(';')
+                            .map(|s| match RootedLambdaPool::parse(s) {
+                                Ok(x) => Ok(x),
+                                Err(e) => Err(e),
+                            })
+                            .collect::<Result<Vec<_>, LambdaParseError>>()
+                            .map(|s| (s, i))
                     })
                 })
-                .collect::<Result<Vec<_>, LambdaParseError>>();
+                .collect::<Result<Vec<(Vec<_>, usize)>, LambdaParseError>>();
 
             match lot_vec {
                 Ok(lot_vec) => {
                     lot_vec
                         .into_iter()
-                        .for_each(|(i, x)| data.scenarios[i].question = Some(x));
+                        .for_each(|(x, i)| data.scenarios[i].question.extend(x));
                     Ok(data)
                 }
                 Err(e) => Err(e),
@@ -214,7 +219,7 @@ fn add_scenario<'a>(
     }
 
     training_dataset.0.scenarios.push(Scenario {
-        question: None,
+        question: vec![],
         actors,
         thematic_relations: events,
         properties,
@@ -260,19 +265,19 @@ mod test {
     fn parse_multiple_scenarios() -> anyhow::Result<()> {
         let scenarios = vec![
             Scenario {
-                question: None,
+                question: vec![],
                 actors: vec!["John"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
             },
             Scenario {
-                question: None,
+                question: vec![],
                 actors: vec!["Mary"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
             },
             Scenario {
-                question: None,
+                question: vec![],
                 actors: vec!["John"],
                 thematic_relations: vec![],
                 properties: HashMap::default(),
@@ -289,7 +294,7 @@ mod test {
 
         let scenarios = vec![
             Scenario {
-                question: None,
+                question: vec![],
                 actors: vec!["John"],
                 thematic_relations: vec![ThetaRoles {
                     agent: Some("John"),
@@ -298,7 +303,7 @@ mod test {
                 properties: HashMap::from_iter([("run", vec![Entity::Event(0)])]),
             },
             Scenario {
-                question: None,
+                question: vec![],
                 actors: vec!["Mary"],
                 thematic_relations: vec![ThetaRoles {
                     agent: Some("Mary"),
@@ -307,7 +312,7 @@ mod test {
                 properties: HashMap::from_iter([("run", vec![Entity::Event(0)])]),
             },
             Scenario {
-                question: None,
+                question: vec![],
                 actors: vec!["Mary", "John"],
                 thematic_relations: vec![ThetaRoles {
                     agent: Some("John"),
@@ -334,30 +339,31 @@ mod test {
                 .unwrap()?;
 
         assert_eq!(
-            scenarios.scenarios[0]
-                .question
-                .as_ref()
-                .unwrap()
-                .to_string(),
+            scenarios.scenarios[0].question.first().unwrap().to_string(),
             "lambda a x x"
         );
-        assert_eq!(scenarios.scenarios[1].question, None);
+        assert_eq!(scenarios.scenarios[1].question, vec![]);
         assert_eq!(
-            scenarios.scenarios[2]
-                .question
-                .as_ref()
-                .unwrap()
-                .to_string(),
+            scenarios.scenarios[2].question.first().unwrap().to_string(),
             "a_0"
         );
 
+        let scenarios = scenario_parser()
+                .parse("\"John runs\" <John; {A: John (run)}> lambda a x (x)\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>  a_0; a_1; a_3")
+                .unwrap()?;
+        assert_eq!(scenarios.scenarios[2].question.len(), 3);
+
+        assert_eq!(
+            scenarios.scenarios[2].question.last().unwrap().to_string(),
+            "a_3"
+        );
         Ok(())
     }
 
     #[test]
     fn parse_scenario() -> anyhow::Result<()> {
         let scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["John"],
             thematic_relations: vec![],
             properties: HashMap::default(),
@@ -392,7 +398,7 @@ mod test {
         );
 
         let scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["john"],
             thematic_relations: vec![ThetaRoles {
                 agent: None,
@@ -411,7 +417,7 @@ mod test {
         );
 
         let scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["john", "mary", "phil"],
             thematic_relations: vec![
                 ThetaRoles {
@@ -441,7 +447,7 @@ mod test {
         );
 
         let scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["a", "b", "c"],
             thematic_relations: vec![
                 ThetaRoles {

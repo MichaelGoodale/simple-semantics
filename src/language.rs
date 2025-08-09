@@ -825,7 +825,7 @@ mod tests {
     #[test]
     fn agent_of_and_patient_of() -> anyhow::Result<()> {
         let simple_scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["0", "1"],
             thematic_relations: vec![ThetaRoles {
                 agent: Some("0"),
@@ -869,7 +869,7 @@ mod tests {
     #[test]
     fn quantification() -> anyhow::Result<()> {
         let simple_scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
@@ -948,7 +948,7 @@ mod tests {
     #[test]
     fn logic() -> anyhow::Result<()> {
         let simple_scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
@@ -1080,7 +1080,7 @@ mod tests {
         properties.insert("1", vec![Entity::Actor("0"), Entity::Actor("1")]);
         properties.insert("534", vec![Entity::Actor("1")]);
         let simple_scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["0", "1"],
             thematic_relations: vec![
                 ThetaRoles {
@@ -1145,7 +1145,7 @@ mod tests {
         properties.insert("235", vec![Entity::Event(0)]);
         properties.insert("2", vec![Entity::Actor("0")]);
         let simple_scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["0", "1"],
             thematic_relations: vec![ThetaRoles {
                 agent: Some("1"),
@@ -1217,7 +1217,7 @@ mod tests {
         properties.insert("2", vec![Entity::Actor("1"), Entity::Actor("3")]);
         properties.insert("4", vec![Entity::Event(0)]);
         let simple_scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["0", "1", "2", "3", "4"],
             thematic_relations: vec![ThetaRoles {
                 agent: Some("1"),
@@ -1297,7 +1297,7 @@ mod tests {
         let expr = parse_executable("some_e(y,pe_1,PatientOf(a_1,y))")?;
 
         let a = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["1", "0"],
             thematic_relations: vec![ThetaRoles {
                 agent: Some("0"),
@@ -1307,7 +1307,7 @@ mod tests {
         };
 
         let b = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["1"],
             thematic_relations: vec![ThetaRoles {
                 agent: Some("1"),

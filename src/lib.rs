@@ -51,7 +51,7 @@ pub struct Scenario<'a> {
     actors: Vec<Actor<'a>>,
     thematic_relations: Vec<ThetaRoles<'a>>,
     properties: HashMap<PropertyLabel<'a>, Vec<Entity<'a>>, RandomState>,
-    question: Option<RootedLambdaPool<'a, Expr<'a>>>,
+    question: Vec<RootedLambdaPool<'a, Expr<'a>>>,
 }
 
 impl<'a> Scenario<'a> {
@@ -65,7 +65,7 @@ impl<'a> Scenario<'a> {
             actors,
             thematic_relations,
             properties,
-            question: None,
+            question: vec![],
         }
     }
 
@@ -86,13 +86,13 @@ impl<'a> Scenario<'a> {
 
     ///Get the question associated with a scenario (which may be [`None`] if there is no question).
     ///Questions are representated as [`RootedLambdaPool`] which return a truth value.
-    pub fn question(&self) -> Option<&RootedLambdaPool<Expr>> {
-        self.question.as_ref()
+    pub fn questions(&self) -> &[RootedLambdaPool<Expr>] {
+        &self.question
     }
 
     ///Get a mutable reference to the question of a scenario.
     ///See [`Scenario::question`]
-    pub fn question_mut(&mut self) -> &mut Option<RootedLambdaPool<'a, Expr<'a>>> {
+    pub fn question_mut(&mut self) -> &mut [RootedLambdaPool<'a, Expr<'a>>] {
         &mut self.question
     }
 

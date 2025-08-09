@@ -785,7 +785,7 @@ mod tests {
         properties.insert("Blue", vec![Entity::Actor("Mary"), Entity::Actor("John")]);
 
         let scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["Mary", "John"],
             thematic_relations: vec![
                 ThetaRoles {
@@ -840,7 +840,7 @@ mod tests {
         properties.insert("Blue", vec![Entity::Actor("Mary"), Entity::Actor("John")]);
 
         let scenario = Scenario {
-            question: None,
+            question: vec![],
             actors: vec!["Mary", "John"],
             thematic_relations: vec![
                 ThetaRoles {
