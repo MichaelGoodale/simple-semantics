@@ -92,7 +92,7 @@ impl<'a> Scenario<'a> {
 
     ///Get a mutable reference to the question of a scenario.
     ///See [`Scenario::question`]
-    pub fn question_mut(&mut self) -> &mut [RootedLambdaPool<'a, Expr<'a>>] {
+    pub fn question_mut(&mut self) -> &mut Vec<RootedLambdaPool<'a, Expr<'a>>> {
         &mut self.question
     }
 
