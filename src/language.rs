@@ -407,7 +407,7 @@ impl Display for LanguageResult<'_> {
 }
 
 ///The basic atomic types of the LOT. See [`LanguageResult`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum LanguageResultType {
     Bool,
@@ -434,7 +434,7 @@ impl Display for LanguageResultType {
 }
 
 ///Possible errors that can be generated when running a [`LanguageExpression`]
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LanguageTypeError {
     ///A presupposition error in the semantics; occurs when a non-existent entity is referenced.
     #[error("The referenced object does not exist in the current scenario")]
