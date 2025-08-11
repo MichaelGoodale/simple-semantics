@@ -70,12 +70,12 @@ impl<'a> Scenario<'a> {
     }
 
     ///Get the representation of all events as a slice of [`ThetaRoles`].
-    pub fn thematic_relations(&self) -> &[ThetaRoles] {
+    pub fn thematic_relations(&self) -> &[ThetaRoles<'a>] {
         &self.thematic_relations
     }
 
     ///Get the properties (e.g. what predicates apply) of the entities in a scenario.
-    pub fn properties(&self) -> &BTreeMap<PropertyLabel, Vec<Entity>> {
+    pub fn properties(&self) -> &BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>> {
         &self.properties
     }
 
@@ -86,7 +86,7 @@ impl<'a> Scenario<'a> {
 
     ///Get the question associated with a scenario (which may be [`None`] if there is no question).
     ///Questions are representated as [`RootedLambdaPool`] which return a truth value.
-    pub fn questions(&self) -> &[RootedLambdaPool<Expr>] {
+    pub fn questions(&self) -> &[RootedLambdaPool<'a, Expr<'a>>] {
         &self.question
     }
 
