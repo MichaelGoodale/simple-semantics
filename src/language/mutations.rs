@@ -959,9 +959,7 @@ mod test {
             let x = pool.stats();
             match x {
                 LambdaSummaryStats::WellFormed {
-                    lambda_type,
-                    constant_function,
-                    n_nodes,
+                    constant_function, ..
                 } => {
                     if constant_function {
                         constants += 1;

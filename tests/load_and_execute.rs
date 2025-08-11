@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -23,7 +23,7 @@ fn load_dataset() -> anyhow::Result<()> {
                 agent: Some("John"),
                 patient: None,
             }],
-            HashMap::from_iter([("run", vec![Entity::Event(0)])]),
+            BTreeMap::from_iter([("run", vec![Entity::Event(0)])]),
         ),
         Scenario::new(
             vec!["Mary"],
@@ -31,7 +31,7 @@ fn load_dataset() -> anyhow::Result<()> {
                 agent: Some("Mary"),
                 patient: None,
             }],
-            HashMap::from_iter([("run", vec![Entity::Event(0)])]),
+            BTreeMap::from_iter([("run", vec![Entity::Event(0)])]),
         ),
         Scenario::new(
             vec!["Mary", "John"],
@@ -39,7 +39,7 @@ fn load_dataset() -> anyhow::Result<()> {
                 agent: Some("John"),
                 patient: Some("Mary"),
             }],
-            HashMap::from_iter([("see", vec![Entity::Event(0)])]),
+            BTreeMap::from_iter([("see", vec![Entity::Event(0)])]),
         ),
     ];
 

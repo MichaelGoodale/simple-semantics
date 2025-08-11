@@ -2,11 +2,11 @@
 //! This crate defines a simple language of thought with a lambda calculus and a randomization
 //! procedure to learn simple montagovian grammars.
 #![warn(missing_docs)]
-use ahash::{HashSet, RandomState};
+use ahash::HashSet;
 use chumsky::prelude::*;
 use lambda::RootedLambdaPool;
 use language::{Expr, LambdaParseError};
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::BTreeMap, fmt::Display};
 use thiserror::Error;
 
 ///The representation of an entity that can receive theta roles (e.g. a human, a cup, a thought).
@@ -34,7 +34,7 @@ impl Display for Entity<'_> {
 }
 
 ///The representation of the theta roles of a given event.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Eq, Hash)]
 pub struct ThetaRoles<'a> {
     ///The agent of the event.
     pub agent: Option<Actor<'a>>,
@@ -46,11 +46,11 @@ type PropertyLabel<'a> = &'a str;
 
 ///The representation of a scenario. A moment consisting of various events, the present actors and
 ///any predicates that apply to either.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Scenario<'a> {
     actors: Vec<Actor<'a>>,
     thematic_relations: Vec<ThetaRoles<'a>>,
-    properties: HashMap<PropertyLabel<'a>, Vec<Entity<'a>>, RandomState>,
+    properties: BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>>,
     question: Vec<RootedLambdaPool<'a, Expr<'a>>>,
 }
 
@@ -59,7 +59,7 @@ impl<'a> Scenario<'a> {
     pub fn new(
         actors: Vec<Actor<'a>>,
         thematic_relations: Vec<ThetaRoles<'a>>,
-        properties: HashMap<PropertyLabel<'a>, Vec<Entity<'a>>, RandomState>,
+        properties: BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>>,
     ) -> Scenario<'a> {
         Scenario {
             actors,
@@ -75,7 +75,7 @@ impl<'a> Scenario<'a> {
     }
 
     ///Get the properties (e.g. what predicates apply) of the entities in a scenario.
-    pub fn properties(&self) -> &HashMap<PropertyLabel, Vec<Entity>, RandomState> {
+    pub fn properties(&self) -> &BTreeMap<PropertyLabel, Vec<Entity>> {
         &self.properties
     }
 

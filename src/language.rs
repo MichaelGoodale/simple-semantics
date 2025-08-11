@@ -815,9 +815,7 @@ mod serializations;
 #[cfg(test)]
 mod tests {
     use crate::ScenarioDataset;
-    use std::collections::HashMap;
-
-    use ahash::RandomState;
+    use std::collections::BTreeMap;
 
     use super::*;
     use crate::ThetaRoles;
@@ -831,7 +829,7 @@ mod tests {
                 agent: Some("0"),
                 patient: None,
             }],
-            properties: HashMap::default(),
+            properties: BTreeMap::default(),
         };
 
         let simple_expr = ExprPool(vec![
@@ -881,7 +879,7 @@ mod tests {
                     patient: Some("0"),
                 },
             ],
-            properties: HashMap::default(),
+            properties: BTreeMap::default(),
         };
 
         //For all actors there exists an event such that they are its agent.
@@ -960,7 +958,7 @@ mod tests {
                     patient: Some("0"),
                 },
             ],
-            properties: HashMap::default(),
+            properties: BTreeMap::default(),
         };
 
         assert_eq!(
@@ -1076,7 +1074,7 @@ mod tests {
 
     #[test]
     fn properties() -> anyhow::Result<()> {
-        let mut properties: HashMap<_, _, RandomState> = HashMap::default();
+        let mut properties = BTreeMap::default();
         properties.insert("1", vec![Entity::Actor("0"), Entity::Actor("1")]);
         properties.insert("534", vec![Entity::Actor("1")]);
         let simple_scenario = Scenario {
@@ -1140,7 +1138,7 @@ mod tests {
 
     #[test]
     fn complicated_restrictors() -> anyhow::Result<()> {
-        let mut properties: HashMap<_, _, RandomState> = HashMap::default();
+        let mut properties = BTreeMap::default();
         properties.insert("534", vec![Entity::Actor("1")]);
         properties.insert("235", vec![Entity::Event(0)]);
         properties.insert("2", vec![Entity::Actor("0")]);
@@ -1212,7 +1210,7 @@ mod tests {
             LanguageResult::Bool(false)
         );
 
-        let mut properties: HashMap<_, _, RandomState> = HashMap::default();
+        let mut properties = BTreeMap::default();
         properties.insert("3", vec![Entity::Actor("1"), Entity::Actor("2")]);
         properties.insert("2", vec![Entity::Actor("1"), Entity::Actor("3")]);
         properties.insert("4", vec![Entity::Event(0)]);

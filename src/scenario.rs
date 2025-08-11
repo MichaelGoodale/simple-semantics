@@ -1,7 +1,7 @@
-use ahash::{HashSet, RandomState};
+use ahash::HashSet;
 use chumsky::text::newline;
 use chumsky::{prelude::*, text::inline_whitespace};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::lambda::RootedLambdaPool;
 use crate::language::LambdaParseError;
@@ -26,7 +26,7 @@ pub fn scenario_parser<'a>()
 
     let actors = actor
         .map(|(a, p)| {
-            let mut properties: HashMap<&str, Vec<_>, RandomState> = HashMap::default();
+            let mut properties: BTreeMap<&str, Vec<_>> = BTreeMap::default();
             if let Some(property_labels) = p {
                 for property in property_labels {
                     properties.insert(property, vec![a]);
@@ -94,7 +94,7 @@ pub fn scenario_parser<'a>()
     let events = event
         .or_not()
         .map(|event_data| {
-            let mut properties: HashMap<&str, Vec<Entity>, RandomState> = HashMap::default();
+            let mut properties: BTreeMap<&str, Vec<Entity>> = BTreeMap::default();
 
             let events = match event_data {
                 Some((e, None)) => {
@@ -192,21 +192,18 @@ pub fn scenario_parser<'a>()
         })
 }
 
-type EventParseType<'a> = Option<(
-    Vec<ThetaRoles<'a>>,
-    HashMap<&'a str, Vec<Entity<'a>>, ahash::RandomState>,
-)>;
+type EventParseType<'a> = Option<(Vec<ThetaRoles<'a>>, BTreeMap<&'a str, Vec<Entity<'a>>>)>;
 
 fn add_scenario<'a>(
     training_dataset: &mut (ScenarioDataset<'a>, HashSet<&'a str>),
     s: &'a str,
     actors: Vec<Actor<'a>>,
-    actor_props: HashMap<&'a str, Vec<&'a str>, RandomState>,
+    actor_props: BTreeMap<&'a str, Vec<&'a str>>,
     events: EventParseType<'a>,
 ) {
-    let (events, event_props) = events.unwrap_or_else(|| (Vec::default(), HashMap::default()));
+    let (events, event_props) = events.unwrap_or_else(|| (Vec::default(), BTreeMap::default()));
 
-    let mut properties: HashMap<&str, Vec<Entity>, _> = actor_props
+    let mut properties: BTreeMap<&str, Vec<Entity>> = actor_props
         .into_iter()
         .map(|(k, v)| (k, v.into_iter().map(Entity::Actor).collect()))
         .collect();
@@ -268,19 +265,19 @@ mod test {
                 question: vec![],
                 actors: vec!["John"],
                 thematic_relations: vec![],
-                properties: HashMap::default(),
+                properties: BTreeMap::default(),
             },
             Scenario {
                 question: vec![],
                 actors: vec!["Mary"],
                 thematic_relations: vec![],
-                properties: HashMap::default(),
+                properties: BTreeMap::default(),
             },
             Scenario {
                 question: vec![],
                 actors: vec!["John"],
                 thematic_relations: vec![],
-                properties: HashMap::default(),
+                properties: BTreeMap::default(),
             },
         ];
 
@@ -300,7 +297,7 @@ mod test {
                     agent: Some("John"),
                     patient: None,
                 }],
-                properties: HashMap::from_iter([("run", vec![Entity::Event(0)])]),
+                properties: BTreeMap::from_iter([("run", vec![Entity::Event(0)])]),
             },
             Scenario {
                 question: vec![],
@@ -309,7 +306,7 @@ mod test {
                     agent: Some("Mary"),
                     patient: None,
                 }],
-                properties: HashMap::from_iter([("run", vec![Entity::Event(0)])]),
+                properties: BTreeMap::from_iter([("run", vec![Entity::Event(0)])]),
             },
             Scenario {
                 question: vec![],
@@ -318,7 +315,7 @@ mod test {
                     agent: Some("John"),
                     patient: Some("Mary"),
                 }],
-                properties: HashMap::from_iter([("see", vec![Entity::Event(0)])]),
+                properties: BTreeMap::from_iter([("see", vec![Entity::Event(0)])]),
             },
         ];
 
@@ -366,7 +363,7 @@ mod test {
             question: vec![],
             actors: vec!["John"],
             thematic_relations: vec![],
-            properties: HashMap::default(),
+            properties: BTreeMap::default(),
         };
 
         assert_eq!(
@@ -404,7 +401,7 @@ mod test {
                 agent: None,
                 patient: None,
             }],
-            properties: HashMap::default(),
+            properties: BTreeMap::default(),
         };
         assert_eq!(
             scenario,
@@ -433,7 +430,7 @@ mod test {
                     patient: Some("phil"),
                 },
             ],
-            properties: HashMap::default(),
+            properties: BTreeMap::default(),
         };
 
         assert_eq!(
@@ -463,7 +460,7 @@ mod test {
                     patient: Some("c"),
                 },
             ],
-            properties: HashMap::from_iter([
+            properties: BTreeMap::from_iter([
                 ("Red", vec![Entity::Actor("a"), Entity::Actor("c")]),
                 ("Green", vec![Entity::Event(0)]),
                 ("Blue", vec![Entity::Actor("c"), Entity::Event(2)]),

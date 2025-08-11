@@ -559,7 +559,7 @@ mod tests {
     use super::*;
     use crate::language::{ExprRef, LanguageResult};
     use crate::{Scenario, ThetaRoles};
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     #[test]
     fn parse_entity() {
@@ -779,7 +779,7 @@ mod tests {
 
     #[test]
     fn parse_with_keywords() -> anyhow::Result<()> {
-        let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
+        let mut properties = BTreeMap::default();
 
         properties.insert("Red", vec![Entity::Actor("John")]);
         properties.insert("Blue", vec![Entity::Actor("Mary"), Entity::Actor("John")]);
@@ -834,7 +834,7 @@ mod tests {
 
     #[test]
     fn parse_test() -> anyhow::Result<()> {
-        let mut properties: HashMap<_, _, ahash::RandomState> = HashMap::default();
+        let mut properties = BTreeMap::default();
 
         properties.insert("Red", vec![Entity::Actor("John")]);
         properties.insert("Blue", vec![Entity::Actor("Mary"), Entity::Actor("John")]);
