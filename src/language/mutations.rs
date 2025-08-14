@@ -470,6 +470,10 @@ where
         }
 
         while let Some(mut c) = self.pq.pop() {
+            if let Some(x) = try_yield(self) {
+                self.pq.push(c, true);
+                return Some(x);
+            }
             let (possibles, lambda_type) = match &self.pools[c.pool_index].pool[c.position] {
                 ExprOrType::Type(lambda_type, _, is_app_subformula) => (
                     self.possible_expressions
