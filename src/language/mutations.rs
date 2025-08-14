@@ -125,6 +125,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
     }
 }
 
+#[derive(Debug)]
 pub struct NormalEnumeration(BinaryHeap<Reverse<Context>>, VecDeque<ExprDetails>);
 
 impl EnumerationType for NormalEnumeration {
@@ -465,10 +466,6 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(mut c) = self.pq.pop() {
-            if let Some(x) = try_yield(self) {
-                return Some(x);
-            }
-
             let (possibles, lambda_type) = match &self.pools[c.pool_index].pool[c.position] {
                 ExprOrType::Type(lambda_type, _, is_app_subformula) => (
                     self.possible_expressions
@@ -537,6 +534,10 @@ where
                 let pool = self.pools.get_mut(pool_id).unwrap();
                 pool.add_expr(expr, &mut c, &lambda_type);
                 self.pq.push(c, included);
+            }
+
+            if let Some(x) = try_yield(self) {
+                return Some(x);
             }
         }
 
@@ -768,7 +769,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 #[cfg(test)]
 mod test {
 
-    use std::collections::HashSet;
+    use std::{collections::HashSet, hash::Hash};
 
     use super::*;
     use crate::lambda::{LambdaPool, LambdaSummaryStats};
@@ -939,7 +940,11 @@ mod test {
             pool.resample_from_expr(&possibles, &mut rng)?;
             assert_eq!(pool.get_type()?, t);
         }
-
+        let t = LambdaType::from_string("<a,<a,t>>")?;
+        for _ in 0..1000 {
+            let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
+            println!("{pool}");
+        }
         Ok(())
     }
 
@@ -950,6 +955,13 @@ mod test {
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
         let mut rng = ChaCha8Rng::seed_from_u64(0);
+
+        let v: HashSet<_> = RootedLambdaPool::enumerator(LambdaType::a(), &possibles)
+            .map(|(x, _)| x.to_string())
+            .collect();
+
+        assert_eq!(v, HashSet::from(actors.map(|x| format!("a_{x}"))));
+        println!("{v:?}");
 
         let mut constants = 0;
         for _ in 0..1000 {
