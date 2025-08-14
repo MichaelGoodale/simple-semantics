@@ -465,6 +465,10 @@ where
     type Item = (RootedLambdaPool<'src, T>, ExprDetails);
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(x) = try_yield(self) {
+            return Some(x);
+        }
+
         while let Some(mut c) = self.pq.pop() {
             let (possibles, lambda_type) = match &self.pools[c.pool_index].pool[c.position] {
                 ExprOrType::Type(lambda_type, _, is_app_subformula) => (
