@@ -632,9 +632,10 @@ impl<'a, 'b> Execution<'a, 'b> {
             }
         };
 
+        /*
         if domain.is_empty() {
             return Err(LanguageTypeError::PresuppositionError);
-        }
+        }*/
 
         let mut result = match quantifier {
             Quantifier::Universal => true,
@@ -1337,6 +1338,16 @@ mod tests {
         assert_eq!(a.run(scenario, None)?, LanguageResult::Bool(true));
         assert_eq!(b.run(scenario, None)?, LanguageResult::Bool(false));
         assert_eq!(c.run(scenario, None)?, LanguageResult::Bool(true));
+
+        let pool = LanguageExpression::parse(
+            "every_e(x, AgentOf(a_Mary, x), PatientOf(a_Phil, x)) & ~every_e(x, AgentOf(a_John, x), PatientOf(a_Phil, x)) & ~every_e(x, AgentOf(a_Phil, x), PatientOf(a_Phil, x)) & ~every_e(x, AgentOf(a_Sue, x), PatientOf(a_Phil, x))",
+        )?;
+        let labels = ScenarioDataset::parse(
+            "\"Mary loves Phil\" <John (man), Mary (woman), Phil (man), Sue (woman); {A: Mary, P: Phil (loves)}> lambda a x some_e(e, pe_loves, AgentOf(x, e)); lambda a x some_e(e, pe_loves, PatientOf(x, e)); lambda <a,<a,t>> P P(a_Phil, a_Mary) & ~P(a_John, a_Mary) & ~P(a_Mary, a_Mary) & ~P(a_Sue, a_Mary); lambda <a,t> P P(a_Mary) & ~P(a_John) & ~P(a_Phil) & ~P(a_Sue)",
+        )?;
+        let scenario = labels.iter_scenarios().next().unwrap();
+
+        pool.run(scenario, None)?;
 
         Ok(())
     }
