@@ -562,16 +562,29 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
     pub fn resample_from_expr<'a>(
         &mut self,
         possible_expressions: &'a PossibleExpressions<'src, T>,
+        helpers: Option<&HashMap<LambdaType, Vec<RootedLambdaPool<'src, T>>>>,
         rng: &mut impl Rng,
     ) -> Result<(), LambdaError> {
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
-        let (pool, x) = self
-            .probabilistic_enumerate_from_expr(position, possible_expressions, |_| true, rng)?
-            .next()
-            .unwrap();
+        let t = self.pool.get_type(position)?;
+
+        let pool = if let Some(helpers) = helpers
+            && rng.random_bool(0.2)
+            && let Some(v) = helpers.get(&t)
+            && !v.is_empty()
+        {
+            let pool = v.choose(rng).unwrap();
+            pool.clone()
+        } else {
+            let (pool, _) = self
+                .probabilistic_enumerate_from_expr(position, possible_expressions, |_| true, rng)?
+                .next()
+                .unwrap();
+            pool
+        };
 
         let offset = self.len() as u32;
-        let new_root = x.root.0 + offset;
+        let new_root = pool.root.0 + offset;
         self.pool.0.extend(pool.pool.0.into_iter().map(|mut x| {
             let children: Vec<_> = x
                 .get_children()
@@ -936,6 +949,10 @@ mod test {
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
         let mut rng = ChaCha8Rng::seed_from_u64(0);
 
+        let map = [(LambdaType::A, vec![RootedLambdaPool::parse("a_john")?])]
+            .into_iter()
+            .collect();
+
         for _ in 0..1000 {
             let t = LambdaType::random_no_e(&mut rng);
             println!("sampling: {t}");
@@ -945,7 +962,9 @@ mod test {
             let pool2 = RootedLambdaPool::parse(s.as_str())?;
             assert_eq!(s, pool2.to_string());
             println!("{pool}");
-            pool.resample_from_expr(&possibles, &mut rng)?;
+            pool.resample_from_expr(&possibles, None, &mut rng)?;
+            assert_eq!(pool.get_type()?, t);
+            pool.resample_from_expr(&possibles, Some(&map), &mut rng)?;
             assert_eq!(pool.get_type()?, t);
         }
         let t = LambdaType::from_string("<a,<a,t>>")?;
