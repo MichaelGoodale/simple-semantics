@@ -742,17 +742,10 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     ///Replace a random expression with something else of the same type.
     pub fn swap_expr(
         &mut self,
-        available_actors: &[Actor<'src>],
-        available_actor_properties: &[PropertyLabel<'src>],
-        available_event_properties: &[PropertyLabel<'src>],
+        possible_expressions: &PossibleExpressions<'src, Expr<'src>>,
         rng: &mut impl Rng,
     ) -> Result<(), TypeError> {
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
-        let possible_expressions = PossibleExpressions::new(
-            available_actors,
-            available_actor_properties,
-            available_event_properties,
-        );
 
         let (context, _) = Context::from_pos(self, position);
 
@@ -785,12 +778,48 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 
         Ok(())
     }
+
+    ///Replace a random expression with something else of the same type from within the same
+    ///expression.
+    pub fn swap_subtree(&mut self, rng: &mut impl Rng) -> Result<(), TypeError> {
+        let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
+        let (context, _) = Context::from_pos(self, position);
+        let alt = context.find_compatible(self, position)?;
+        if let Some(new_pos) = alt.choose(rng).copied() {
+            print!("{self} becomes ");
+
+            let offset = self.pool.0.len();
+            let mut lookup = HashMap::default();
+            let mut new_pool: Vec<LambdaExpr<'src, Expr<'src>>> = self
+                .pool
+                .bfs_from(new_pos)
+                .map(|(x, _)| {
+                    let n = lookup.len();
+                    lookup
+                        .entry(x)
+                        .or_insert(LambdaExprRef((n + offset) as u32));
+                    self.get(x).clone()
+                })
+                .collect();
+
+            new_pool.iter_mut().for_each(|x| {
+                let child: Vec<_> = x.get_children().map(|x| *lookup.get(&x).unwrap()).collect();
+                x.change_children(child.into_iter());
+            });
+
+            self.pool.0.extend(new_pool);
+            self.pool.0.swap(position.0 as usize, offset);
+            self.cleanup();
+            println!("{self}");
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test {
 
-    use std::{collections::HashSet, hash::Hash};
+    use std::collections::HashSet;
 
     use super::*;
     use crate::lambda::{LambdaPool, LambdaSummaryStats};
@@ -869,10 +898,27 @@ mod test {
     }
 
     #[test]
+    fn random_swap_tree() -> anyhow::Result<()> {
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        let x = RootedLambdaPool::parse("lambda a x pa_cool(a_John) | pa_cool(x)")?;
+        let mut h = HashSet::new();
+        for _ in 0..100 {
+            let mut z = x.clone();
+            z.swap_subtree(&mut rng)?;
+            h.insert(z.to_string());
+        }
+        for x in h.iter() {
+            println!("{x}");
+        }
+        assert!(h.contains("lambda a x pa_cool(x)"));
+        assert!(h.contains("lambda a x pa_cool(a_John)"));
+        Ok(())
+    }
+
+    #[test]
     fn randomn_swap() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let actors = ["0", "1"];
-        let available_actor_properties = ["0", "1", "2"];
         let available_event_properties = ["2", "3", "4"];
         let possible_expressions = PossibleExpressions::new(
             &actors,
@@ -885,12 +931,7 @@ mod test {
             let mut pool = RootedLambdaPool::random_expr(&t, &possible_expressions, &mut rng);
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
-            pool.swap_expr(
-                &actors,
-                &available_actor_properties,
-                &available_event_properties,
-                &mut rng,
-            )?;
+            pool.swap_expr(&possible_expressions, &mut rng)?;
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
         }
@@ -899,12 +940,8 @@ mod test {
         for _ in 0..1000 {
             let mut pool = p.clone();
             assert_eq!(t, pool.get_type()?);
-            pool.swap_expr(
-                &actors,
-                &available_actor_properties,
-                &available_event_properties,
-                &mut rng,
-            )?;
+
+            pool.swap_expr(&possible_expressions, &mut rng)?;
             dbg!(&pool);
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
@@ -959,12 +996,15 @@ mod test {
             let mut pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
             assert_eq!(t, pool.get_type()?);
             let s = pool.to_string();
-            let pool2 = RootedLambdaPool::parse(s.as_str())?;
+            let mut pool2 = RootedLambdaPool::parse(s.as_str())?;
             assert_eq!(s, pool2.to_string());
             println!("{pool}");
-            pool.resample_from_expr(&possibles, None, &mut rng)?;
-            assert_eq!(pool.get_type()?, t);
-            pool.resample_from_expr(&possibles, Some(&map), &mut rng)?;
+            pool2.resample_from_expr(&possibles, None, &mut rng)?;
+            assert_eq!(pool2.get_type()?, t);
+            pool2.resample_from_expr(&possibles, Some(&map), &mut rng)?;
+            assert_eq!(pool2.get_type()?, t);
+
+            pool.swap_subtree(&mut rng)?;
             assert_eq!(pool.get_type()?, t);
         }
         let t = LambdaType::from_string("<a,<a,t>>")?;

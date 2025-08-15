@@ -56,6 +56,39 @@ impl Context {
     }
 }
 
+impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
+    //If something at position `pos` can be moved from `old_context` to `new_context`
+    fn compatible_with(
+        &self,
+        pos: LambdaExprRef,
+        new_context: &Context,
+        old_context: &Context,
+    ) -> bool {
+        for (x, d) in self.bfs_from(pos) {
+            if let LambdaExpr::BoundVariable(b, _) = self.get(x) {
+                if b + 1 > d {
+                    //this involves the outside context;
+                    let old_lambda_pos = old_context.lambdas.len() + d - b - 1;
+
+                    if b + 1 > d + new_context.lambdas.len() {
+                        //Impossible to access
+                        //TODO: Maybe some remapping system if old_context is contained by
+                        //new_context
+                        return false;
+                    }
+                    let new_lambda_pos = new_context.lambdas.len() + d - b - 1;
+                    if new_context.lambdas.get(new_lambda_pos)
+                        != old_context.lambdas.get(old_lambda_pos)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
 impl Context {
     pub(super) fn from_pos<'src, T: LambdaLanguageOfThought>(
         pool: &RootedLambdaPool<'src, T>,
@@ -96,6 +129,42 @@ impl Context {
             }
         }
         (context, return_is_subformula)
+    }
+
+    pub(super) fn find_compatible<'src, T: LambdaLanguageOfThought>(
+        &self,
+        pool: &RootedLambdaPool<'src, T>,
+        pos: LambdaExprRef,
+    ) -> Result<Vec<LambdaExprRef>, TypeError> {
+        let t = pool.pool.get_type(pos)?;
+
+        let mut this_context = Context::new(0, vec![]);
+        let mut stack = vec![(pool.root, 0)];
+        let mut options: Vec<_> = vec![];
+        while let Some((x, n_lambdas)) = stack.pop() {
+            this_context.depth += 1;
+            let e = pool.get(x);
+            if this_context.lambdas.len() != n_lambdas {
+                for _ in 0..(this_context.lambdas.len() - n_lambdas) {
+                    this_context.pop_lambda();
+                }
+            }
+            if pos != x
+                && t == pool.pool.get_type(x)?
+                && pool.pool.compatible_with(x, self, &this_context)
+            {
+                options.push(x);
+            }
+
+            if let Some(v) = e.var_type() {
+                this_context.add_lambda(v);
+            } else if let LambdaExpr::BoundVariable(n, _) = e {
+                this_context.use_bvar(*n);
+            }
+
+            stack.extend(e.get_children().map(|x| (x, this_context.lambdas.len())));
+        }
+        Ok(options)
     }
 
     fn update_possible_types(&mut self) {

@@ -255,7 +255,7 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     }
 
     ///Get the expression of a lambda term.
-    pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<T> {
+    pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<'src, T> {
         self.pool.get(x)
     }
 
@@ -567,16 +567,20 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
         }
     }
 }
-
-impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T>
-where
-    T: Clone,
-{
-    pub(crate) fn bfs_from_mut<'a>(
-        &'a mut self,
-        x: LambdaExprRef,
-    ) -> MutableLambdaPoolBFSIterator<'a, 'src, T> {
-        MutableLambdaPoolBFSIterator::new(self, x)
+impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
+    pub fn get_type(&self, x: LambdaExprRef) -> Result<LambdaType, TypeError> {
+        match self.get(x) {
+            LambdaExpr::BoundVariable(_, x) | LambdaExpr::FreeVariable(_, x) => Ok(x.clone()),
+            LambdaExpr::Lambda(s, x) => {
+                let result = self.get_type(*s);
+                Ok(LambdaType::compose(x.clone(), result?))
+            }
+            LambdaExpr::Application { subformula, .. } => {
+                let subformula_type = self.get_type(*subformula)?;
+                Ok(subformula_type.rhs()?.clone())
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type().clone()),
+        }
     }
 
     fn check_type_clash(&self, x: LambdaExprRef) -> Result<LambdaType, ReductionError> {
@@ -593,21 +597,29 @@ where
         }
     }
 
-    pub fn get_type(&self, x: LambdaExprRef) -> Result<LambdaType, TypeError> {
-        match self.get(x) {
-            LambdaExpr::BoundVariable(_, x) | LambdaExpr::FreeVariable(_, x) => Ok(x.clone()),
-            LambdaExpr::Lambda(s, x) => {
-                let result = self.get_type(*s);
-                Ok(LambdaType::compose(x.clone(), result?))
-            }
-            LambdaExpr::Application { subformula, .. } => {
-                let subformula_type = self.get_type(*subformula)?;
-                Ok(subformula_type.rhs()?.clone())
-            }
-            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type().clone()),
-        }
+    pub(crate) fn bfs_from_mut<'a>(
+        &'a mut self,
+        x: LambdaExprRef,
+    ) -> MutableLambdaPoolBFSIterator<'a, 'src, T> {
+        MutableLambdaPoolBFSIterator::new(self, x)
     }
 
+    fn get_next_app(&self, root: LambdaExprRef) -> Option<LambdaExprRef> {
+        self.bfs_from(root)
+            .map(|(x, _)| x)
+            .find(|x| match self.get(*x) {
+                LambdaExpr::Application { subformula, .. } => {
+                    matches!(self.get(*subformula), LambdaExpr::Lambda(..))
+                }
+                _ => false,
+            })
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T>
+where
+    T: Clone,
+{
     fn bind_free_variable(
         &mut self,
         root: LambdaExprRef,
@@ -771,17 +783,6 @@ where
             x.remap_refs(&remap);
         }
         LambdaExprRef(remap[root.0 as usize] as u32)
-    }
-
-    fn get_next_app(&self, root: LambdaExprRef) -> Option<LambdaExprRef> {
-        self.bfs_from(root)
-            .map(|(x, _)| x)
-            .find(|x| match self.get(*x) {
-                LambdaExpr::Application { subformula, .. } => {
-                    matches!(self.get(*subformula), LambdaExpr::Lambda(..))
-                }
-                _ => false,
-            })
     }
 
     pub fn reduce(&mut self, root: LambdaExprRef) -> Result<(), ReductionError> {
