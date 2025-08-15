@@ -337,6 +337,13 @@ pub struct ExprDetails {
     size: usize,
 }
 
+impl ExprDetails {
+    ///Get the size of the associated [`RootedLambdaPool`].
+    pub fn size(&self) -> usize {
+        self.size
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 ///A re-usable sampler for sampling expressions of arbitrary types while caching frequent types
 pub struct TypeAgnosticSampler<'src, T: LambdaLanguageOfThought> {

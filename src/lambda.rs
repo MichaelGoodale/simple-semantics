@@ -261,7 +261,7 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
 
     ///Get the length of a lambda tree
     #[allow(clippy::len_without_is_empty)]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.pool.0.len()
     }
 }
