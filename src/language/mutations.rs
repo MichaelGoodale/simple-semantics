@@ -786,8 +786,6 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         let (context, _) = Context::from_pos(self, position);
         let alt = context.find_compatible(self, position)?;
         if let Some(new_pos) = alt.choose(rng).copied() {
-            print!("{self} becomes ");
-
             let offset = self.pool.0.len();
             let mut lookup = HashMap::default();
             let mut new_pool: Vec<LambdaExpr<'src, Expr<'src>>> = self
@@ -810,7 +808,6 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             self.pool.0.extend(new_pool);
             self.pool.0.swap(position.0 as usize, offset);
             self.cleanup();
-            println!("{self}");
         }
         Ok(())
     }
