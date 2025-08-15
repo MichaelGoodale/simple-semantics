@@ -234,6 +234,7 @@ pub struct ExecutionConfig {
     max_steps: Option<usize>,
     #[cfg(not(target_arch = "wasm32"))]
     timeout: Option<Duration>,
+    empty_quantification: bool,
 }
 
 impl ExecutionConfig {
@@ -246,7 +247,20 @@ impl ExecutionConfig {
             max_steps,
             #[cfg(not(target_arch = "wasm32"))]
             timeout,
+            empty_quantification: false,
         }
+    }
+
+    ///Forbid quantification over an empty set
+    pub const fn forbid_empty_quantification(mut self) -> Self {
+        self.empty_quantification = false;
+        self
+    }
+
+    ///Allow quantification over an empty set
+    pub const fn allow_empty_quantification(mut self) -> Self {
+        self.empty_quantification = true;
+        self
     }
 
     ///Set max_steps on a config
@@ -632,10 +646,9 @@ impl<'a, 'b> Execution<'a, 'b> {
             }
         };
 
-        /*
-        if domain.is_empty() {
+        if !self.config.empty_quantification && domain.is_empty() {
             return Err(LanguageTypeError::PresuppositionError);
-        }*/
+        }
 
         let mut result = match quantifier {
             Quantifier::Universal => true,
@@ -1345,9 +1358,11 @@ mod tests {
         let labels = ScenarioDataset::parse(
             "\"Mary loves Phil\" <John (man), Mary (woman), Phil (man), Sue (woman); {A: Mary, P: Phil (loves)}> lambda a x some_e(e, pe_loves, AgentOf(x, e)); lambda a x some_e(e, pe_loves, PatientOf(x, e)); lambda <a,<a,t>> P P(a_Phil, a_Mary) & ~P(a_John, a_Mary) & ~P(a_Mary, a_Mary) & ~P(a_Sue, a_Mary); lambda <a,t> P P(a_Mary) & ~P(a_John) & ~P(a_Phil) & ~P(a_Sue)",
         )?;
+
+        let config = ExecutionConfig::default().allow_empty_quantification();
         let scenario = labels.iter_scenarios().next().unwrap();
 
-        pool.run(scenario, None)?;
+        pool.run(scenario, Some(config))?;
 
         Ok(())
     }
