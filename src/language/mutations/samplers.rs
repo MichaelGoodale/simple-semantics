@@ -180,6 +180,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
         &'a self,
         lambda_type: &LambdaType,
         arguments: &[LambdaType],
+        var_type: Option<&LambdaType>,
         context: &Context,
     ) -> Vec<Cow<'a, LambdaExpr<'src, T>>> {
         let mut possibilities: Vec<Cow<'a, LambdaExpr<'src, T>>> = self
@@ -211,6 +212,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
             )));
         } else if arguments.is_empty() {
             possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
+        }
+
+        if var_type.is_some() {
+            possibilities.retain(|x| x.var_type() == var_type);
         }
 
         possibilities

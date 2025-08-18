@@ -757,16 +757,19 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         let (context, _) = Context::from_pos(self, position);
 
         let output = self.pool.get_type(position)?;
+        let expr = self.pool.get(position);
 
-        let arguments: Vec<_> = self
-            .pool
-            .get(position)
+        let arguments: Vec<_> = expr
             .get_children()
             .map(|x| self.pool.get_type(x).unwrap())
             .collect();
 
-        let replacements =
-            possible_expressions.possiblities_fixed_children(&output, &arguments, &context);
+        let replacements = possible_expressions.possiblities_fixed_children(
+            &output,
+            &arguments,
+            expr.var_type(),
+            &context,
+        );
 
         let choice = replacements.choose(rng).unwrap_or_else(|| {
             panic!(
@@ -939,7 +942,8 @@ mod test {
             println!("{t}: {pool}");
             assert_eq!(t, pool.get_type()?);
         }
-        let p = RootedLambdaPool::parse("lambda <a,t> P some(x, P, some_e(y, pe_2(y), pe_4(y)))")?;
+        let p =
+            RootedLambdaPool::parse("lambda <a,t> P some(x, P(x), some_e(y, pe_2(y), pe_4(y)))")?;
         let t = p.get_type()?;
         for _ in 0..1000 {
             let mut pool = p.clone();

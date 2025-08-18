@@ -145,66 +145,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         }
     }
 
-    fn to_pool(mut pool: RootedLambdaPool<Self>) -> Result<Self::Pool, Self::ConversionError> {
-        //Quantifiers can have lambda terms embedded in them, this extracts them!
-        //e.g. some(x, lambda a y (pa_0(y) | pa_1(y)), pa_3(x)) -> some(x, pa_0(x) | pa_1(x), pa_3(x))
-        let quantifier_restrictions = pool
-            .pool
-            .0
-            .iter()
-            .enumerate()
-            .filter_map(|(i, x)| {
-                if let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
-                    var_type,
-                    restrictor,
-                    ..
-                }) = x
-                {
-                    let restr_expr = pool.get(LambdaExprRef(restrictor.0));
-                    let should_bind = match var_type {
-                        ActorOrEvent::Actor => {
-                            matches!(restr_expr, LambdaExpr::Lambda(_, t) if t == LambdaType::a())
-                        }
-                        ActorOrEvent::Event => {
-                            matches!(restr_expr, LambdaExpr::Lambda(_, t) if t == LambdaType::e())
-                        }
-                    };
-
-                    if should_bind {
-                        Some((
-                            LambdaExprRef(i as u32),
-                            LambdaExprRef(restrictor.0),
-                            *var_type,
-                        ))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        if !quantifier_restrictions.is_empty() {
-            //Go over and add app of bound variable to each lambda expr for each quantifier
-            for (quantifer, restrictor, var) in quantifier_restrictions {
-                let var = pool.pool.add(LambdaExpr::BoundVariable(0, var.into()));
-                let new_restrictor = pool.pool.add(LambdaExpr::Application {
-                    subformula: restrictor,
-                    argument: var,
-                });
-                let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { restrictor, .. }) =
-                    pool.pool.get_mut(quantifer)
-                else {
-                    panic!("quantifier *must* be filtered to only quantifiers right before this.")
-                };
-
-                *restrictor = ExprRef(new_restrictor.0);
-            }
-            pool.reduce()?;
-            pool.cleanup();
-        }
-
+    fn to_pool(pool: RootedLambdaPool<Self>) -> Result<Self::Pool, Self::ConversionError> {
         let processed_pool = pool
             .pool
             .0
@@ -233,13 +174,13 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
                 var_type: ActorOrEvent::Actor,
                 ..
             } => {
-                ArgumentIterator::A([LambdaType::at().clone(), LambdaType::t().clone()].into_iter())
+                ArgumentIterator::A([LambdaType::t().clone(), LambdaType::t().clone()].into_iter())
             }
             Expr::Quantifier {
                 var_type: ActorOrEvent::Event,
                 ..
             } => {
-                ArgumentIterator::A([LambdaType::et().clone(), LambdaType::t().clone()].into_iter())
+                ArgumentIterator::A([LambdaType::t().clone(), LambdaType::t().clone()].into_iter())
             }
             Expr::Binary(b, _, _) => {
                 ArgumentIterator::B(b.get_argument_type().into_iter().cloned())
@@ -621,8 +562,7 @@ mod test {
         dbg!(&pool);
         assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
 
-        let pool =
-            RootedLambdaPool::parse("every_e(x0, lambda e x (pe_0(x) & pe_1(x)), pe_2(x0))")?;
+        let pool = RootedLambdaPool::parse("every_e(x0, pe_0(x0) & pe_1(x0), pe_2(x0))")?;
 
         let scenario = Scenario::new(
             vec![],
@@ -639,9 +579,8 @@ mod test {
         dbg!(&pool);
         assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
 
-        let pool = RootedLambdaPool::parse(
-            "every_e(x, pe_laughs, every(y, lambda a z pe_sleeps(x), pa_woman(y)))",
-        )?;
+        let pool =
+            RootedLambdaPool::parse("every_e(x, pe_laughs, every(y, pe_sleeps(x), pa_woman(y)))")?;
         println!("{}", pool.into_pool()?);
         Ok(())
     }
