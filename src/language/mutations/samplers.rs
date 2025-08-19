@@ -214,9 +214,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
             possibilities.extend(context.variables(lambda_type).map(Cow::Owned));
         }
 
-        if var_type.is_some() {
-            possibilities.retain(|x| x.var_type() == var_type);
-        }
+        possibilities.retain(|x| x.var_type() == var_type);
 
         possibilities
     }

@@ -3,16 +3,53 @@ use itertools::Either;
 
 use super::*;
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(super) enum ConstantFunctionState {
+    Constant,
+    PotentiallyConstant,
+    NonConstant,
+}
+
+impl ConstantFunctionState {
+    fn update(&mut self, new: Self) {
+        match self {
+            ConstantFunctionState::Constant => (),
+            ConstantFunctionState::PotentiallyConstant => match new {
+                ConstantFunctionState::Constant => *self = ConstantFunctionState::Constant,
+                ConstantFunctionState::PotentiallyConstant => (),
+                ConstantFunctionState::NonConstant => (),
+            },
+            ConstantFunctionState::NonConstant => match new {
+                ConstantFunctionState::Constant => *self = ConstantFunctionState::Constant,
+                ConstantFunctionState::PotentiallyConstant => {
+                    *self = ConstantFunctionState::PotentiallyConstant
+                }
+                ConstantFunctionState::NonConstant => *self = ConstantFunctionState::NonConstant,
+            },
+        }
+    }
+
+    fn done(&mut self) {
+        match self {
+            ConstantFunctionState::Constant => (),
+            ConstantFunctionState::PotentiallyConstant => *self = ConstantFunctionState::Constant,
+            ConstantFunctionState::NonConstant => (),
+        }
+    }
+}
+
+///A struct which keeps track of the context leading up to some expression, e.g. its depth, what
+///variables are accessible, and whether the context has a constant function.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Context {
-    lambdas: Vec<(LambdaType, bool)>,
+pub struct Context {
+    lambdas: Vec<(LambdaType, ConstantFunctionState)>,
     possible_types: HashMap<LambdaType, HashSet<LambdaType>>,
-    pub pool_index: usize,
-    pub position: usize,
-    pub depth: usize,
+    pub(super) pool_index: usize,
+    pub(super) position: usize,
+    pub(super) depth: usize,
     done: bool,
-    pub open_nodes: usize,
-    constant_function: bool,
+    pub(super) open_nodes: usize,
+    constant_function: ConstantFunctionState,
 }
 
 impl PartialOrd for RandomPQ {
@@ -90,14 +127,32 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
 }
 
 impl Context {
+    ///The number of variables in the current [`Context`]
+    pub fn n_vars(&self) -> usize {
+        self.lambdas.len()
+    }
+
+    //We make it so that if there are multiple children of something that introduces a
+    //function, then all of its children must be non-constants, by calling this whenever we access
+    //a child of a variable-introducing expr
+    pub(super) fn reset_lambda(&mut self, i: usize) {
+        let x: &mut (LambdaType, ConstantFunctionState) = &mut self.lambdas[i];
+        x.1.update(ConstantFunctionState::PotentiallyConstant);
+    }
+
     pub(super) fn from_pos<'src, T: LambdaLanguageOfThought>(
         pool: &RootedLambdaPool<'src, T>,
         pos: LambdaExprRef,
     ) -> (Context, bool) {
         let mut context = Context::new(0, vec![]);
-        let mut stack = vec![(pool.root, 0, false)];
+        let mut stack = vec![(pool.root, 0, false, None)];
         let mut return_is_subformula = false;
-        while let Some((x, n_lambdas, is_subformula)) = stack.pop() {
+
+        while let Some((x, n_lambdas, is_subformula, reset)) = stack.pop() {
+            if let Some(reset) = reset {
+                context.reset_lambda(reset);
+            }
+
             context.depth += 1;
             let e = pool.get(x);
             if context.lambdas.len() != n_lambdas {
@@ -122,10 +177,14 @@ impl Context {
                 argument,
             } = e
             {
-                stack.push((*subformula, context.lambdas.len(), true));
-                stack.push((*argument, context.lambdas.len(), false));
+                stack.push((*subformula, context.lambdas.len(), true, None));
+                stack.push((*argument, context.lambdas.len(), false, None));
             } else {
-                stack.extend(e.get_children().map(|x| (x, context.lambdas.len(), false)));
+                let reset = e.var_type().map(|_| context.lambdas.len() - 1);
+                stack.extend(
+                    e.get_children()
+                        .map(|x| (x, context.lambdas.len(), false, reset)),
+                );
             }
         }
         (context, return_is_subformula)
@@ -205,43 +264,58 @@ impl Context {
         }
     }
 
-    pub fn new(position: usize, lambdas: Vec<(LambdaType, bool)>) -> Self {
+    pub(super) fn new(position: usize, lambdas: Vec<(LambdaType, ConstantFunctionState)>) -> Self {
         let mut c = Context {
-            lambdas,
             pool_index: 0,
             position,
             done: false,
             depth: 0,
             possible_types: HashMap::default(),
             open_nodes: 1,
-            constant_function: false,
+            constant_function: if lambdas.is_empty() {
+                ConstantFunctionState::NonConstant
+            } else {
+                ConstantFunctionState::PotentiallyConstant
+            },
+            lambdas,
         };
         c.update_possible_types();
         c
     }
 
-    pub fn add_lambda(&mut self, t: &LambdaType) {
-        self.lambdas.push((t.clone(), false));
+    pub(super) fn add_lambda(&mut self, t: &LambdaType) {
+        self.constant_function
+            .update(ConstantFunctionState::PotentiallyConstant);
+        self.lambdas
+            .push((t.clone(), ConstantFunctionState::PotentiallyConstant));
         self.update_possible_types();
     }
 
-    pub fn pop_lambda(&mut self) {
-        let (_, used) = self.lambdas.pop().unwrap();
-        self.constant_function |= !used;
+    pub(super) fn pop_lambda(&mut self) {
+        let (_, mut function_state) = self.lambdas.pop().unwrap();
+        function_state.done();
+        self.constant_function.update(function_state);
+        if self.lambdas.is_empty() {
+            function_state.done();
+        }
         self.update_possible_types();
     }
 
-    pub fn use_bvar(&mut self, b: usize) {
+    pub(super) fn use_bvar(&mut self, b: usize) {
         let n = self.lambdas.len() - b - 1;
-        self.lambdas.get_mut(n).unwrap().1 = true;
+        self.lambdas.get_mut(n).unwrap().1 = ConstantFunctionState::NonConstant;
     }
 
     pub fn is_constant(&self) -> bool {
-        self.constant_function
+        self.constant_function == ConstantFunctionState::Constant
     }
 
     pub fn can_sample_event(&self) -> bool {
         self.lambdas.iter().any(|(lam, _)| lam == LambdaType::e())
+    }
+
+    pub fn current_variable_types(&self) -> impl Iterator<Item = &LambdaType> {
+        self.lambdas.iter().map(|(x, _)| x)
     }
 
     pub fn applications<'a, 'b: 'a>(
@@ -290,7 +364,7 @@ mod test {
             position: 0,
             possible_types: HashMap::default(),
             open_nodes: 0,
-            constant_function: false,
+            constant_function: ConstantFunctionState::NonConstant,
         };
         let b = Context {
             depth: 2,
@@ -300,7 +374,7 @@ mod test {
             pool_index: 0,
             position: 0,
             open_nodes: 0,
-            constant_function: false,
+            constant_function: ConstantFunctionState::NonConstant,
         };
         let c = Context {
             depth: 5,
@@ -310,7 +384,7 @@ mod test {
             pool_index: 0,
             position: 0,
             open_nodes: 0,
-            constant_function: false,
+            constant_function: ConstantFunctionState::NonConstant,
         };
         let d = Context {
             depth: 5,
@@ -320,7 +394,7 @@ mod test {
             pool_index: 0,
             position: 0,
             open_nodes: 54,
-            constant_function: false,
+            constant_function: ConstantFunctionState::NonConstant,
         };
 
         assert!(a < b);
@@ -337,17 +411,32 @@ mod test {
             depth: 0,
             done: false,
             lambdas: vec![
-                (LambdaType::from_string("<a,t>")?, false),
-                (LambdaType::from_string("<<a,t>, <a,t>>")?, false),
-                (LambdaType::from_string("<<a,t>, <<a,t>, <e,t>>>")?, false),
-                (LambdaType::from_string("<<a,t>, e>")?, false),
-                (LambdaType::from_string("<e, <a,<a,t>>>")?, false),
+                (
+                    LambdaType::from_string("<a,t>")?,
+                    ConstantFunctionState::PotentiallyConstant,
+                ),
+                (
+                    LambdaType::from_string("<<a,t>, <a,t>>")?,
+                    ConstantFunctionState::PotentiallyConstant,
+                ),
+                (
+                    LambdaType::from_string("<<a,t>, <<a,t>, <e,t>>>")?,
+                    ConstantFunctionState::PotentiallyConstant,
+                ),
+                (
+                    LambdaType::from_string("<<a,t>, e>")?,
+                    ConstantFunctionState::PotentiallyConstant,
+                ),
+                (
+                    LambdaType::from_string("<e, <a,<a,t>>>")?,
+                    ConstantFunctionState::PotentiallyConstant,
+                ),
             ],
             possible_types: HashMap::default(),
             pool_index: 0,
             position: 0,
             open_nodes: 54,
-            constant_function: false,
+            constant_function: ConstantFunctionState::PotentiallyConstant,
         };
 
         c.update_possible_types();
