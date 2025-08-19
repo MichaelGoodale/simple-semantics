@@ -21,7 +21,7 @@ use crate::lambda::{
 
 mod context;
 mod samplers;
-use context::Context;
+pub use context::Context;
 use samplers::PossibleExpr;
 pub use samplers::PossibleExpressions;
 

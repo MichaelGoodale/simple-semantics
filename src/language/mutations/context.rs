@@ -322,18 +322,22 @@ impl Context {
         self.lambdas.get_mut(n).unwrap().1.use_var();
     }
 
+    ///Does the context have any constant functions preceding it?
     pub fn is_constant(&self) -> bool {
         self.constant_function == ConstantFunctionState::Constant
     }
 
+    ///Can we create objects of type `e` at this point?
     pub fn can_sample_event(&self) -> bool {
         self.lambdas.iter().any(|(lam, _)| lam == LambdaType::e())
     }
 
+    ///What are the *current* possible variable types
     pub fn current_variable_types(&self) -> impl Iterator<Item = &LambdaType> {
         self.lambdas.iter().map(|(x, _)| x)
     }
 
+    ///What possible applications can be created at this point?
     pub fn applications<'a, 'b: 'a>(
         &'a self,
         lambda_type: &'b LambdaType,
@@ -349,6 +353,7 @@ impl Context {
         }
     }
 
+    ///What are the current variables?
     pub fn variables<'src, T: LambdaLanguageOfThought>(
         &self,
         lambda_type: &LambdaType,
