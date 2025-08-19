@@ -137,6 +137,12 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
 }
 
 impl Context {
+    #[allow(clippy::len_without_is_empty)]
+    ///The length of the context thus far.
+    pub fn len(&self) -> usize {
+        self.depth
+    }
+
     ///The number of variables in the current [`Context`]
     pub fn n_vars(&self) -> usize {
         self.lambdas.len()
