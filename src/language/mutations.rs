@@ -513,6 +513,8 @@ where
     fn push(&mut self, c: Context, included: bool) {
         if (self.eager_filter)(&c) {
             self.pq.push(c, included);
+        } else {
+            self.pools[c.pool_index] = UnfinishedLambdaPool::default();
         }
     }
 
@@ -618,6 +620,9 @@ where
                 continue;
             }
             let n_pools = self.pools.len();
+            if n_pools % 10_000 == 0 {
+                self.pools.shrink_to_fit();
+            }
 
             for _ in 0..n.saturating_sub(1) {
                 self.pools.push(self.pools[c.pool_index].clone());
