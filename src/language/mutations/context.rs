@@ -94,7 +94,7 @@ impl Ord for Context {
             .cmp(&self.done)
             .then(self.open_depth_score().cmp(&other.open_depth_score()))
             .then(self.constant_function.cmp(&other.constant_function))
-            .then(self.pool_index.cmp(&other.pool_index))
+        //.then(self.pool_index.cmp(&other.pool_index))
     }
 }
 impl Context {
