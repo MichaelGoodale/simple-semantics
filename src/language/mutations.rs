@@ -515,6 +515,23 @@ where
             self.pq.push(c, included);
         }
     }
+
+    ///Change the eager_filter function for this enumerator
+    pub fn eager_filter<F2>(self, eager_filter: F2) -> LambdaEnumerator<'a, 'src, T, F2, E> {
+        let LambdaEnumerator {
+            pools,
+            possible_expressions,
+            eager_filter: _,
+            pq,
+        } = self;
+
+        LambdaEnumerator {
+            pools,
+            possible_expressions,
+            eager_filter,
+            pq,
+        }
+    }
 }
 
 impl<'a, 'src, T, F, E> Iterator for LambdaEnumerator<'a, 'src, T, F, E>
@@ -825,7 +842,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
             1,
             t,
             possible_expressions,
-            |c: &Context| !c.is_constant(),
+            |_: &Context| true,
             |e| !e.constant_function,
             rng,
         )
@@ -1189,22 +1206,6 @@ mod test {
         }
         println!("{constants}");
 
-        Ok(())
-    }
-
-    #[test]
-    fn const_expr_only() -> anyhow::Result<()> {
-        let actors = ["john", "mary", "phil", "sue"];
-        let actor_properties = ["a"];
-        let event_properties = ["e"];
-        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
-        let mut rng = ChaCha8Rng::seed_from_u64(0);
-
-        let t = LambdaType::from_string("<a,t>")?;
-        for _ in 0..1000 {
-            let e = RootedLambdaPool::random_expr_no_constant(&t, &possibles, &mut rng).unwrap();
-            println!("{e}");
-        }
         Ok(())
     }
 
