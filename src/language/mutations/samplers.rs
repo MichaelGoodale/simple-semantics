@@ -36,7 +36,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             //Expr::Constant(Constant::EveryEvent),
             Expr::Unary(MonOp::Not, bad_ref),
             Expr::Binary(BinOp::And, bad_ref, bad_ref),
-            Expr::Binary(BinOp::Or, bad_ref, bad_ref),
+            //Expr::Binary(BinOp::Or, bad_ref, bad_ref),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Actor,
