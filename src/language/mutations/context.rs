@@ -29,6 +29,16 @@ impl ConstantFunctionState {
         }
     }
 
+    fn use_var(&mut self) {
+        match self {
+            ConstantFunctionState::Constant => (),
+            ConstantFunctionState::PotentiallyConstant => {
+                *self = ConstantFunctionState::NonConstant
+            }
+            ConstantFunctionState::NonConstant => (),
+        }
+    }
+
     fn done(&mut self) {
         match self {
             ConstantFunctionState::Constant => (),
@@ -135,8 +145,9 @@ impl Context {
     //We make it so that if there are multiple children of something that introduces a
     //function, then all of its children must be non-constants, by calling this whenever we access
     //a child of a variable-introducing expr
-    pub(super) fn reset_lambda(&mut self, i: usize) {
-        let x: &mut (LambdaType, ConstantFunctionState) = &mut self.lambdas[i];
+    pub(super) fn reset_lambda(&mut self) {
+        let x: &mut (LambdaType, ConstantFunctionState) = self.lambdas.last_mut().unwrap();
+        x.1.done();
         x.1.update(ConstantFunctionState::PotentiallyConstant);
     }
 
@@ -145,20 +156,20 @@ impl Context {
         pos: LambdaExprRef,
     ) -> (Context, bool) {
         let mut context = Context::new(0, vec![]);
-        let mut stack = vec![(pool.root, 0, false, None)];
+        let mut stack = vec![(pool.root, 0, false, false)];
         let mut return_is_subformula = false;
 
         while let Some((x, n_lambdas, is_subformula, reset)) = stack.pop() {
-            if let Some(reset) = reset {
-                context.reset_lambda(reset);
-            }
-
             context.depth += 1;
             let e = pool.get(x);
             if context.lambdas.len() != n_lambdas {
                 for _ in 0..(context.lambdas.len() - n_lambdas) {
                     context.pop_lambda();
                 }
+            }
+
+            if reset {
+                context.reset_lambda();
             }
 
             if pos == x {
@@ -177,14 +188,19 @@ impl Context {
                 argument,
             } = e
             {
-                stack.push((*subformula, context.lambdas.len(), true, None));
-                stack.push((*argument, context.lambdas.len(), false, None));
+                stack.push((*subformula, context.lambdas.len(), true, false));
+                stack.push((*argument, context.lambdas.len(), false, false));
             } else {
-                let reset = e.var_type().map(|_| context.lambdas.len() - 1);
-                stack.extend(
-                    e.get_children()
-                        .map(|x| (x, context.lambdas.len(), false, reset)),
-                );
+                let reset = e.var_type().is_some();
+                stack.extend(e.get_children().enumerate().map(|(i, x)| {
+                    (
+                        x,
+                        context.lambdas.len(),
+                        false,
+                        if i == 0 { false } else { reset },
+                        //We never reset the first argument, because there will be no way to satify the variable before resetting it.
+                    )
+                }));
             }
         }
         (context, return_is_subformula)
@@ -296,14 +312,14 @@ impl Context {
         function_state.done();
         self.constant_function.update(function_state);
         if self.lambdas.is_empty() {
-            function_state.done();
+            self.constant_function.use_var();
         }
         self.update_possible_types();
     }
 
     pub(super) fn use_bvar(&mut self, b: usize) {
         let n = self.lambdas.len() - b - 1;
-        self.lambdas.get_mut(n).unwrap().1 = ConstantFunctionState::NonConstant;
+        self.lambdas.get_mut(n).unwrap().1.use_var();
     }
 
     pub fn is_constant(&self) -> bool {
