@@ -80,7 +80,7 @@ impl<'a> Scenario<'a> {
     }
 
     ///Get a slice of all [`Actor`]s in the [`Scenario`]
-    pub fn actors(&self) -> &[Actor] {
+    pub fn actors(&self) -> &[Actor<'_>] {
         &self.actors
     }
 
@@ -156,7 +156,7 @@ impl<'a> ScenarioDataset<'a> {
     }
 
     ///Iterate over all scenarios
-    pub fn iter_scenarios(&self) -> impl Iterator<Item = &Scenario> {
+    pub fn iter_scenarios(&self) -> impl Iterator<Item = &Scenario<'a>> {
         self.scenarios.iter()
     }
 

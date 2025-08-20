@@ -560,7 +560,7 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
 }
 
 impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
-    pub(crate) fn bfs_from(&self, x: LambdaExprRef) -> LambdaPoolBFSIterator<T> {
+    pub(crate) fn bfs_from(&self, x: LambdaExprRef) -> LambdaPoolBFSIterator<'_, 'src, T> {
         LambdaPoolBFSIterator {
             pool: self,
             queue: VecDeque::from([(x, 0)]),

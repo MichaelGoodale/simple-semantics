@@ -211,12 +211,15 @@ static VARIABLENAMES: [&str; 26] = [
 
 static TRUTHS: [&str; 2] = ["phi", "psi"];
 
-static PREDICATENAMES: [&str; 2] = ["P", "Q"];
+static PREDICATENAMES: [&str; 3] = ["P", "Q", "R"];
+
+static OTHERFUNCTIONS: [&str; 4] = ["M", "N", "G", "K"];
 
 pub fn to_var(x: usize, t: Option<&LambdaType>) -> String {
     let var_names = match t {
         Some(t) if t == LambdaType::t() => TRUTHS.as_slice(),
-        Some(t) if t.is_function() => PREDICATENAMES.as_slice(),
+        Some(t) if t.is_one_place_function() => PREDICATENAMES.as_slice(),
+        Some(t) if t.is_function() => OTHERFUNCTIONS.as_slice(),
         _ => VARIABLENAMES.as_slice(),
     };
 

@@ -245,6 +245,15 @@ impl LambdaType {
         Ok(self.split()?.0)
     }
 
+    ///Checks if the type takes a primitive type and returns a primitive type
+    pub fn is_one_place_function(&self) -> bool {
+        if let Ok((lhs, rhs)) = self.split() {
+            !lhs.is_function() && !rhs.is_function()
+        } else {
+            false
+        }
+    }
+
     ///Get the right-hand side of a function. Returns a [`TypeError`] if the type is not a
     ///function.
     pub fn rhs(&self) -> Result<&Self, TypeError> {
