@@ -234,6 +234,7 @@ pub fn to_var(x: usize, t: Option<&LambdaType>) -> String {
 pub(super) struct VarContext {
     vars: HashMap<usize, usize>,
     predicates: HashMap<usize, usize>,
+    other_functions: HashMap<usize, usize>,
     truths: HashMap<usize, usize>,
     depth: usize,
 }
@@ -242,14 +243,16 @@ impl VarContext {
     fn get_map(&self, t: Option<&LambdaType>) -> &HashMap<usize, usize> {
         match t {
             Some(t) if t == LambdaType::t() => &self.truths,
-            Some(t) if t.is_function() => &self.predicates,
+            Some(t) if t.is_one_place_function() => &self.predicates,
+            Some(t) if t.is_function() => &self.other_functions,
             _ => &self.vars,
         }
     }
     fn get_map_mut(&mut self, t: Option<&LambdaType>) -> &mut HashMap<usize, usize> {
         match t {
             Some(t) if t == LambdaType::t() => &mut self.truths,
-            Some(t) if t.is_function() => &mut self.predicates,
+            Some(t) if t.is_one_place_function() => &mut self.predicates,
+            Some(t) if t.is_function() => &mut self.other_functions,
             _ => &mut self.vars,
         }
     }

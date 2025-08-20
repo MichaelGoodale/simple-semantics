@@ -112,23 +112,23 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
         old_context: &Context,
     ) -> bool {
         for (x, d) in self.bfs_from(pos) {
-            if let LambdaExpr::BoundVariable(b, _) = self.get(x) {
-                if b + 1 > d {
-                    //this involves the outside context;
-                    let old_lambda_pos = old_context.lambdas.len() + d - b - 1;
+            if let LambdaExpr::BoundVariable(b, _) = self.get(x)
+                && b + 1 > d
+            {
+                //this involves the outside context;
+                let old_lambda_pos = old_context.lambdas.len() + d - b - 1;
 
-                    if b + 1 > d + new_context.lambdas.len() {
-                        //Impossible to access
-                        //TODO: Maybe some remapping system if old_context is contained by
-                        //new_context
-                        return false;
-                    }
-                    let new_lambda_pos = new_context.lambdas.len() + d - b - 1;
-                    if new_context.lambdas.get(new_lambda_pos)
-                        != old_context.lambdas.get(old_lambda_pos)
-                    {
-                        return false;
-                    }
+                if b + 1 > d + new_context.lambdas.len() {
+                    //Impossible to access
+                    //TODO: Maybe some remapping system if old_context is contained by
+                    //new_context
+                    return false;
+                }
+                let new_lambda_pos = new_context.lambdas.len() + d - b - 1;
+                if new_context.lambdas.get(new_lambda_pos)
+                    != old_context.lambdas.get(old_lambda_pos)
+                {
+                    return false;
                 }
             }
         }
