@@ -84,14 +84,14 @@ impl<'a> Scenario<'a> {
         &self.actors
     }
 
-    ///Get the question associated with a scenario (which may be [`None`] if there is no question).
+    ///Get the questions associated with a scenario (which may be empty if there are no questions).
     ///Questions are representated as [`RootedLambdaPool`] which return a truth value.
     pub fn questions(&self) -> &[RootedLambdaPool<'a, Expr<'a>>] {
         &self.question
     }
 
-    ///Get a mutable reference to the question of a scenario.
-    ///See [`Scenario::question`]
+    ///Get a mutable reference to the questions of a scenario.
+    ///See [`Scenario::questions`]
     pub fn question_mut(&mut self) -> &mut Vec<RootedLambdaPool<'a, Expr<'a>>> {
         &mut self.question
     }

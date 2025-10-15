@@ -55,7 +55,7 @@ pub enum LambdaError {
     ReductionError(#[from] ReductionError),
 }
 
-///A conversion error used when converting to a [`LambdaPool`] from a [`Vec<Option<LambdaExpr>>`]
+///A conversion error used when converting to a [`RootedLambdaPool`] from a [`Vec<Option<LambdaExpr>>`]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaTryFromError {
     ///This error happens if the vector is not exclusively [`Some`].
@@ -92,7 +92,7 @@ pub enum ReductionError {
 pub struct LambdaExprRef(pub u32);
 
 ///A trait which allows one to define a language of thought that interacts with the lambda
-///calculus. An example implementation can be found for [`Expr`].
+///calculus. An example implementation can be found for [`crate::language::Expr`].
 pub trait LambdaLanguageOfThought {
     ///The type of the executable syntax tree
     type Pool;
