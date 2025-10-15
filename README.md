@@ -1,6 +1,6 @@
 # Simple Semantics
 
-[_Documentation_](https://michaelgoodale.com/simple-semantics/simple_semantics/index.html)
+[**Documentation**](https://michaelgoodale.com/simple-semantics/simple_semantics/index.html)
 
 This repository defines a simple language of thought which represents basic primitives that are likely to be used in the semantics of natural language.
 It also includes a lambda calculus which operates over that language of thought to model semantic composition, such as in a Montague Grammar.
