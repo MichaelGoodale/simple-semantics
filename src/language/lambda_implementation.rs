@@ -303,7 +303,64 @@ pub(super) enum AssociativityData {
     Monop,
 }
 
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum LambdaConjoiningError {
+    #[error("Can't conjoin {0} and {1}")]
+    MismatchingTypes(LambdaType, LambdaType),
+    #[error("Lambda type, {0} doesn't return a truth value")]
+    DoesntReturnT(LambdaType),
+    #[error("One of the operands causes problems in reduction: {0})")]
+    ReductionError(#[from] ReductionError),
+}
+
 impl<'a> RootedLambdaPool<'a, Expr<'a>> {
+    ///Takes two lambda expressions, phi and psi of type <x, t> where x is any type and returns phi
+    ///AND psi.
+    pub fn conjoin(self, other: Self) -> Result<Self, LambdaConjoiningError> {
+        let self_type = self.get_type().unwrap();
+        let other_type = other.get_type().unwrap();
+        if self_type != other_type {
+            return Err(LambdaConjoiningError::MismatchingTypes(
+                self_type, other_type,
+            ));
+        }
+
+        let Ok((lhs, rhs)) = self_type.split() else {
+            return Err(LambdaConjoiningError::DoesntReturnT(self_type));
+        };
+
+        if rhs != &LambdaType::T {
+            return Err(LambdaConjoiningError::DoesntReturnT(self_type));
+        }
+        let lhs = lhs.clone();
+
+        let combinator = RootedLambdaPool {
+            pool: LambdaPool(vec![
+                LambdaExpr::Lambda(LambdaExprRef(1), self_type.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(2), other_type.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(3), lhs.clone()),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(4), ExprRef(7))),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(5),
+                    argument: LambdaExprRef(6),
+                },
+                LambdaExpr::BoundVariable(2, self_type),
+                LambdaExpr::BoundVariable(0, lhs.clone()),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(8),
+                    argument: LambdaExprRef(9),
+                },
+                LambdaExpr::BoundVariable(1, other_type),
+                LambdaExpr::BoundVariable(0, lhs),
+            ]),
+            root: LambdaExprRef(0),
+        };
+
+        let mut conjoined = combinator.merge(self).unwrap().merge(other).unwrap();
+        conjoined.reduce()?;
+        Ok(conjoined)
+    }
+
     ///Create a [`RootedLambdaPool<Expr>`] from a string.
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         parse_lot(s)
@@ -588,6 +645,25 @@ mod test {
         let pool =
             RootedLambdaPool::parse("every_e(x, pe_laughs, every(y, pe_sleeps(x), pa_woman(y)))")?;
         println!("{}", pool.into_pool()?);
+        Ok(())
+    }
+
+    #[test]
+    fn conjoining_check() -> anyhow::Result<()> {
+        let tall = RootedLambdaPool::parse("lambda a x pa_tall(x)")?;
+        let man = RootedLambdaPool::parse("lambda a x pa_man(x)")?;
+
+        let mut tall_man = tall.conjoin(man)?;
+        tall_man.reduce()?;
+        let weird = RootedLambdaPool::parse("weird#<a,t>")?;
+        let man = RootedLambdaPool::parse("lambda a x pa_man(x)")?;
+        let weird_man = weird.conjoin(man)?;
+        assert_eq!(format!("{tall_man}"), "lambda a x pa_tall(x) & pa_man(x)");
+        assert_eq!(
+            format!("{weird_man}"),
+            "lambda a x weird#<a,t>(x) & pa_man(x)"
+        );
+
         Ok(())
     }
 

@@ -404,7 +404,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
 pub(crate) struct LambdaPool<'a, T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<'a, T>>);
 
 impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
-    fn extend_pool(
+    pub(crate) fn extend_pool(
         &mut self,
         mut other_root: LambdaExprRef,
         mut other_pool: LambdaPool<'src, T>,
