@@ -303,12 +303,18 @@ pub(super) enum AssociativityData {
     Monop,
 }
 
+///An error which results from a failed application of [`RootedLambdaPool::conjoin`]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
-pub enum LambdaConjoiningError {
+pub enum ConjoiningError {
+    ///Both arguments have to have the same type
     #[error("Can't conjoin {0} and {1}")]
     MismatchingTypes(LambdaType, LambdaType),
+
+    ///The type must return a truth value
     #[error("Lambda type, {0} doesn't return a truth value")]
     DoesntReturnT(LambdaType),
+
+    ///One of the arguments has an internal problem leading to reduction errors
     #[error("One of the operands causes problems in reduction: {0})")]
     ReductionError(#[from] ReductionError),
 }
@@ -316,21 +322,19 @@ pub enum LambdaConjoiningError {
 impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     ///Takes two lambda expressions, phi and psi of type <x, t> where x is any type and returns phi
     ///AND psi.
-    pub fn conjoin(self, other: Self) -> Result<Self, LambdaConjoiningError> {
+    pub fn conjoin(self, other: Self) -> Result<Self, ConjoiningError> {
         let self_type = self.get_type().unwrap();
         let other_type = other.get_type().unwrap();
         if self_type != other_type {
-            return Err(LambdaConjoiningError::MismatchingTypes(
-                self_type, other_type,
-            ));
+            return Err(ConjoiningError::MismatchingTypes(self_type, other_type));
         }
 
         let Ok((lhs, rhs)) = self_type.split() else {
-            return Err(LambdaConjoiningError::DoesntReturnT(self_type));
+            return Err(ConjoiningError::DoesntReturnT(self_type));
         };
 
         if rhs != &LambdaType::T {
-            return Err(LambdaConjoiningError::DoesntReturnT(self_type));
+            return Err(ConjoiningError::DoesntReturnT(self_type));
         }
         let lhs = lhs.clone();
 

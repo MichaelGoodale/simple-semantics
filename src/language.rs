@@ -817,6 +817,7 @@ pub use parser::parse_executable;
 use thiserror::Error;
 
 mod lambda_implementation;
+pub use lambda_implementation::ConjoiningError;
 
 #[cfg(feature = "sampling")]
 mod mutations;
