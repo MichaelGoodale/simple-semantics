@@ -365,6 +365,69 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
         Ok(conjoined)
     }
 
+    ///Takes two lambda expressions, phi <x, <y,t>> and psi of type <y, t> where x and y is any type and returns phi
+    ///AND psi.
+    ///
+    ///This is a generalized kind of Event Identification from Kratzer (1996)
+    ///
+    /// - Kratzer, A. (1996). Severing the External Argument from its Verb. In J. Rooryck & L. Zaring (Eds.), Phrase Structure and the Lexicon (pp. 109–137). Springer Netherlands. https://doi.org/10.1007/978-94-015-8617-7_5
+    pub fn raised_conjoin(self, other: Self) -> Result<Self, ConjoiningError> {
+        let self_type = self.get_type().unwrap();
+        let other_type = other.get_type().unwrap();
+
+        let Ok((event, et)) = self_type.split() else {
+            return Err(ConjoiningError::DoesntReturnT(self_type));
+        };
+        if et != &other_type {
+            return Err(ConjoiningError::MismatchingTypes(self_type, other_type));
+        }
+
+        let Ok((e, t)) = other_type.split() else {
+            return Err(ConjoiningError::DoesntReturnT(other_type));
+        };
+        if t != &LambdaType::T {
+            return Err(ConjoiningError::DoesntReturnT(other_type));
+        }
+        let e = e.clone();
+        let event = event.clone();
+
+        let combinator = RootedLambdaPool {
+            pool: LambdaPool(vec![
+                LambdaExpr::Lambda(LambdaExprRef(1), self_type.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(2), other_type.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(3), event.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(4), e.clone()),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                    BinOp::And,
+                    ExprRef(5),
+                    ExprRef(10),
+                )),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(6),
+                    argument: LambdaExprRef(9),
+                },
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(7),
+                    argument: LambdaExprRef(8),
+                },
+                LambdaExpr::BoundVariable(3, self_type),
+                LambdaExpr::BoundVariable(1, event),
+                LambdaExpr::BoundVariable(0, e.clone()),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(11),
+                    argument: LambdaExprRef(12),
+                },
+                LambdaExpr::BoundVariable(2, other_type),
+                LambdaExpr::BoundVariable(0, e),
+            ]),
+            root: LambdaExprRef(0),
+        };
+
+        let mut conjoined = combinator.merge(self).unwrap().merge(other).unwrap();
+        conjoined.reduce()?;
+        Ok(conjoined)
+    }
+
     ///Create a [`RootedLambdaPool<Expr>`] from a string.
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         parse_lot(s)
@@ -668,6 +731,15 @@ mod test {
             "lambda a x weird#<a,t>(x) & pa_man(x)"
         );
 
+        let voice = RootedLambdaPool::parse("lambda a x lambda e y AgentOf(x, y)")?;
+        let run = RootedLambdaPool::parse("lambda e x pe_run(x)")?;
+
+        let mut agent_run = voice.raised_conjoin(run)?;
+        agent_run.reduce()?;
+        assert_eq!(
+            format!("{agent_run}"),
+            "lambda a x lambda e y AgentOf(x, y) & pe_run(y)"
+        );
         Ok(())
     }
 
