@@ -319,6 +319,38 @@ pub enum ConjoiningError {
     ReductionError(#[from] ReductionError),
 }
 
+fn who_raises_who<'a>(
+    a: RootedLambdaPool<'a, Expr<'a>>,
+    b: RootedLambdaPool<'a, Expr<'a>>,
+) -> Result<
+    (
+        RootedLambdaPool<'a, Expr<'a>>,
+        RootedLambdaPool<'a, Expr<'a>>,
+    ),
+    ConjoiningError,
+> {
+    let a_type = a.get_type().unwrap();
+    let b_type = b.get_type().unwrap();
+
+    let Ok(a_rhs) = a_type.rhs() else {
+        return Err(ConjoiningError::DoesntReturnT(a_type));
+    };
+    let Ok(b_rhs) = b_type.rhs() else {
+        return Err(ConjoiningError::DoesntReturnT(b_type));
+    };
+    if b_rhs != &LambdaType::T && a_rhs != &LambdaType::T {
+        return Err(ConjoiningError::DoesntReturnT(a_type));
+    }
+
+    if a_rhs != &b_type && b_rhs != &a_type {
+        Err(ConjoiningError::MismatchingTypes(a_type, b_type))
+    } else if a_rhs == &b_type {
+        Ok((a, b))
+    } else {
+        Ok((b, a))
+    }
+}
+
 impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     ///Takes two lambda expressions, phi and psi of type <x, t> where x is any type and returns phi
     ///AND psi.
@@ -372,29 +404,24 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     ///
     /// - Kratzer, A. (1996). Severing the External Argument from its Verb. In J. Rooryck & L. Zaring (Eds.), Phrase Structure and the Lexicon (pp. 109–137). Springer Netherlands. https://doi.org/10.1007/978-94-015-8617-7_5
     pub fn raised_conjoin(self, other: Self) -> Result<Self, ConjoiningError> {
-        let self_type = self.get_type().unwrap();
-        let other_type = other.get_type().unwrap();
+        let (a, b) = who_raises_who(self, other)?;
+        let a_type = a.get_type().unwrap();
+        let b_type = b.get_type().unwrap();
 
-        let Ok((event, et)) = self_type.split() else {
-            return Err(ConjoiningError::DoesntReturnT(self_type));
+        let Ok(event) = a_type.lhs() else {
+            return Err(ConjoiningError::DoesntReturnT(a_type));
         };
-        if et != &other_type {
-            return Err(ConjoiningError::MismatchingTypes(self_type, other_type));
-        }
 
-        let Ok((e, t)) = other_type.split() else {
-            return Err(ConjoiningError::DoesntReturnT(other_type));
+        let Ok(e) = b_type.lhs() else {
+            return Err(ConjoiningError::DoesntReturnT(b_type));
         };
-        if t != &LambdaType::T {
-            return Err(ConjoiningError::DoesntReturnT(other_type));
-        }
         let e = e.clone();
         let event = event.clone();
 
         let combinator = RootedLambdaPool {
             pool: LambdaPool(vec![
-                LambdaExpr::Lambda(LambdaExprRef(1), self_type.clone()),
-                LambdaExpr::Lambda(LambdaExprRef(2), other_type.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(1), a_type.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(2), b_type.clone()),
                 LambdaExpr::Lambda(LambdaExprRef(3), event.clone()),
                 LambdaExpr::Lambda(LambdaExprRef(4), e.clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
@@ -410,20 +437,20 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     subformula: LambdaExprRef(7),
                     argument: LambdaExprRef(8),
                 },
-                LambdaExpr::BoundVariable(3, self_type),
+                LambdaExpr::BoundVariable(3, a_type),
                 LambdaExpr::BoundVariable(1, event),
                 LambdaExpr::BoundVariable(0, e.clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(11),
                     argument: LambdaExprRef(12),
                 },
-                LambdaExpr::BoundVariable(2, other_type),
+                LambdaExpr::BoundVariable(2, b_type),
                 LambdaExpr::BoundVariable(0, e),
             ]),
             root: LambdaExprRef(0),
         };
 
-        let mut conjoined = combinator.merge(self).unwrap().merge(other).unwrap();
+        let mut conjoined = combinator.merge(a).unwrap().merge(b).unwrap();
         conjoined.reduce()?;
         Ok(conjoined)
     }
@@ -735,6 +762,15 @@ mod test {
         let run = RootedLambdaPool::parse("lambda e x pe_run(x)")?;
 
         let mut agent_run = voice.raised_conjoin(run)?;
+        agent_run.reduce()?;
+        assert_eq!(
+            format!("{agent_run}"),
+            "lambda a x lambda e y AgentOf(x, y) & pe_run(y)"
+        );
+        let voice = RootedLambdaPool::parse("lambda a x lambda e y AgentOf(x, y)")?;
+        let run = RootedLambdaPool::parse("lambda e x pe_run(x)")?;
+
+        let mut agent_run = run.raised_conjoin(voice)?;
         agent_run.reduce()?;
         assert_eq!(
             format!("{agent_run}"),
