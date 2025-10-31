@@ -103,6 +103,20 @@ impl<'src> ParseTree<'src> {
 
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x.into(), y.into()))
             }
+            ParseTree::Iota { t, var, body } => {
+                let lambda_type: LambdaType = (*t).into();
+                variable_names.bind_var(var, lambda_depth + 1, lambda_type);
+                let body = body.add_to_pool(pool, variable_names, lambda_depth + 1)?;
+                let body_type = pool.get_type(body)?;
+                if &body_type != LambdaType::t() {
+                    return Err(LambdaParseError::TypeError(format!(
+                        "Iota body is {t} and not of t",
+                    )));
+                }
+                variable_names.unbind(var);
+
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Iota(*t), body.into()))
+            }
             ParseTree::Quantifier {
                 quantifier,
                 lambda_type: var_type,
@@ -243,6 +257,11 @@ enum ParseTree<'src> {
     },
     Constant(Constant<'src>),
     Unary(MonOp<'src>, Box<ParseTree<'src>>),
+    Iota {
+        t: ActorOrEvent,
+        var: &'src str,
+        body: Box<ParseTree<'src>>,
+    },
     Binary(BinOp, Box<ParseTree<'src>>, Box<ParseTree<'src>>),
     Quantifier {
         quantifier: Quantifier,
@@ -270,9 +289,21 @@ fn unary_op<'tokens, 'src: 'tokens, I>(
 where
     I: ValueInput<'tokens, Token = Token<'src>, Span = SimpleSpan> + Clone,
 {
-    select! {Token::Property(s, a) => MonOp::Property(s, a)}
-        .then(expr.delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)))
-        .map(|(op, arg)| ParseTree::Unary(op, Box::new(arg)))
+    choice((
+        select! {Token::Property(s, a) => MonOp::Property(s, a) }
+            .then(
+                expr.clone()
+                    .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
+            )
+            .map(|(op, arg)| ParseTree::Unary(op, Box::new(arg))),
+        select! {Token::Iota(a) =>  a }
+            .then_ignore(just(Token::OpenDelim))
+            .then(select! {Token::Variable(v) => v})
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone().map(Box::new))
+            .then_ignore(just(Token::CloseDelim))
+            .map(|((a_e, var), body)| ParseTree::Iota { t: a_e, var, body }),
+    ))
 }
 
 type ChumskyErr<'tokens, 'src> = extra::Err<Rich<'tokens, Token<'src>, Span>>;
@@ -308,6 +339,7 @@ enum Token<'src> {
     CloseDelim,
     Constant(Constant<'src>),
     Property(&'src str, ActorOrEvent),
+    Iota(ActorOrEvent),
     Quantifier(Quantifier, ActorOrEvent),
     Lambda(LambdaType, &'src str),
     Variable(&'src str),
@@ -339,6 +371,8 @@ impl Display for Token<'_> {
             Token::Lambda(lambda_type, t) => write!(f, "lambda {lambda_type} {t}"),
             Token::Variable(v) => write!(f, "{v}"),
             Token::FreeVariable(v, lambda_type) => write!(f, "{v}#{lambda_type}"),
+            Token::Iota(ActorOrEvent::Event) => write!(f, "iota_e"),
+            Token::Iota(ActorOrEvent::Actor) => write!(f, "iota"),
         }
     }
 }
@@ -364,6 +398,8 @@ where
         just('~').to(Token::Not),
         just("AgentOf").to(Token::BinOp(BinOp::AgentOf)),
         just("PatientOf").to(Token::BinOp(BinOp::PatientOf)),
+        just("iota").to(Token::Iota(ActorOrEvent::Actor)),
+        just("iota_e").to(Token::Iota(ActorOrEvent::Event)),
         just("all_a").to(Token::Constant(Constant::Everyone)),
         just("all_e").to(Token::Constant(Constant::EveryEvent)),
         choice((
@@ -896,8 +932,9 @@ mod tests {
         for statement in [
             "(wow#<a,<e,t>>(nice#a))(cool#e)",
             "every(x,lambda a y pa_John(y), pa_Blue(y#a))",
+            "pa_cool(iota(x, pa_man(x)))",
+            "pa_cool(iota(x, (lambda a x pa_man(x))(x)))",
         ] {
-            println!("{statement}");
             RootedLambdaPool::parse(statement)?;
         }
 

@@ -9,6 +9,7 @@ use crate::lambda::RootedLambdaPool;
 use crate::lambda::types::LambdaType;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
+use itertools::Either;
 use thiserror;
 
 ///All binary operations
@@ -57,6 +58,9 @@ pub enum MonOp<'a> {
     Not,
     ///Returns whether an actor or event is a member of a predicate defined by the label.
     Property(PropertyLabel<'a>, ActorOrEvent),
+
+    ///Takes an actor or event predicate and returns the one present example that has it.
+    Iota(ActorOrEvent),
 }
 
 impl MonOp<'_> {
@@ -64,6 +68,8 @@ impl MonOp<'_> {
         match self {
             MonOp::Property(_, ActorOrEvent::Actor) => LambdaType::a(),
             MonOp::Property(_, ActorOrEvent::Event) => LambdaType::e(),
+            MonOp::Iota(ActorOrEvent::Actor) => LambdaType::at(),
+            MonOp::Iota(ActorOrEvent::Event) => LambdaType::et(),
             MonOp::Not => LambdaType::t(),
         }
     }
@@ -75,6 +81,8 @@ impl<'a> Display for MonOp<'a> {
             MonOp::Not => write!(f, "~"),
             MonOp::Property(x, ActorOrEvent::Actor) => write!(f, "pa_{x}"),
             MonOp::Property(x, ActorOrEvent::Event) => write!(f, "pe_{x}"),
+            MonOp::Iota(ActorOrEvent::Actor) => write!(f, "iota"),
+            MonOp::Iota(ActorOrEvent::Event) => write!(f, "iota_e"),
         }
     }
 }
@@ -783,6 +791,37 @@ impl<'a, 'b> Execution<'a, 'b> {
                     None => LanguageResult::EventSet(vec![]),
                 },
             },
+            Expr::Unary(MonOp::Iota(a_e), arg) => {
+                self.quantifier_depth += 1;
+                let mut variables = variables.clone();
+                let domain: Either<_, _> = match a_e {
+                    ActorOrEvent::Actor => {
+                        Either::Left(scenario.actors.iter().copied().map(Entity::Actor))
+                    }
+                    ActorOrEvent::Event => Either::Right(
+                        (0..scenario.thematic_relations.len())
+                            .map(|x| Entity::Event(x.try_into().unwrap())),
+                    ),
+                };
+                let mut entity = None;
+                for e in domain {
+                    variables.set(self.quantifier_depth - 1, e);
+                    let value: bool = self.interp(*arg, scenario, &mut variables)?.try_into()?;
+                    if value && entity.is_some() {
+                        return Err(LanguageTypeError::PresuppositionError);
+                    } else if value {
+                        entity = Some(e);
+                    }
+                }
+                self.quantifier_depth -= 1;
+                match (entity, a_e) {
+                    (Some(Entity::Actor(a)), ActorOrEvent::Actor) => LanguageResult::Actor(a),
+                    (Some(Entity::Event(e)), ActorOrEvent::Event) => LanguageResult::Event(e),
+                    (None, _) => return Err(LanguageTypeError::PresuppositionError),
+                    _ => panic!("Should be impossible for the variable to not be an actor!"),
+                }
+            }
+
             Expr::Unary(mon_op, arg) => {
                 let arg = self.interp(*arg, scenario, variables)?;
                 match mon_op {
@@ -805,6 +844,7 @@ impl<'a, 'b> Execution<'a, 'b> {
                             None => LanguageResult::Bool(false),
                         }
                     }
+                    MonOp::Iota(_) => panic!("Captured before!"),
                 }
             }
         })
@@ -1366,6 +1406,30 @@ mod tests {
         let scenario = labels.iter_scenarios().next().unwrap();
 
         pool.run(scenario, Some(config))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn iota_tests() -> anyhow::Result<()> {
+        let scenario = "\"The man danced\" <John (man), Mary (woman), Susan (woman); {A: John (dance)}, {A: Mary (run)}>";
+
+        let labels = ScenarioDataset::parse(scenario)?;
+
+        let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_man(x)),x))")?;
+        let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_woman(x)),x))")?;
+        let c = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_red(x)),x))")?;
+        let scenario = labels.iter_scenarios().next().unwrap();
+        dbg!(&a);
+        assert_eq!(a.run(scenario, None)?, LanguageResult::Bool(true));
+        assert_eq!(
+            b.run(scenario, None),
+            Err(LanguageTypeError::PresuppositionError)
+        );
+        assert_eq!(
+            c.run(scenario, None),
+            Err(LanguageTypeError::PresuppositionError)
+        );
 
         Ok(())
     }

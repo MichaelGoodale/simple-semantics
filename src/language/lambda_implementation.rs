@@ -134,6 +134,8 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             },
             Expr::Unary(mon_op, _) => match mon_op {
                 MonOp::Property(_, _) | MonOp::Not => LambdaType::t(),
+                MonOp::Iota(ActorOrEvent::Actor) => LambdaType::a(),
+                MonOp::Iota(ActorOrEvent::Event) => LambdaType::e(),
             },
             Expr::Constant(constant) => match constant {
                 Constant::Everyone | Constant::Property(_, ActorOrEvent::Actor) => LambdaType::at(),
