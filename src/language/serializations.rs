@@ -110,6 +110,21 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     v.push(Token::CloseDelim);
                     AssociativityData::Monop
                 }
+                Expr::Unary(MonOp::Iota(var_type), subformula) => {
+                    let (c, var_string) = c.inc_depth_q(*var_type);
+
+                    v.push(Token::Iota {
+                        t: match var_type {
+                            ActorOrEvent::Actor => LambdaType::a(),
+                            ActorOrEvent::Event => LambdaType::e(),
+                        },
+                        var: TokenVar::Bound(var_string),
+                    });
+                    v.push(Token::OpenDelim);
+                    self.tokens(LambdaExprRef(subformula.0), c, v, false);
+                    v.push(Token::CloseDelim);
+                    AssociativityData::Monop
+                }
                 Expr::Variable(variable) => {
                     v.push(Token::Var(TokenVar::Bound(c.lambda_var(
                         variable.id() as usize,
@@ -231,6 +246,10 @@ pub(super) enum Token<'a> {
     Event(String),
     Func(String),
     Const(String),
+    Iota {
+        t: &'a LambdaType,
+        var: TokenVar<'a>,
+    },
     Quantifier {
         q: String,
         var: TokenVar<'a>,
@@ -307,6 +326,10 @@ mod test {
             (
                 "lambda a x (lambda a y (likes#<a,<a,t>>(x))(y))",
                 "[{\"Lambda\":{\"t\":\"a\",\"var\":{\"Bound\":\"x\"}}},{\"Lambda\":{\"t\":\"a\",\"var\":{\"Bound\":\"y\"}}},{\"Var\":{\"Free\":{\"label\":\"likes\",\"t\":\"<a,<a,t>>\",\"anon\":false}}},\"OpenDelim\",{\"Var\":{\"Bound\":\"x\"}},\"ArgSep\",{\"Var\":{\"Bound\":\"y\"}},\"CloseDelim\"]",
+            ),
+            (
+                "lambda <a,t> P iota(x, P(x))",
+                "[{\"Lambda\":{\"t\":\"<a,t>\",\"var\":{\"Bound\":\"P\"}}},{\"Iota\":{\"t\":\"a\",\"var\":{\"Bound\":\"x\"}}},\"OpenDelim\",{\"Var\":{\"Bound\":\"P\"}},\"OpenDelim\",{\"Var\":{\"Bound\":\"x\"}},\"CloseDelim\",\"CloseDelim\"]",
             ),
         ] {
             let expression = RootedLambdaPool::parse(statement)?;

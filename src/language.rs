@@ -1420,7 +1420,10 @@ mod tests {
         let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_woman(x)),x))")?;
         let c = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_red(x)),x))")?;
         let scenario = labels.iter_scenarios().next().unwrap();
-        dbg!(&a);
+        assert_eq!(
+            a.to_string(),
+            "every_e(x, pe_dance, AgentOf(iota(y, pa_man(y)), x))"
+        );
         assert_eq!(a.run(scenario, None)?, LanguageResult::Bool(true));
         assert_eq!(
             b.run(scenario, None),

@@ -537,6 +537,21 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                         AssociativityData::Monop,
                     )
                 }
+                Expr::Unary(MonOp::Iota(var_type), arg) => {
+                    let (c, var_string) = c.inc_depth_q(*var_type);
+                    let (arg, _) = self.string(LambdaExprRef(arg.0), c, false);
+                    (
+                        format!(
+                            "iota{}({}, {arg})",
+                            match var_type {
+                                ActorOrEvent::Actor => "",
+                                ActorOrEvent::Event => "_e",
+                            },
+                            var_string,
+                        ),
+                        AssociativityData::Monop,
+                    )
+                }
                 Expr::Actor(a) => (format!("a_{a}"), AssociativityData::Monop),
                 Expr::Event(e) => (format!("e_{e}"), AssociativityData::Monop),
                 Expr::Binary(bin_op, x, y) => {
