@@ -52,15 +52,20 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
     }
 
     fn inc_depth(&self) -> bool {
-        matches!(self, Expr::Quantifier { .. })
+        matches!(
+            self,
+            Expr::Quantifier { .. } | Expr::Unary(MonOp::Iota(_), _)
+        )
     }
 
     fn var_type(&self) -> Option<&LambdaType> {
         match self {
-            Expr::Quantifier { var_type, .. } => match var_type {
-                ActorOrEvent::Actor => Some(LambdaType::a()),
-                ActorOrEvent::Event => Some(LambdaType::e()),
-            },
+            Expr::Quantifier { var_type, .. } | Expr::Unary(MonOp::Iota(var_type), _) => {
+                match var_type {
+                    ActorOrEvent::Actor => Some(LambdaType::a()),
+                    ActorOrEvent::Event => Some(LambdaType::e()),
+                }
+            }
             _ => None,
         }
     }
