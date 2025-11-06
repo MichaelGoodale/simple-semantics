@@ -144,6 +144,19 @@ impl LambdaType {
         a == t
     }
 
+    ///Takes a type t and argument x and returns <t, x>
+    pub fn add_right_argument(&mut self, other: LambdaType) {
+        let mut t = LambdaType::A;
+        std::mem::swap(&mut t, self);
+        *self = LambdaType::Composition(Box::new(t), Box::new(other));
+    }
+    ///Takes a type t and argument x and returns <x, t>
+    pub fn add_left_argument(&mut self, other: LambdaType) {
+        let mut t = LambdaType::A;
+        std::mem::swap(&mut t, self);
+        *self = LambdaType::Composition(Box::new(other), Box::new(t));
+    }
+
     ///Parse a type
     ///
     ///```
