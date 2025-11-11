@@ -68,8 +68,7 @@ impl MonOp<'_> {
         match self {
             MonOp::Property(_, ActorOrEvent::Actor) => LambdaType::a(),
             MonOp::Property(_, ActorOrEvent::Event) => LambdaType::e(),
-            MonOp::Iota(ActorOrEvent::Actor) => LambdaType::at(),
-            MonOp::Iota(ActorOrEvent::Event) => LambdaType::et(),
+            MonOp::Iota(ActorOrEvent::Actor) | MonOp::Iota(ActorOrEvent::Event) => LambdaType::t(),
             MonOp::Not => LambdaType::t(),
         }
     }
@@ -1419,6 +1418,8 @@ mod tests {
         let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_man(x)),x))")?;
         let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_woman(x)),x))")?;
         let c = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_red(x)),x))")?;
+
+        let d = LanguageExpression::parse("iota_e(x, pe_dance(x))")?;
         let scenario = labels.iter_scenarios().next().unwrap();
         assert_eq!(
             a.to_string(),
@@ -1433,6 +1434,7 @@ mod tests {
             c.run(scenario, None),
             Err(LanguageTypeError::PresuppositionError)
         );
+        assert_eq!(d.run(scenario, None), Ok(LanguageResult::Event(0)));
 
         Ok(())
     }

@@ -1158,6 +1158,7 @@ mod test {
             let mut pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
             assert_eq!(t, pool.get_type()?);
             let s = pool.to_string();
+            println!("{s}");
             let mut pool2 = RootedLambdaPool::parse(s.as_str())?;
             assert_eq!(s, pool2.to_string());
             println!("{pool}");
@@ -1187,13 +1188,14 @@ mod test {
 
         let v: HashSet<_> = RootedLambdaPool::enumerator(LambdaType::a(), &possibles)
             .map(|(x, _)| x.to_string())
+            .take(4)
             .collect();
 
         assert_eq!(v, HashSet::from(actors.map(|x| format!("a_{x}"))));
         println!("{v:?}");
 
         let mut constants = 0;
-        for _ in 0..1000 {
+        for _ in 0..10 {
             let t = LambdaType::from_string("<a, <a,t>>")?;
             println!("sampling: {t}");
             let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);

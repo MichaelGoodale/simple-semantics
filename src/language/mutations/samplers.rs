@@ -32,11 +32,11 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
     ) -> Self {
         let bad_ref = ExprRef(0);
         let mut all_expressions: Vec<_> = [
-            //Expr::Constant(Constant::Everyone),
-            //Expr::Constant(Constant::EveryEvent),
+            Expr::Constant(Constant::Everyone),
+            Expr::Constant(Constant::EveryEvent),
             Expr::Unary(MonOp::Not, bad_ref),
             Expr::Binary(BinOp::And, bad_ref, bad_ref),
-            //Expr::Binary(BinOp::Or, bad_ref, bad_ref),
+            Expr::Binary(BinOp::Or, bad_ref, bad_ref),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Actor,
@@ -63,6 +63,8 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             },
             Expr::Binary(BinOp::AgentOf, bad_ref, bad_ref),
             Expr::Binary(BinOp::PatientOf, bad_ref, bad_ref),
+            Expr::Unary(MonOp::Iota(ActorOrEvent::Actor), bad_ref),
+            Expr::Unary(MonOp::Iota(ActorOrEvent::Event), bad_ref),
         ]
         .to_vec();
 

@@ -398,8 +398,8 @@ where
         just('~').to(Token::Not),
         just("AgentOf").to(Token::BinOp(BinOp::AgentOf)),
         just("PatientOf").to(Token::BinOp(BinOp::PatientOf)),
-        just("iota").to(Token::Iota(ActorOrEvent::Actor)),
         just("iota_e").to(Token::Iota(ActorOrEvent::Event)),
+        just("iota").to(Token::Iota(ActorOrEvent::Actor)),
         just("all_a").to(Token::Constant(Constant::Everyone)),
         just("all_e").to(Token::Constant(Constant::EveryEvent)),
         choice((
@@ -933,6 +933,7 @@ mod tests {
             "(wow#<a,<e,t>>(nice#a))(cool#e)",
             "every(x,lambda a y pa_John(y), pa_Blue(y#a))",
             "pa_cool(iota(x, pa_man(x)))",
+            "pe_cool(iota_e(x, pe_man(x)))",
             "pa_cool(iota(x, (lambda a x pa_man(x))(x)))",
         ] {
             RootedLambdaPool::parse(statement)?;
