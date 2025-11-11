@@ -311,11 +311,6 @@ impl Context {
         self.constant_function == ConstantFunctionState::Constant
     }
 
-    ///Can we create objects of type `e` at this point?
-    pub fn can_sample_event(&self) -> bool {
-        self.lambdas.iter().any(|(lam, _)| lam == LambdaType::e())
-    }
-
     ///What are the *current* possible variable types
     pub fn current_variable_types(&self) -> impl Iterator<Item = &LambdaType> {
         self.lambdas.iter().map(|(x, _)| x)

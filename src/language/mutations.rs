@@ -378,13 +378,13 @@ pub struct TypeAgnosticSampler<'src, T: LambdaLanguageOfThought> {
     possible_expressions: PossibleExpressions<'src, T>,
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone + Debug> TypeAgnosticSampler<'src, T> {
+impl<'src> TypeAgnosticSampler<'src, Expr<'src>> {
     ///Samples an expression of a given type
     pub fn sample(
         &mut self,
         lambda_type: LambdaType,
         rng: &mut impl Rng,
-    ) -> RootedLambdaPool<'src, T> {
+    ) -> RootedLambdaPool<'src, Expr<'src>> {
         let (counts, exprs) = self
             .type_to_sampler
             .entry(lambda_type)
@@ -413,7 +413,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> TypeAgnosticSampler<'src,
     }
 
     ///Get a reference to the [`PossibleExpressions`] used by the model
-    pub fn possibles(&self) -> &PossibleExpressions<'src, T> {
+    pub fn possibles(&self) -> &PossibleExpressions<'src, Expr<'src>> {
         &self.possible_expressions
     }
 }
@@ -523,13 +523,12 @@ where
     }
 }
 
-impl<'a, 'src, T, F, E> Iterator for LambdaEnumerator<'a, 'src, T, F, E>
+impl<'a, 'src, F, E> Iterator for LambdaEnumerator<'a, 'src, Expr<'src>, F, E>
 where
-    T: LambdaLanguageOfThought + Clone + Debug,
     F: Fn(&Context) -> bool,
     E: EnumerationType,
 {
-    type Item = (RootedLambdaPool<'src, T>, ExprDetails);
+    type Item = (RootedLambdaPool<'src, Expr<'src>>, ExprDetails);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(x) = try_yield(self) {
@@ -545,12 +544,40 @@ where
                 ExprOrType::Type {
                     lambda_type,
                     is_app_subformula,
-                    ..
-                } => (
-                    self.possible_expressions
-                        .possibilities(lambda_type, *is_app_subformula, &c),
-                    lambda_type.clone(),
-                ),
+                    parent,
+                } => {
+                    let mut possibles = self.possible_expressions.possibilities(
+                        lambda_type,
+                        *is_app_subformula,
+                        &c,
+                    );
+
+                    //Super hacky way to introduce all_e and all_a in quantifiers even though the
+                    //types are messed up.
+                    if let Some(p) = parent
+                        && let ExprOrType::Expr {
+                            lambda_expr:
+                                LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                                    var_type,
+                                    restrictor,
+                                    ..
+                                }),
+                            ..
+                        } = self.pools[c.pool_index].pool[*p]
+                        && restrictor.0 == c.position as u32
+                    {
+                        possibles.push(PossibleExpr::new_borrowed(match var_type {
+                            ActorOrEvent::Actor => &LambdaExpr::LanguageOfThoughtExpr(
+                                Expr::Constant(Constant::Everyone),
+                            ),
+                            ActorOrEvent::Event => &LambdaExpr::LanguageOfThoughtExpr(
+                                Expr::Constant(Constant::EveryEvent),
+                            ),
+                        }));
+                    };
+
+                    (possibles, lambda_type.clone())
+                }
                 ExprOrType::Expr {
                     lambda_expr,
                     parent,
@@ -634,12 +661,12 @@ where
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T> {
+impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     ///Create a [`LambdaSampler`] of a given type.
     pub fn resample_from_expr<'a>(
         &mut self,
-        possible_expressions: &'a PossibleExpressions<'src, T>,
-        helpers: Option<&HashMap<LambdaType, Vec<RootedLambdaPool<'src, T>>>>,
+        possible_expressions: &'a PossibleExpressions<'src, Expr<'src>>,
+        helpers: Option<&HashMap<LambdaType, Vec<RootedLambdaPool<'src, Expr<'src>>>>>,
         rng: &mut impl Rng,
     ) -> Result<(), LambdaError> {
         let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
@@ -684,11 +711,14 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
     fn probabilistic_enumerate_from_expr<'a, R, E, F>(
         &self,
         position: LambdaExprRef,
-        possible_expressions: &'a PossibleExpressions<'src, T>,
+        possible_expressions: &'a PossibleExpressions<'src, Expr<'src>>,
         eager_filter: E,
         filter: F,
         rng: &'a mut R,
-    ) -> Result<LambdaEnumerator<'a, 'src, T, E, ProbabilisticEnumeration<'a, R, F>>, TypeError>
+    ) -> Result<
+        LambdaEnumerator<'a, 'src, Expr<'src>, E, ProbabilisticEnumeration<'a, R, F>>,
+        TypeError,
+    >
     where
         R: Rng,
         F: Fn(&ExprDetails) -> bool,
@@ -728,8 +758,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
     pub fn enumerator_filter<'a, F: Fn(&Context) -> bool>(
         t: &LambdaType,
         filter: F,
-        possible_expressions: &'a PossibleExpressions<'src, T>,
-    ) -> LambdaEnumerator<'a, 'src, T, F> {
+        possible_expressions: &'a PossibleExpressions<'src, Expr<'src>>,
+    ) -> LambdaEnumerator<'a, 'src, Expr<'src>, F> {
         let context = Context::new(0, vec![]);
         let mut pq = BinaryHeap::default();
         pq.push(Reverse(context));
@@ -752,8 +782,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
     ///Create a [`LambdaSampler`] of a given type.
     pub fn enumerator<'a>(
         t: &LambdaType,
-        possible_expressions: &'a PossibleExpressions<'src, T>,
-    ) -> LambdaEnumerator<'a, 'src, T, impl Fn(&'_ Context) -> bool> {
+        possible_expressions: &'a PossibleExpressions<'src, Expr<'src>>,
+    ) -> LambdaEnumerator<'a, 'src, Expr<'src>, impl Fn(&'_ Context) -> bool> {
         let context = Context::new(0, vec![]);
         let mut pq = BinaryHeap::default();
         pq.push(Reverse(context));
@@ -776,9 +806,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
     ///Creates a reusable random sampler by enumerating over the first `max_expr` expressions
     pub fn sampler(
         t: &LambdaType,
-        possible_expressions: &PossibleExpressions<'src, T>,
+        possible_expressions: &PossibleExpressions<'src, Expr<'src>>,
         max_expr: usize,
-    ) -> LambdaSampler<'src, T> {
+    ) -> LambdaSampler<'src, Expr<'src>> {
         let enumerator = RootedLambdaPool::enumerator(t, possible_expressions);
         let mut lambdas = Vec::with_capacity(max_expr);
         let mut expr_details = Vec::with_capacity(max_expr);
@@ -796,9 +826,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
     ///Randomly generate a [`RootedLambdaPool`] of type `t`.
     pub fn random_expr(
         t: &LambdaType,
-        possible_expressions: &PossibleExpressions<'src, T>,
+        possible_expressions: &PossibleExpressions<'src, Expr<'src>>,
         rng: &mut impl Rng,
-    ) -> RootedLambdaPool<'src, T> {
+    ) -> RootedLambdaPool<'src, Expr<'src>> {
         ProbabilisticEnumeration::new(
             1,
             t,
@@ -815,9 +845,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
     ///Randomly generate a [`RootedLambdaPool`] of type `t` without constant functions.
     pub fn random_expr_no_constant(
         t: &LambdaType,
-        possible_expressions: &PossibleExpressions<'src, T>,
+        possible_expressions: &PossibleExpressions<'src, Expr<'src>>,
         rng: &mut impl Rng,
-    ) -> Option<RootedLambdaPool<'src, T>> {
+    ) -> Option<RootedLambdaPool<'src, Expr<'src>>> {
         ProbabilisticEnumeration::new(
             1,
             t,
@@ -891,12 +921,33 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             .map(|x| self.pool.get_type(x).unwrap())
             .collect();
 
-        let replacements = possible_expressions.possiblities_fixed_children(
+        let mut replacements = possible_expressions.possiblities_fixed_children(
             &output,
             &arguments,
             expr.var_type(),
             &context,
         );
+
+        //hacky fix!!
+        if replacements.is_empty()
+            && let LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
+                var_type,
+                restrictor,
+                subformula,
+                ..
+            }) = expr
+        {
+            for quantifier in [Quantifier::Universal, Quantifier::Existential] {
+                replacements.push(std::borrow::Cow::Owned(LambdaExpr::LanguageOfThoughtExpr(
+                    Expr::Quantifier {
+                        quantifier,
+                        var_type: *var_type,
+                        restrictor: *restrictor,
+                        subformula: *subformula,
+                    },
+                )));
+            }
+        }
 
         let choice = replacements.choose(rng).unwrap_or_else(|| {
             panic!(

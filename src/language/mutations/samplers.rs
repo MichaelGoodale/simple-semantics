@@ -71,16 +71,16 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
         all_expressions.extend(actors.iter().map(|x| Expr::Actor(x)));
 
         all_expressions.extend(actor_properties.iter().flat_map(|i| {
-            [
-                Expr::Unary(MonOp::Property(i, ActorOrEvent::Actor), bad_ref),
-                //Expr::Constant(Constant::Property(i, ActorOrEvent::Actor)),
-            ]
+            [Expr::Unary(
+                MonOp::Property(i, ActorOrEvent::Actor),
+                bad_ref,
+            )]
         }));
         all_expressions.extend(event_properties.iter().flat_map(|i| {
-            [
-                Expr::Unary(MonOp::Property(i, ActorOrEvent::Event), bad_ref),
-                //Expr::Constant(Constant::Property(i, ActorOrEvent::Event)),
-            ]
+            [Expr::Unary(
+                MonOp::Property(i, ActorOrEvent::Event),
+                bad_ref,
+            )]
         }));
 
         let mut expressions: HashMap<LambdaType, HashMap<_, Vec<_>>> = HashMap::default();
@@ -120,7 +120,7 @@ impl<'a, 'src, T: LambdaLanguageOfThought + Clone> PossibleExpr<'a, 'src, T> {
         (self.expr.into_owned(), self.app_details)
     }
 
-    fn new_borrowed(expr: &'a LambdaExpr<'src, T>) -> Self {
+    pub fn new_borrowed(expr: &'a LambdaExpr<'src, T>) -> Self {
         PossibleExpr {
             expr: Cow::Borrowed(expr),
             app_details: None,
@@ -156,7 +156,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
         if !is_subformula {
             if let Some(x) = self.expressions.get(lambda_type).map(|x| {
                 x.iter()
-                    .filter(|(k, _)| !has_e_argument(k) || context.can_sample_event())
                     .flat_map(|(_, v)| v.iter().map(PossibleExpr::new_borrowed))
             }) {
                 possibilities.extend(x);
@@ -220,8 +219,4 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
 
         possibilities
     }
-}
-
-fn has_e_argument(v: &[LambdaType]) -> bool {
-    v.iter().any(|v| v == LambdaType::e())
 }
