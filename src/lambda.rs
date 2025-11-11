@@ -981,6 +981,10 @@ mod test {
             ),
             ("lambda a y (pa_woman(a_m))", true),
             ("lambda a y (lambda a x (y))", true),
+            ("some(x, pa_man(x), True)", false),
+            ("some(x, pa_man(x), pa_man(x))", false),
+            ("some(x, True, pa_man(x))", false),
+            ("some(x, True, True)", true),
         ] {
             let expr = RootedLambdaPool::parse(expr)?;
             match expr.stats() {

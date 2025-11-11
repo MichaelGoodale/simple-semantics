@@ -40,7 +40,6 @@ enum ExprOrType<'src, T: LambdaLanguageOfThought> {
         lambda_type: LambdaType,
         parent: Option<usize>,
         is_app_subformula: bool,
-        reset: bool,
     },
     Expr {
         lambda_expr: LambdaExpr<'src, T>,
@@ -97,7 +96,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
                     lambda_type: t.rhs().unwrap().clone(),
                     parent: Some(c.position),
                     is_app_subformula: false,
-                    reset: false,
                 })
             }
             LambdaExpr::BoundVariable(b, _) => {
@@ -115,34 +113,24 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
                     lambda_type: subformula,
                     parent: Some(c.position),
                     is_app_subformula: true,
-                    reset: false,
                 });
                 self.pool.push(ExprOrType::Type {
                     lambda_type: argument,
                     parent: Some(c.position),
                     is_app_subformula: false,
-                    reset: false,
                 });
             }
             LambdaExpr::LanguageOfThoughtExpr(e) => {
                 let children_start = self.pool.len();
-                let mut reset = false;
                 if let Some(t) = e.var_type() {
                     c.add_lambda(t);
-                    reset = true;
                 }
-                self.pool.extend(
-                    e.get_arguments()
-                        .enumerate()
-                        .map(|(i, x)| ExprOrType::Type {
-                            lambda_type: x,
-                            parent: Some(c.position),
-                            is_app_subformula: false,
-                            reset: if i == 0 { false } else { reset }, //We never reset the first
-                                                                       //argument, because there will be no way to satify the variable before
-                                                                       //resetting it.
-                        }),
-                );
+                self.pool
+                    .extend(e.get_arguments().map(|lambda_type| ExprOrType::Type {
+                        lambda_type,
+                        parent: Some(c.position),
+                        is_app_subformula: false,
+                    }));
                 e.change_children(
                     (children_start..self.pool.len()).map(|x| LambdaExprRef(x as u32)),
                 );
@@ -273,7 +261,6 @@ where
                 lambda_type: t.clone(),
                 parent: None,
                 is_app_subformula: false,
-                reset: false,
             }],
         }];
 
@@ -558,21 +545,12 @@ where
                 ExprOrType::Type {
                     lambda_type,
                     is_app_subformula,
-                    reset,
                     ..
-                } => {
-                    if *reset {
-                        c.reset_lambda();
-                    }
-                    (
-                        self.possible_expressions.possibilities(
-                            lambda_type,
-                            *is_app_subformula,
-                            &c,
-                        ),
-                        lambda_type.clone(),
-                    )
-                }
+                } => (
+                    self.possible_expressions
+                        .possibilities(lambda_type, *is_app_subformula, &c),
+                    lambda_type.clone(),
+                ),
                 ExprOrType::Expr {
                     lambda_expr,
                     parent,
@@ -725,7 +703,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
                 lambda_type: output,
                 parent: None,
                 is_app_subformula,
-                reset: false,
             }],
         }];
         let enumerator = LambdaEnumerator {
@@ -761,7 +738,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
                 lambda_type: t.clone(),
                 parent: None,
                 is_app_subformula: false,
-                reset: false,
             }],
         }];
 
@@ -786,7 +762,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> RootedLambdaPool<'src, T>
                 lambda_type: t.clone(),
                 parent: None,
                 is_app_subformula: false,
-                reset: false,
             }],
         }];
 
@@ -1085,7 +1060,7 @@ mod test {
             &available_event_properties,
         );
         for _ in 0..200 {
-            let t = LambdaType::random_no_e(&mut rng);
+            let t = LambdaType::random(&mut rng);
             println!("{t}");
             let mut pool = RootedLambdaPool::random_expr(&t, &possible_expressions, &mut rng);
             println!("{t}: {pool}");
@@ -1153,7 +1128,7 @@ mod test {
             .collect();
 
         for _ in 0..1000 {
-            let t = LambdaType::random_no_e(&mut rng);
+            let t = LambdaType::random(&mut rng);
             println!("sampling: {t}");
             let mut pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
             assert_eq!(t, pool.get_type()?);
@@ -1195,7 +1170,7 @@ mod test {
         println!("{v:?}");
 
         let mut constants = 0;
-        for _ in 0..10 {
+        for _ in 0..100 {
             let t = LambdaType::from_string("<a, <a,t>>")?;
             println!("sampling: {t}");
             let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);

@@ -148,34 +148,21 @@ impl Context {
         self.lambdas.len()
     }
 
-    //We make it so that if there are multiple children of something that introduces a
-    //function, then all of its children must be non-constants, by calling this whenever we access
-    //a child of a variable-introducing expr
-    pub(super) fn reset_lambda(&mut self) {
-        let x: &mut (LambdaType, ConstantFunctionState) = self.lambdas.last_mut().unwrap();
-        x.1.done();
-        x.1.update(ConstantFunctionState::PotentiallyConstant);
-    }
-
     pub(super) fn from_pos<'src, T: LambdaLanguageOfThought>(
         pool: &RootedLambdaPool<'src, T>,
         pos: LambdaExprRef,
     ) -> (Context, bool) {
         let mut context = Context::new(0, vec![]);
-        let mut stack = vec![(pool.root, 0, false, false)];
+        let mut stack = vec![(pool.root, 0, false)];
         let mut return_is_subformula = false;
 
-        while let Some((x, n_lambdas, is_subformula, reset)) = stack.pop() {
+        while let Some((x, n_lambdas, is_subformula)) = stack.pop() {
             context.depth += 1;
             let e = pool.get(x);
             if context.lambdas.len() != n_lambdas {
                 for _ in 0..(context.lambdas.len() - n_lambdas) {
                     context.pop_lambda();
                 }
-            }
-
-            if reset {
-                context.reset_lambda();
             }
 
             if pos == x {
@@ -194,19 +181,10 @@ impl Context {
                 argument,
             } = e
             {
-                stack.push((*subformula, context.lambdas.len(), true, false));
-                stack.push((*argument, context.lambdas.len(), false, false));
+                stack.push((*subformula, context.lambdas.len(), true));
+                stack.push((*argument, context.lambdas.len(), false));
             } else {
-                let reset = e.var_type().is_some();
-                stack.extend(e.get_children().enumerate().map(|(i, x)| {
-                    (
-                        x,
-                        context.lambdas.len(),
-                        false,
-                        if i == 0 { false } else { reset },
-                        //We never reset the first argument, because there will be no way to satify the variable before resetting it.
-                    )
-                }));
+                stack.extend(e.get_children().map(|x| (x, context.lambdas.len(), false)));
             }
         }
         (context, return_is_subformula)
