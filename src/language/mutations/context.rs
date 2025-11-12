@@ -73,7 +73,14 @@ impl Ord for RandomPQ {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let c = &self.0;
         let o = &other.0;
-        o.cmp(c).then(self.1.partial_cmp(&other.1).unwrap())
+
+        //have to reimplement so that pool_index isn't used here
+        c.done
+            .cmp(&o.done)
+            .then(o.lambdas.len().cmp(&c.lambdas.len()))
+            .then(o.open_depth_score().cmp(&c.open_depth_score()))
+            .then(o.constant_function.cmp(&c.constant_function))
+            .then(self.1.partial_cmp(&other.1).unwrap())
     }
 }
 
@@ -88,14 +95,15 @@ impl Ord for Context {
         other
             .done
             .cmp(&self.done)
+            .then(self.lambdas.len().cmp(&other.lambdas.len()))
             .then(self.open_depth_score().cmp(&other.open_depth_score()))
             .then(self.constant_function.cmp(&other.constant_function))
-        //.then(self.pool_index.cmp(&other.pool_index))
+            .then(self.pool_index.cmp(&other.pool_index))
     }
 }
 impl Context {
     fn open_depth_score(&self) -> usize {
-        self.depth + self.open_nodes.pow(2)
+        self.depth //+ self.open_nodes.pow(2)
     }
 }
 

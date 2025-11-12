@@ -1166,7 +1166,6 @@ mod test {
         Ok(())
     }
 
-    /*
     #[test]
     fn random_expr_no_constant() -> anyhow::Result<()> {
         let actors = &["1", "2", "3", "4", "5"];
@@ -1174,14 +1173,35 @@ mod test {
         let event_properties = &["1", "2", "3", "4", "5"];
         let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        for _ in 0..50 {
+
+        let t = LambdaType::from_string("<<a,<e,t>>, <e,t>>")?;
+        println!("{t}: ");
+        let pool = RootedLambdaPool::random_expr_no_constant(&t, &poss, &mut rng).unwrap();
+        println!("{pool}");
+
+        for _ in 0..500 {
             let t = LambdaType::random(&mut rng);
             println!("{t}: ");
             let pool = RootedLambdaPool::random_expr_no_constant(&t, &poss, &mut rng).unwrap();
             println!("{pool}");
         }
         Ok(())
-    }*/
+    }
+
+    #[test]
+    fn enumerate_weirds() -> anyhow::Result<()> {
+        let actors = &["1", "2", "3", "4", "5"];
+        let actor_properties = &["1", "2", "3", "4", "5"];
+        let event_properties = &["1", "2", "3", "4", "5"];
+        let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+
+        let t = "<<e,<a,t>>, <a,t>>";
+
+        for (p, d) in RootedLambdaPool::enumerator(&LambdaType::from_string(t)?, &poss).take(10) {
+            println!("{p} {d:?} {}", d.has_constant_function());
+        }
+        Ok(())
+    }
 
     #[test]
     fn random_expr() -> anyhow::Result<()> {

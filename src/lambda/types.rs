@@ -224,6 +224,14 @@ impl LambdaType {
         &VAL
     }
 
+    ///The number of elements in this type
+    pub fn size(&self) -> usize {
+        match self {
+            LambdaType::A | LambdaType::E | LambdaType::T => 1,
+            LambdaType::Composition(a, b) => a.size() + b.size(),
+        }
+    }
+
     ///Check if `self` can have `other` applied to it.
     pub fn can_apply(&self, other: &Self) -> bool {
         matches!(&self, LambdaType::Composition(a, _) if a.as_ref() == other)

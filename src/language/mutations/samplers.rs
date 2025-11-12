@@ -32,8 +32,6 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
     ) -> Self {
         let bad_ref = ExprRef(0);
         let mut all_expressions: Vec<_> = [
-            Expr::Constant(Constant::Everyone),
-            Expr::Constant(Constant::EveryEvent),
             Expr::Unary(MonOp::Not, bad_ref),
             Expr::Binary(BinOp::And, bad_ref, bad_ref),
             Expr::Binary(BinOp::Or, bad_ref, bad_ref),
