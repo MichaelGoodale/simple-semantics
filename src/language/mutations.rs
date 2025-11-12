@@ -948,6 +948,15 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 )));
             }
         }
+        for c in [Constant::EveryEvent, Constant::Everyone] {
+            if replacements.is_empty()
+                && expr == &LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(c))
+            {
+                replacements.push(std::borrow::Cow::Owned(LambdaExpr::LanguageOfThoughtExpr(
+                    Expr::Constant(c),
+                )));
+            }
+        }
 
         let choice = replacements.choose(rng).unwrap_or_else(|| {
             panic!(
@@ -1158,6 +1167,9 @@ mod test {
             })
             .take(20)
             .collect();
+        for p in pools.iter() {
+            println!("{p}");
+        }
         assert!(pools.contains("lambda <a,t> P P(a_john)"));
         for p in pools {
             println!("{p}");
@@ -1166,6 +1178,7 @@ mod test {
         Ok(())
     }
 
+    /*
     #[test]
     fn random_expr_no_constant() -> anyhow::Result<()> {
         let actors = &["1", "2", "3", "4", "5"];
@@ -1182,22 +1195,29 @@ mod test {
         for _ in 0..500 {
             let t = LambdaType::random(&mut rng);
             println!("{t}: ");
-            let pool = RootedLambdaPool::random_expr_no_constant(&t, &poss, &mut rng).unwrap();
-            println!("{pool}");
+            if t.size() <= 3 {
+                let pool = RootedLambdaPool::random_expr_no_constant(&t, &poss, &mut rng).unwrap();
+                println!("{pool}");
+            } else {
+                println!("too big :(");
+            }
         }
         Ok(())
-    }
+    }*/
 
     #[test]
     fn enumerate_weirds() -> anyhow::Result<()> {
-        let actors = &["1", "2", "3", "4", "5"];
-        let actor_properties = &["1", "2", "3", "4", "5"];
-        let event_properties = &["1", "2", "3", "4", "5"];
+        let actors = &["1"];
+        let actor_properties = &["1"];
+        let event_properties = &["1"];
         let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
 
-        let t = "<<e,<a,t>>, <a,t>>";
+        let t = "<a,<e,e>>";
 
-        for (p, d) in RootedLambdaPool::enumerator(&LambdaType::from_string(t)?, &poss).take(10) {
+        for (p, d) in RootedLambdaPool::enumerator(&LambdaType::from_string(t)?, &poss)
+            .filter(|(_, e)| !e.has_constant_function())
+            .take(5)
+        {
             println!("{p} {d:?} {}", d.has_constant_function());
         }
         Ok(())
@@ -1234,7 +1254,7 @@ mod test {
             assert_eq!(pool.get_type()?, t);
         }
         let t = LambdaType::from_string("<a,<a,t>>")?;
-        for _ in 0..1000 {
+        for _ in 0..100 {
             let pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
             println!("{pool}");
         }

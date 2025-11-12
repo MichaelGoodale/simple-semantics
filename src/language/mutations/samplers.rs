@@ -143,7 +143,7 @@ impl<'a, 'src, T: LambdaLanguageOfThought + Clone> PossibleExpr<'a, 'src, T> {
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
+impl<'src, T: LambdaLanguageOfThought + Clone + Debug> PossibleExpressions<'src, T> {
     pub(super) fn possibilities<'a>(
         &'a self,
         lambda_type: &LambdaType,
@@ -164,7 +164,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
                 possibilities.push(e);
             }
         }
-
         possibilities.extend(context.variables(lambda_type).map(PossibleExpr::new_owned));
         possibilities.extend(
             context
