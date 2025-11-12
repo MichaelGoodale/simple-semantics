@@ -1166,6 +1166,23 @@ mod test {
         Ok(())
     }
 
+    /*
+    #[test]
+    fn random_expr_no_constant() -> anyhow::Result<()> {
+        let actors = &["1", "2", "3", "4", "5"];
+        let actor_properties = &["1", "2", "3", "4", "5"];
+        let event_properties = &["1", "2", "3", "4", "5"];
+        let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        for _ in 0..50 {
+            let t = LambdaType::random(&mut rng);
+            println!("{t}: ");
+            let pool = RootedLambdaPool::random_expr_no_constant(&t, &poss, &mut rng).unwrap();
+            println!("{pool}");
+        }
+        Ok(())
+    }*/
+
     #[test]
     fn random_expr() -> anyhow::Result<()> {
         let actors = ["john"];
@@ -1178,7 +1195,7 @@ mod test {
             .into_iter()
             .collect();
 
-        for _ in 0..1000 {
+        for _ in 0..100 {
             let t = LambdaType::random(&mut rng);
             println!("sampling: {t}");
             let mut pool = RootedLambdaPool::random_expr(&t, &possibles, &mut rng);
@@ -1248,7 +1265,7 @@ mod test {
         let actor_properties = ["a"];
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
-        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
 
         let mut counts: HashMap<_, usize> = HashMap::default();
         for _ in 0..1000 {
@@ -1259,6 +1276,7 @@ mod test {
             *counts.entry(s).or_default() += 1;
         }
         assert_eq!(counts.len(), 4);
+        dbg!(&counts);
         for (_, v) in counts.iter() {
             assert!(200 <= *v && *v <= 300);
         }

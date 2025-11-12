@@ -73,11 +73,7 @@ impl Ord for RandomPQ {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let c = &self.0;
         let o = &other.0;
-        c.done
-            .cmp(&o.done)
-            .then(o.open_depth_score().cmp(&c.open_depth_score()))
-            .then(o.constant_function.cmp(&c.constant_function))
-            .then(self.1.partial_cmp(&other.1).unwrap())
+        o.cmp(c).then(self.1.partial_cmp(&other.1).unwrap())
     }
 }
 
@@ -94,7 +90,7 @@ impl Ord for Context {
             .cmp(&self.done)
             .then(self.open_depth_score().cmp(&other.open_depth_score()))
             .then(self.constant_function.cmp(&other.constant_function))
-            .then(self.pool_index.cmp(&other.pool_index))
+        //.then(self.pool_index.cmp(&other.pool_index))
     }
 }
 impl Context {

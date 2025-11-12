@@ -58,14 +58,28 @@ fn random(bencher: divan::Bencher) {
     let actors = &["1", "2", "3", "4", "5"];
     let actor_properties = &["1", "2", "3", "4", "5"];
     let event_properties = &["1", "2", "3", "4", "5"];
+    let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
 
     bencher.bench(|| {
         let mut rng = ChaCha8Rng::from_os_rng();
-        let t = LambdaType::random_no_e(&mut rng);
-        let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+        let t = LambdaType::random(&mut rng);
         RootedLambdaPool::random_expr(&t, &poss, &mut rng)
     });
 }
+/*
+#[divan::bench]
+fn random_constant_less(bencher: divan::Bencher) {
+    let actors = &["1", "2", "3", "4", "5"];
+    let actor_properties = &["1", "2", "3", "4", "5"];
+    let event_properties = &["1", "2", "3", "4", "5"];
+
+    bencher.bench(|| {
+        let mut rng = ChaCha8Rng::from_os_rng();
+        let t = LambdaType::random(&mut rng);
+        let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+        RootedLambdaPool::random_expr_no_constant(&t, &poss, &mut rng)
+    });
+}*/
 
 #[divan::bench]
 fn enumerate(bencher: divan::Bencher) {
