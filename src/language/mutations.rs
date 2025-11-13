@@ -952,6 +952,12 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             if replacements.is_empty()
                 && expr == &LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(c))
             {
+                replacements = possible_expressions.possiblities_fixed_children(
+                    LambdaType::t(),
+                    &arguments,
+                    expr.var_type(),
+                    &context,
+                );
                 replacements.push(std::borrow::Cow::Owned(LambdaExpr::LanguageOfThoughtExpr(
                     Expr::Constant(c),
                 )));
