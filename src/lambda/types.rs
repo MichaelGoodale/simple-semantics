@@ -60,9 +60,10 @@ pub enum LambdaType {
     Composition(Box<LambdaType>, Box<LambdaType>),
 }
 
-pub(crate) fn core_type_parser<'src, E>() -> impl Parser<'src, &'src str, LambdaType, E> + Clone
+pub(crate) fn core_type_parser<'src, E>()
+-> impl Parser<'src, &'src str, LambdaType, E> + Clone + 'src
 where
-    E: ParserExtra<'src, &'src str>,
+    E: ParserExtra<'src, &'src str> + 'src,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
 {
     let atom = choice((

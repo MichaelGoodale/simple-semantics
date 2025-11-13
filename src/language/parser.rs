@@ -382,7 +382,7 @@ pub type Spanned<T> = (T, Span);
 
 fn lexer<'src, E>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, E>
 where
-    E: ParserExtra<'src, &'src str>,
+    E: ParserExtra<'src, &'src str> + 'src,
     E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>,
