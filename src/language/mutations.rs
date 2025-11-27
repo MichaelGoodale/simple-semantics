@@ -625,7 +625,7 @@ where
                 continue;
             }
             let n_pools = self.pools.len();
-            if n_pools % 10_000 == 0 {
+            if n_pools.is_multiple_of(10_000) {
                 self.pools.shrink_to_fit();
             }
 
