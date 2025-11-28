@@ -663,20 +663,21 @@ impl<'a, 'b> Execution<'a, 'b> {
         };
         for e in domain {
             variables.set(self.quantifier_depth - 1, e);
-            let subformula_value: bool = self
-                .interp(subformula, scenario, &mut variables)?
-                .try_into()?;
-            match quantifier {
-                Quantifier::Universal => {
-                    if !subformula_value {
-                        result = false;
-                        break;
+            if let Ok(LanguageResult::Bool(subformula_value)) =
+                self.interp(subformula, scenario, &mut variables)
+            {
+                match quantifier {
+                    Quantifier::Universal => {
+                        if !subformula_value {
+                            result = false;
+                            break;
+                        }
                     }
-                }
-                Quantifier::Existential => {
-                    if subformula_value {
-                        result = true;
-                        break;
+                    Quantifier::Existential => {
+                        if subformula_value {
+                            result = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -718,6 +719,7 @@ impl<'a, 'b> Execution<'a, 'b> {
                         let a: Actor = lhs.try_into()?;
                         let rhs = self.interp(*rhs, scenario, variables)?;
                         let e: Event = rhs.try_into()?;
+                        println!("{a}, {e}");
                         match bin_op {
                             BinOp::AgentOf => match scenario.thematic_relations[e as usize].agent {
                                 Some(x) => LanguageResult::Bool(x == a),
@@ -1405,6 +1407,21 @@ mod tests {
         let scenario = labels.iter_scenarios().next().unwrap();
 
         pool.run(scenario, Some(config))?;
+
+        let pool = LanguageExpression::parse(
+            "some_e(x, all_e, AgentOf(a_John, x) & PatientOf(a_Mary, x) & pe_helps(x))",
+        )?;
+        let labels = ScenarioDataset::parse(
+            "\"John helps Mary\" <John (man), Phil (man), Mary (woman); {A: John (sleeps)}, {A: John, P: Mary (helps)}> lambda a x AgentOf(x, e_1); lambda <a, t> P P(a_John) & ~P(a_Phil) & ~P(a_Mary); lambda a x PatientOf(x, e_1); lambda <a, <a, t>> P P(a_Mary, a_John) & ~P(a_John, a_John) & ~P(a_Phil, a_John)",
+        )?;
+
+        let config = ExecutionConfig::default().allow_empty_quantification();
+        let scenario = labels.iter_scenarios().next().unwrap();
+
+        assert_eq!(
+            pool.run(scenario, Some(config))?,
+            LanguageResult::Bool(true)
+        );
 
         Ok(())
     }
