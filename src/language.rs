@@ -661,26 +661,40 @@ impl<'a, 'b> Execution<'a, 'b> {
             Quantifier::Universal => true,
             Quantifier::Existential => false,
         };
+        let mut updated = false;
+        let mut error_found = false;
         for e in domain {
             variables.set(self.quantifier_depth - 1, e);
-            if let Ok(LanguageResult::Bool(subformula_value)) =
-                self.interp(subformula, scenario, &mut variables)
-            {
-                match quantifier {
-                    Quantifier::Universal => {
-                        if !subformula_value {
-                            result = false;
-                            break;
+            match self.interp(subformula, scenario, &mut variables) {
+                Ok(LanguageResult::Bool(subformula_value)) => {
+                    updated = true;
+                    match quantifier {
+                        Quantifier::Universal => {
+                            if !subformula_value {
+                                result = false;
+                                break;
+                            }
                         }
-                    }
-                    Quantifier::Existential => {
-                        if subformula_value {
-                            result = true;
-                            break;
+                        Quantifier::Existential => {
+                            if subformula_value {
+                                result = true;
+                                break;
+                            }
                         }
                     }
                 }
+                Err(LanguageTypeError::PresuppositionError) => error_found = true,
+                Err(e) => return Err(e),
+                Ok(x) => {
+                    return Err(LanguageTypeError::WrongType {
+                        input: x.to_language_result_type(),
+                        output: LanguageResultType::Bool,
+                    });
+                }
             }
+        }
+        if error_found && !updated {
+            return Err(LanguageTypeError::PresuppositionError);
         }
         self.quantifier_depth -= 1;
         Ok(LanguageResult::Bool(result))
@@ -719,7 +733,6 @@ impl<'a, 'b> Execution<'a, 'b> {
                         let a: Actor = lhs.try_into()?;
                         let rhs = self.interp(*rhs, scenario, variables)?;
                         let e: Event = rhs.try_into()?;
-                        println!("{a}, {e}");
                         match bin_op {
                             BinOp::AgentOf => match scenario.thematic_relations[e as usize].agent {
                                 Some(x) => LanguageResult::Bool(x == a),
