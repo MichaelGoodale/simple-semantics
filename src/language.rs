@@ -736,12 +736,12 @@ impl<'a, 'b> Execution<'a, 'b> {
                         match bin_op {
                             BinOp::AgentOf => match scenario.thematic_relations[e as usize].agent {
                                 Some(x) => LanguageResult::Bool(x == a),
-                                None => return Err(LanguageTypeError::PresuppositionError),
+                                None => LanguageResult::Bool(false), //None => return Err(LanguageTypeError::PresuppositionError),
                             },
                             BinOp::PatientOf => {
                                 match scenario.thematic_relations[e as usize].patient {
                                     Some(x) => LanguageResult::Bool(x == a),
-                                    None => return Err(LanguageTypeError::PresuppositionError),
+                                    None => LanguageResult::Bool(false), //None => return Err(LanguageTypeError::PresuppositionError),
                                 }
                             }
                             _ => panic!("impossible because of previous check"),
@@ -929,8 +929,8 @@ mod tests {
             start: ExprRef(2),
         };
         assert_eq!(
-            expr.run(&simple_scenario, None).unwrap_err(),
-            LanguageTypeError::PresuppositionError
+            expr.run(&simple_scenario, None).unwrap(),
+            LanguageResult::Bool(false)
         );
         Ok(())
     }
