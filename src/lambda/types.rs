@@ -46,7 +46,7 @@ pub enum TypeError {
     CantApply(LambdaType, LambdaType),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Default, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Default, Hash, PartialOrd, Ord)]
 ///The basic type system of the lambda calculus and LOT.
 pub enum LambdaType {
     #[default]
