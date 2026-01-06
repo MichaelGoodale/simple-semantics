@@ -251,7 +251,7 @@ pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
 
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     ///Creates an anonymous free variable with [`index`] of type [`t`]
-    pub fn new_free_variable(&self, index: usize, t: LambdaType) -> RootedLambdaPool<'src, T> {
+    pub fn new_free_variable(index: usize, t: LambdaType) -> RootedLambdaPool<'src, T> {
         RootedLambdaPool {
             pool: LambdaPool(vec![LambdaExpr::FreeVariable(FreeVar::Anonymous(index), t)]),
             root: LambdaExprRef(0),
