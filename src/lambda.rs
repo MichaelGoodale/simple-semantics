@@ -258,6 +258,17 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
         }
     }
 
+    ///Gets all free variables that must be bound in order to evaluate this lambda expression
+    pub fn free_variables(&self) -> impl Iterator<Item = (&FreeVar<'src>, &LambdaType)> {
+        self.pool.0.iter().filter_map(|x| {
+            if let LambdaExpr::FreeVariable(free_var, lambda_type) = x {
+                Some((free_var, lambda_type))
+            } else {
+                None
+            }
+        })
+    }
+
     pub(crate) fn root(&self) -> LambdaExprRef {
         self.root
     }
