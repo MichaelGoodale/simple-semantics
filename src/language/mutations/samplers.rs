@@ -1,5 +1,8 @@
 use ahash::HashMap;
-use std::{borrow::Cow, collections::hash_map::Entry};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, btree_map::Entry as BTEntry, hash_map::Entry},
+};
 
 use super::*;
 use crate::{Actor, PropertyLabel, lambda::types::LambdaType};
@@ -10,14 +13,14 @@ use crate::{Actor, PropertyLabel, lambda::types::LambdaType};
 ///input arguments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PossibleExpressions<'src, T> {
-    expressions: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>,
+    expressions: HashMap<LambdaType, BTreeMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>,
 }
 
-impl<'src, T> From<HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>>
+impl<'src, T> From<HashMap<LambdaType, BTreeMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>>
     for PossibleExpressions<'src, T>
 {
     fn from(
-        value: HashMap<LambdaType, HashMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>,
+        value: HashMap<LambdaType, BTreeMap<Vec<LambdaType>, Vec<LambdaExpr<'src, T>>>>,
     ) -> Self {
         PossibleExpressions { expressions: value }
     }
@@ -81,7 +84,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             )]
         }));
 
-        let mut expressions: HashMap<LambdaType, HashMap<_, Vec<_>>> = HashMap::default();
+        let mut expressions: HashMap<LambdaType, BTreeMap<_, Vec<_>>> = HashMap::default();
         for expr in all_expressions.into_iter() {
             let output = expr.get_type();
             let arguments = expr.get_arguments().collect();
@@ -89,10 +92,10 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             //Annoying match to avoid cloning arguments
             match expressions.entry(output.clone()) {
                 Entry::Occupied(mut occupied) => {
-                    let inner_h: &mut HashMap<_, _> = occupied.get_mut();
+                    let inner_h: &mut BTreeMap<_, _> = occupied.get_mut();
                     match inner_h.entry(arguments) {
-                        Entry::Occupied(mut occupied) => occupied.get_mut().push(expr),
-                        Entry::Vacant(vacant) => {
+                        BTEntry::Occupied(mut occupied) => occupied.get_mut().push(expr),
+                        BTEntry::Vacant(vacant) => {
                             vacant.insert(vec![expr]);
                         }
                     }
