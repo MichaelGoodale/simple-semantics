@@ -873,6 +873,8 @@ use thiserror::Error;
 mod lambda_implementation;
 pub use lambda_implementation::ConjoiningError;
 
+mod enumerator;
+
 #[cfg(feature = "sampling")]
 mod mutations;
 

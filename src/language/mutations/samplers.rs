@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::*;
-use crate::{Actor, PropertyLabel, lambda::types::LambdaType};
+use crate::{Actor, PropertyLabel, lambda::types::LambdaType, language::enumerator::SimpleContext};
 
 ///A struct which defines a HashMap of all types and expressions.
 ///The outer HashMap is for the return types of expressions and the inner HashMap is for their
@@ -111,7 +111,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PossibleExpr<'a, 'src, T: LambdaLanguageOfThought + Clone> {
+pub(crate) struct PossibleExpr<'a, 'src, T: LambdaLanguageOfThought + Clone> {
     expr: Cow<'a, LambdaExpr<'src, T>>,
     app_details: Option<(LambdaType, LambdaType)>,
 }
@@ -143,6 +143,38 @@ impl<'a, 'src, T: LambdaLanguageOfThought + Clone> PossibleExpr<'a, 'src, T> {
             }),
             app_details: Some((subformula, argument)),
         }
+    }
+}
+impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
+    pub(crate) fn terms<'a>(
+        &'a self,
+        lambda_type: &LambdaType,
+        is_subformula: bool,
+        variables: Vec<LambdaExpr<'src, T>>,
+        //context: &SimpleContext,
+    ) -> Vec<PossibleExpr<'a, 'src, T>> {
+        let mut possibilities = vec![];
+        if !is_subformula {
+            if let Some(x) = self.expressions.get(lambda_type).map(|x| {
+                x.iter()
+                    .flat_map(|(_, v)| v.iter().map(PossibleExpr::new_borrowed))
+            }) {
+                possibilities.extend(x);
+            }
+
+            if let Ok((lhs, _)) = lambda_type.split() {
+                let e = PossibleExpr::new_owned(LambdaExpr::Lambda(LambdaExprRef(0), lhs.clone()));
+                possibilities.push(e);
+            }
+        }
+        possibilities.extend(variables.into_iter().map(PossibleExpr::new_owned));
+        //possibilities.extend(
+        //    context
+        //        .applications(lambda_type)
+        //        .map(|(subformula, argument)| PossibleExpr::new_application(subformula, argument)),
+        //);
+
+        possibilities
     }
 }
 

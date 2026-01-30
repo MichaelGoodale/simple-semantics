@@ -22,7 +22,7 @@ use crate::lambda::{
 mod context;
 mod samplers;
 pub use context::Context;
-use samplers::PossibleExpr;
+pub(crate) use samplers::PossibleExpr;
 pub use samplers::PossibleExpressions;
 
 #[derive(Debug, Error, Clone)]
