@@ -4,8 +4,11 @@ use ahash::{HashMap, HashSet};
 use itertools::{Either, repeat_n};
 
 use crate::{
-    lambda::{LambdaExpr, LambdaLanguageOfThought, types::LambdaType},
-    language::{Expr, PossibleExpressions, mutations::PossibleExpr},
+    lambda::{
+        LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
+        types::LambdaType,
+    },
+    language::{Expr, MonOp, PossibleExpressions, mutations::PossibleExpr},
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -113,6 +116,34 @@ struct PartialExpr<'src, T: LambdaLanguageOfThought> {
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone + Debug> PartialExpr<'src, T> {
+    fn to_pool(&self) -> RootedLambdaPool<'src, T> {
+        let mut pool = self
+            .pool
+            .iter()
+            .map(|x| match x {
+                ExprOrType::Type { .. } => None,
+                ExprOrType::Expr { lambda_expr } => Some(lambda_expr.clone()),
+            })
+            .collect::<Option<Vec<_>>>()
+            .unwrap();
+
+        for (i, x) in pool.iter_mut().enumerate() {
+            let children = self.edges.iter().filter_map(|(src, dest)| {
+                if *src == i {
+                    Some(LambdaExprRef(*dest as u32))
+                } else {
+                    None
+                }
+            });
+            x.change_children(children);
+        }
+
+        RootedLambdaPool {
+            pool: LambdaPool(pool),
+            root: LambdaExprRef(0),
+        }
+    }
+
     fn new(t: &LambdaType) -> Self {
         PartialExpr {
             pool: vec![ExprOrType::Type {
@@ -151,6 +182,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> PartialExpr<'src, T> {
     fn expand_position(
         self,
         possibles: &PossibleExpressions<'src, T>,
+        filter: impl Fn(&LambdaExpr<'src, T>, Option<&LambdaExpr<'src, T>>) -> bool,
     ) -> impl Iterator<Item = Self> {
         let ExprOrType::Type {
             lambda_type,
@@ -161,7 +193,16 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> PartialExpr<'src, T> {
         };
         let variables = self.variables(self.position.unwrap(), lambda_type);
 
-        let terms = possibles.terms(lambda_type, false, variables);
+        let mut terms = possibles.terms(lambda_type, false, variables);
+
+        let parent = self.parent(self.position.unwrap()).map(|x| {
+            let ExprOrType::Expr { lambda_expr } = &self.pool[x] else {
+                panic!()
+            };
+            lambda_expr
+        });
+
+        terms.retain(|x| filter(x.expr(), parent));
 
         repeat_n(self, terms.len())
             .zip(terms)
@@ -207,14 +248,25 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
     fn enumerate(&self, t: &LambdaType) {
         let x: PartialExpr<'src, Expr<'src>> = PartialExpr::new(t);
         let mut stack = vec![x];
-        let mut done = vec![];
+        //let mut done = vec![];
         while let Some(s) = stack.pop() {
             if s.pool.len() > 5 {
                 continue;
             }
-            for x in s.expand_position(self) {
+            for x in s.expand_position(self, |x, y| {
+                !(matches!(
+                    x,
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, _))
+                ) && matches!(
+                    y,
+                    Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
+                        MonOp::Not,
+                        _
+                    )))
+                ))
+            }) {
                 if x.done() {
-                    done.push(x);
+                    println!("{}", x.to_pool());
                 } else {
                     stack.push(x);
                 }
@@ -233,7 +285,7 @@ mod test {
         let actor_properties = ["a"];
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
-        let t = vec![LambdaType::A];
+        let t = vec![LambdaType::A, LambdaType::E, LambdaType::T];
         for t in t {
             possibles.enumerate(&t);
         }

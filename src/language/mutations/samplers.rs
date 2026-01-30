@@ -121,6 +121,10 @@ impl<'a, 'src, T: LambdaLanguageOfThought + Clone> PossibleExpr<'a, 'src, T> {
         (self.expr.into_owned(), self.app_details)
     }
 
+    pub fn expr(&self) -> &LambdaExpr<'src, T> {
+        &self.expr
+    }
+
     pub fn new_borrowed(expr: &'a LambdaExpr<'src, T>) -> Self {
         PossibleExpr {
             expr: Cow::Borrowed(expr),
