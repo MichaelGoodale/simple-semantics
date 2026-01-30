@@ -231,7 +231,18 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> PartialExpr<'src, T> {
                 }
             }
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-            _ => todo!(),
+            LambdaExpr::Lambda(_, t) => {
+                self.pool.push(ExprOrType::Type {
+                    lambda_type: t.clone(),
+                    is_app_subformula: false,
+                });
+                self.edges
+                    .push((self.position.unwrap(), self.pool.len() - 1));
+            }
+            e => {
+                println!("{e:?}");
+                todo!()
+            }
         }
         self.pool[self.position.unwrap()] = ExprOrType::Expr { lambda_expr };
 
@@ -245,12 +256,17 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> PartialExpr<'src, T> {
 }
 
 impl<'src> PossibleExpressions<'src, Expr<'src>> {
-    fn enumerate(&self, t: &LambdaType) {
+    ///Enumerate over all possible expressions of type [`t`]
+    pub fn enumerate(
+        &self,
+        t: &LambdaType,
+        max_length: usize,
+    ) -> Vec<RootedLambdaPool<'src, Expr<'src>>> {
         let x: PartialExpr<'src, Expr<'src>> = PartialExpr::new(t);
         let mut stack = vec![x];
-        //let mut done = vec![];
+        let mut done = vec![];
         while let Some(s) = stack.pop() {
-            if s.pool.len() > 5 {
+            if s.pool.len() > max_length {
                 continue;
             }
             for x in s.expand_position(self, |x, y| {
@@ -266,12 +282,13 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
                 ))
             }) {
                 if x.done() {
-                    println!("{}", x.to_pool());
+                    done.push(x.to_pool());
                 } else {
                     stack.push(x);
                 }
             }
         }
+        done
     }
 }
 
@@ -285,9 +302,19 @@ mod test {
         let actor_properties = ["a"];
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
-        let t = vec![LambdaType::A, LambdaType::E, LambdaType::T];
+        let t = vec![
+            LambdaType::A,
+            LambdaType::E,
+            LambdaType::T,
+            LambdaType::at().clone(),
+            LambdaType::et().clone(),
+        ];
         for t in t {
-            possibles.enumerate(&t);
+            let d = possibles.enumerate(&t, 6);
+            println!("{t}");
+            for d in d {
+                println!("\t{d}");
+            }
         }
         Ok(())
     }
