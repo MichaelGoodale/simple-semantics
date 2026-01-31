@@ -302,7 +302,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     }
 
     ///Split into the pool and root seperately.
-    pub(crate) fn into(self) -> (LambdaPool<'src, T>, LambdaExprRef) {
+    pub(crate) fn split(self) -> (LambdaPool<'src, T>, LambdaExprRef) {
         (self.pool, self.root)
     }
 
@@ -320,7 +320,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
             return None;
         };
 
-        let (other_pool, other_root) = other.into();
+        let (other_pool, other_root) = other.split();
         let other_root = self.pool.extend_pool(other_root, other_pool);
 
         self.root = self.pool.add(if self_subformula {
@@ -357,7 +357,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
         fvar: FreeVar<'src>,
         replacement: RootedLambdaPool<'src, T>,
     ) -> Result<(), LambdaError> {
-        let (other_pool, other_root) = replacement.into();
+        let (other_pool, other_root) = replacement.split();
         let other_root = self.pool.extend_pool(other_root, other_pool);
         self.pool.bind_free_variable(self.root, fvar, other_root)?;
         //self.root = self.pool.cleanup(self.root);

@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::*;
-use crate::{Actor, PropertyLabel, lambda::types::LambdaType, language::enumerator::SimpleContext};
+use crate::{Actor, PropertyLabel, lambda::types::LambdaType};
 
 ///A struct which defines a HashMap of all types and expressions.
 ///The outer HashMap is for the return types of expressions and the inner HashMap is for their
