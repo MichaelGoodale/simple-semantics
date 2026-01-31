@@ -88,7 +88,7 @@ pub enum ReductionError {
 }
 
 ///An index to a [`LambdaExpr`] in the lambda pool.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct LambdaExprRef(pub u32);
 
 ///A trait which allows one to define a language of thought that interacts with the lambda
@@ -170,7 +170,7 @@ impl LambdaLanguageOfThought for () {
 }
 
 ///A free variable which can either be named or refered to by a integer.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum FreeVar<'a> {
     ///A labeled free variable
     Named(&'a str),
@@ -199,7 +199,7 @@ impl<'a> From<usize> for FreeVar<'a> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 ///The core expression type of a lambda term
 pub enum LambdaExpr<'a, T> {
     ///A lambda of a given type.

@@ -13,7 +13,7 @@ use itertools::Either;
 use thiserror;
 
 ///All binary operations
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum BinOp {
     ///<a,<e,t>> function that returns whether the first argument is the agent of the second
     ///argument.
@@ -51,7 +51,7 @@ impl BinOp {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 ///All unary operations
 pub enum MonOp<'a> {
     ///Logical not
@@ -87,7 +87,7 @@ impl<'a> Display for MonOp<'a> {
 }
 
 ///Whether something refers to an actor or event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[allow(missing_docs)]
 pub enum ActorOrEvent {
     Actor,
@@ -113,7 +113,7 @@ impl From<ActorOrEvent> for LambdaType {
 }
 
 ///Any valid constant in the language.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Constant<'a> {
     ///The set of all actors in the [`Scenario`].
     Everyone,
@@ -141,7 +141,7 @@ impl Display for Constant<'_> {
 }
 
 ///The ID of a given variable bound by quantification
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum Variable {
     ///The variable is over actors.
     Actor(u32),
@@ -165,7 +165,7 @@ impl Variable {
 }
 
 ///An enum which represents all possible quantifiers in the language.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum Quantifier {
     ///Universal Quantification
     Universal,
@@ -185,7 +185,7 @@ impl Display for Quantifier {
 ///The basic expression type of the language of thought.
 ///Note that it *does not* include free variables or any of the machinery of the lambda calculus
 ///which is handled elsewhere.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum Expr<'a> {
     ///A quantified expression. Variables are implemented with DeBruijn indices.
     Quantifier {
@@ -213,7 +213,7 @@ pub enum Expr<'a> {
 }
 
 ///An index for a specific [`Expr`] in a [`LanguageExpression`]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ExprRef(pub u32);
 
 ///An arena allocated tree which represents an expression in the language of thought built out of

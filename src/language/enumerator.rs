@@ -1,11 +1,10 @@
 use std::{
-    fmt::{Debug, Display},
+    fmt::Debug,
     hash::Hash,
     rc::{Rc, Weak},
 };
 
-use ahash::HashSet;
-use itertools::{Itertools, repeat_n};
+use itertools::repeat_n;
 use thiserror::Error;
 use weak_table::WeakHashSet;
 
@@ -24,7 +23,9 @@ enum FinishedOrType<'src, T: LambdaLanguageOfThought> {
     Expr(Rc<HashedExpr<'src, T>>),
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq> FinishedOrType<'src, T> {
+impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug>
+    FinishedOrType<'src, T>
+{
     fn make_not_partial_if_possible(
         &mut self,
         table: &mut WeakHashSet<Weak<HashedExpr<'src, T>>>,
@@ -83,7 +84,13 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
         let mut stack: Vec<HashedExpr<_>> = self
             .terms(t, false, vec![])
             .iter()
-            .map(|x| x.expr().clone().into())
+            .map(|x| {
+                let mut h: HashedExpr<_> = x.expr().clone().into();
+                if let LambdaExpr::Lambda(_, _) = h.expr {
+                    h.children = vec![FinishedOrType::Type(t.rhs().unwrap().clone())];
+                }
+                h
+            })
             .collect();
 
         let mut table: WeakHashSet<Weak<HashedExpr<'src, Expr<'src>>>> = WeakHashSet::new();
@@ -154,7 +161,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         });
 
         //Initialize any types that haven't been started.
-        if let Some((i, t)) = this
+        if let Some((i, typ)) = this
             .h
             .children
             .iter()
@@ -164,12 +171,22 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                 _ => None,
             })
         {
-            let mut terms = possibles.terms(t, false, vec![]);
-            terms.retain(|x| (x.expr().n_children() + n) <= max_length);
+            let mut terms = possibles.terms(typ, false, vec![]);
 
-            for (mut parent, t) in repeat_n(self, terms.len()).zip(terms) {
-                let e = t.expr().clone();
-                let h = HashedExpr::from(e);
+            terms.retain(|x| (x.expr().n_children() + n) <= max_length);
+            let terms = terms
+                .into_iter()
+                .map(|x| {
+                    let (e, _) = x.into_expr();
+                    let mut h = HashedExpr::from(e);
+                    if let LambdaExpr::Lambda(_, _) = h.expr {
+                        h.children = vec![FinishedOrType::Type(typ.rhs().unwrap().clone())];
+                    }
+                    h
+                })
+                .collect::<Vec<_>>();
+
+            for (mut parent, h) in repeat_n(self, terms.len()).zip(terms) {
                 if h.is_done() {
                     let h = match table.get(&h) {
                         Some(h) => h,
@@ -250,6 +267,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> From<LambdaExpr<'src, T>>
             }
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => vec![],
             LambdaExpr::Lambda(_, t) => {
+                //not quite right but we need this here otherwise it will falsely get considered
+                //"done"
                 vec![FinishedOrType::Type(t.clone())]
             }
             e => {
@@ -531,8 +550,12 @@ mod test {
             LambdaType::et().clone(),
         ];
         for t in t {
-            let d = possibles.alt_enumerate(&t, 10);
-            println!("{:?}", d.len());
+            let d = possibles.alt_enumerate(&t, 7);
+            for x in d {
+                println!("{x}");
+                let o = x.get_type()?;
+                assert_eq!(o, t);
+            }
         }
         Ok(())
     }
