@@ -125,6 +125,11 @@ pub trait LambdaLanguageOfThought {
     ///Get the type of all children in order.
     fn get_arguments(&self) -> impl Iterator<Item = LambdaType>;
 
+    ///Checks whether an expression is commutative
+    fn commutative(&self) -> bool {
+        false
+    }
+
     ///Convert from a [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]. May return an
     ///error if there are any lambda terms left in the [`RootedLambdaPool<T>`] (e.g. not fully
     ///reduced).
@@ -236,6 +241,16 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
             LambdaExpr::Lambda(..) => true,
             LambdaExpr::LanguageOfThoughtExpr(e) => e.inc_depth(),
             LambdaExpr::BoundVariable(..)
+            | LambdaExpr::FreeVariable(..)
+            | LambdaExpr::Application { .. } => false,
+        }
+    }
+
+    pub(crate) fn commutative(&self) -> bool {
+        match self {
+            LambdaExpr::LanguageOfThoughtExpr(e) => e.commutative(),
+            LambdaExpr::Lambda(..)
+            | LambdaExpr::BoundVariable(..)
             | LambdaExpr::FreeVariable(..)
             | LambdaExpr::Application { .. } => false,
         }

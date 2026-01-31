@@ -202,6 +202,10 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             | Expr::Constant(_) => ArgumentIterator::D(empty()),
         }
     }
+
+    fn commutative(&self) -> bool {
+        matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
+    }
 }
 
 impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {

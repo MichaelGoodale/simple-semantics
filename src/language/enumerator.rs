@@ -4,6 +4,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
+use ahash::HashSet;
 use itertools::repeat_n;
 use thiserror::Error;
 use weak_table::WeakHashSet;
@@ -20,15 +21,15 @@ use crate::{
 enum FinishedOrType<'src, T: LambdaLanguageOfThought> {
     Type(LambdaType),
     PartiallyExpanded(ExprWrapper<'src, T>),
-    Expr(Rc<HashedExpr<'src, T>>),
+    Expr(Rc<FinishedExpr<'src, T>>),
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug>
+impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug + Ord>
     FinishedOrType<'src, T>
 {
     fn make_not_partial_if_possible(
         &mut self,
-        table: &mut WeakHashSet<Weak<HashedExpr<'src, T>>>,
+        table: &mut WeakHashSet<Weak<FinishedExpr<'src, T>>>,
     ) -> bool {
         if let FinishedOrType::PartiallyExpanded(ExprWrapper { h, variables: _ }) = self {
             if !h.is_done() {
@@ -40,15 +41,16 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug>
                     return false;
                 }
             }
+            //annoying stuff to get h out.
+            let temp = std::mem::replace(self, FinishedOrType::Type(LambdaType::A));
+            let FinishedOrType::PartiallyExpanded(ExprWrapper { h, .. }) = temp else {
+                panic!()
+            };
 
-            let h = match table.get(h) {
+            let h: FinishedExpr<'src, T> = h.try_into().unwrap();
+            let h = match table.get(&h) {
                 Some(h) => h,
                 None => {
-                    //annoying stuff to get h out.
-                    let temp = std::mem::replace(self, FinishedOrType::Type(LambdaType::A));
-                    let FinishedOrType::PartiallyExpanded(ExprWrapper { h, .. }) = temp else {
-                        panic!()
-                    };
                     let h = Rc::new(h);
                     table.insert(h.clone());
                     table.get(&h).unwrap()
@@ -60,6 +62,12 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug>
             matches!(self, FinishedOrType::Expr(_))
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct FinishedExpr<'src, T: LambdaLanguageOfThought> {
+    expr: LambdaExpr<'src, T>,
+    children: Vec<Rc<FinishedExpr<'src, T>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -93,9 +101,12 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             })
             .collect();
 
-        let mut table: WeakHashSet<Weak<HashedExpr<'src, Expr<'src>>>> = WeakHashSet::new();
+        let mut table: WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>> = WeakHashSet::new();
 
-        let mut done: Vec<Rc<_>> = stack.extract_if(.., |x| x.is_done()).map(Rc::new).collect();
+        let mut done: Vec<Rc<FinishedExpr<_>>> = stack
+            .extract_if(.., |x| x.is_done())
+            .map(|x| Rc::new(x.try_into().unwrap()))
+            .collect();
 
         for x in done.iter() {
             table.insert(x.clone());
@@ -122,8 +133,13 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             }
         }
 
+        print!("Done has {} now ", done.len());
+
+        let done = done.into_iter().collect::<HashSet<_>>();
+        println!("{}", done.len());
+
         done.into_iter()
-            .map(|x| Rc::unwrap_or_clone(x).try_into().unwrap())
+            .map(|x| Rc::unwrap_or_clone(x).into())
             .collect()
     }
 }
@@ -149,11 +165,11 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         mut self,
         mut path: Vec<usize>,
         possibles: &PossibleExpressions<'src, Expr<'src>>,
-        table: &mut WeakHashSet<Weak<HashedExpr<'src, Expr<'src>>>>,
+        table: &mut WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
         stack: &mut Vec<(usize, ExprWrapper<'src, Expr<'src>>)>,
         max_length: usize,
         n: usize,
-    ) -> Option<Rc<HashedExpr<'src, Expr<'src>>>> {
+    ) -> Option<Rc<FinishedExpr<'src, Expr<'src>>>> {
         let this = get_this(&mut self, &path);
 
         this.h.children.iter_mut().for_each(|x| {
@@ -173,7 +189,16 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         {
             let mut terms = possibles.terms(typ, false, vec![]);
 
-            terms.retain(|x| (x.expr().n_children() + n) <= max_length);
+            terms.retain(|x| {
+                (x.expr().n_children() + n) <= max_length
+                    && !(matches!(
+                        this.h.expr,
+                        LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, _))
+                    ) && matches!(
+                        x.expr(),
+                        LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, _))
+                    ))
+            });
             let terms = terms
                 .into_iter()
                 .map(|x| {
@@ -188,6 +213,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
 
             for (mut parent, h) in repeat_n(self, terms.len()).zip(terms) {
                 if h.is_done() {
+                    let h = h.try_into().unwrap();
                     let h = match table.get(&h) {
                         Some(h) => h,
                         None => {
@@ -221,7 +247,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
             path.push(i);
             self.expand(path, possibles, table, stack, max_length, n);
         } else if path.is_empty() {
-            let x = self.h;
+            let x: FinishedExpr<'src, Expr<'src>> = self.h.try_into().unwrap();
             match table.get(&x) {
                 Some(x) => return Some(x),
                 None => {
@@ -237,22 +263,52 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone> HashedExpr<'src, T> {
-    fn convert(pool: &RootedLambdaPool<'src, T>, i: LambdaExprRef) -> HashedExpr<'src, T> {
+impl<'src, T: LambdaLanguageOfThought + Clone> FinishedExpr<'src, T> {
+    fn convert(pool: &RootedLambdaPool<'src, T>, i: LambdaExprRef) -> FinishedExpr<'src, T> {
         let expr = pool.get(i).clone();
         let children = expr
             .get_children()
-            .map(|i| FinishedOrType::Expr(Rc::new(HashedExpr::convert(pool, i))))
+            .map(|i| Rc::new(FinishedExpr::convert(pool, i)))
             .collect::<Vec<_>>();
 
-        HashedExpr { expr, children }
+        FinishedExpr { expr, children }
     }
+}
 
+impl<'src, T: LambdaLanguageOfThought + Clone> HashedExpr<'src, T> {
     fn is_done(&self) -> bool {
         self.children.iter().all(|x| match x {
-            FinishedOrType::Expr(e) => e.is_done(),
-            FinishedOrType::PartiallyExpanded(_) => false,
-            FinishedOrType::Type(_) => false,
+            FinishedOrType::Expr(_) => true,
+            FinishedOrType::PartiallyExpanded(_) | FinishedOrType::Type(_) => false,
+        })
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("This HashedExpr isn't done!")]
+struct FinishingError;
+
+impl<'src, T: LambdaLanguageOfThought + Clone + Debug + PartialOrd + Ord>
+    TryFrom<HashedExpr<'src, T>> for FinishedExpr<'src, T>
+{
+    type Error = FinishingError;
+    fn try_from(value: HashedExpr<'src, T>) -> Result<FinishedExpr<'src, T>, FinishingError> {
+        let mut children: Vec<_> = value
+            .children
+            .into_iter()
+            .map(|x| match x {
+                FinishedOrType::Expr(e) => Ok(e),
+                _ => Err(FinishingError),
+            })
+            .collect::<Result<_, _>>()?;
+
+        if value.expr.commutative() {
+            children.sort();
+        }
+
+        Ok(FinishedExpr {
+            expr: value.expr,
+            children,
         })
     }
 }
@@ -285,30 +341,21 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> From<LambdaExpr<'src, T>>
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> From<RootedLambdaPool<'src, T>>
-    for HashedExpr<'src, T>
+    for FinishedExpr<'src, T>
 {
     fn from(value: RootedLambdaPool<'src, T>) -> Self {
-        HashedExpr::convert(&value, value.root)
+        FinishedExpr::convert(&value, value.root)
     }
 }
 
-#[derive(Debug, Error)]
-#[error("There is a unexpanded type in this HashedExpr")]
-struct FromHashedExprError;
-
-impl<'src, T: LambdaLanguageOfThought + Clone> TryFrom<HashedExpr<'src, T>>
+impl<'src, T: LambdaLanguageOfThought + Clone> From<FinishedExpr<'src, T>>
     for RootedLambdaPool<'src, T>
 {
-    type Error = FromHashedExprError;
-
-    fn try_from(value: HashedExpr<'src, T>) -> Result<Self, FromHashedExprError> {
+    fn from(value: FinishedExpr<'src, T>) -> Self {
         let mut pool = vec![None];
         let mut stack = vec![(Rc::new(value), LambdaExprRef(0))];
         while let Some((x, i)) = stack.pop() {
             for x in x.children.iter().cloned() {
-                let FinishedOrType::Expr(x) = x else {
-                    return Err(FromHashedExprError);
-                };
                 stack.push((x, LambdaExprRef((pool.len()) as u32)));
                 pool.push(None);
             }
@@ -321,10 +368,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone> TryFrom<HashedExpr<'src, T>>
             pool[i.0 as usize] = Some(e);
         }
 
-        Ok(RootedLambdaPool {
+        RootedLambdaPool {
             pool: LambdaPool(pool.into_iter().collect::<Option<_>>().unwrap()),
             root: LambdaExprRef(0),
-        })
+        }
     }
 }
 
@@ -528,8 +575,8 @@ mod test {
     #[test]
     fn convert_to_weak() -> anyhow::Result<()> {
         let x = RootedLambdaPool::parse("lambda a x some_e(e, pe_run(e), AgentOf(x, e))")?;
-        let y: HashedExpr<_> = x.clone().into();
-        let x2: RootedLambdaPool<_> = y.try_into()?;
+        let y: FinishedExpr<_> = x.clone().into();
+        let x2: RootedLambdaPool<_> = y.into();
         println!("{x2:?}");
         assert_eq!(x.to_string(), x2.to_string());
 
@@ -550,9 +597,8 @@ mod test {
             LambdaType::et().clone(),
         ];
         for t in t {
-            let d = possibles.alt_enumerate(&t, 7);
+            let d = possibles.alt_enumerate(&t, 10);
             for x in d {
-                println!("{x}");
                 let o = x.get_type()?;
                 assert_eq!(o, t);
             }
