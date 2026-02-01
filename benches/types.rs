@@ -94,6 +94,19 @@ fn enumerate(bencher: divan::Bencher) {
     });
 }
 
+#[divan::bench]
+fn alt_enumerate(bencher: divan::Bencher) {
+    let actors = &["1", "2", "3", "4", "5"];
+    let actor_properties = &["1", "2", "3", "4", "5"];
+    let event_properties = &["1", "2", "3", "4", "5"];
+
+    let t = LambdaType::from_string("<a,<a,t>>").unwrap();
+    bencher.bench(|| {
+        let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+        poss.alt_enumerator(&t, 10).take(10_000).count()
+    });
+}
+
 #[divan::bench(args = ["every_e(x,pe_dance,AgentOf(a_Phil,x))",
 "every_e(x,pe_dance,AgentOf(a_Mary,x))",
 "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))"])]

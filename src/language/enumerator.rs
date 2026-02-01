@@ -82,13 +82,41 @@ struct ExprWrapper<'src, T: LambdaLanguageOfThought> {
     variables: Vec<LambdaType>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Enumerator<'a, 'src> {
+    max_length: usize,
+    stack: Vec<(usize, ExprWrapper<'src, Expr<'src>>)>,
+    table: WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
+    done: HashSet<Rc<FinishedExpr<'src, Expr<'src>>>>,
+    possibles: &'a PossibleExpressions<'src, Expr<'src>>,
+}
+
+impl<'src> Iterator for Enumerator<'_, 'src> {
+    type Item = RootedLambdaPool<'src, Expr<'src>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((n, x)) = self.stack.pop() {
+            if let Some(new) = x.expand(
+                vec![],
+                self.possibles,
+                &mut self.table,
+                &mut self.stack,
+                self.max_length,
+                n,
+            ) {
+                let h = new.clone();
+                if self.done.insert(new) {
+                    return Some((*h).clone().into());
+                }
+            }
+        }
+        None
+    }
+}
+
 impl<'src> PossibleExpressions<'src, Expr<'src>> {
     ///Enumerate over all possible expressions of type [`t`]
-    pub fn alt_enumerate(
-        &self,
-        t: &LambdaType,
-        max_length: usize,
-    ) -> Vec<RootedLambdaPool<'src, Expr<'src>>> {
+    pub fn alt_enumerator<'a>(&'a self, t: &LambdaType, max_length: usize) -> Enumerator<'a, 'src> {
         let mut stack: Vec<HashedExpr<_>> = self
             .terms(t, false, vec![])
             .iter()
@@ -102,17 +130,12 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             .collect();
 
         let mut table: WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>> = WeakHashSet::new();
-
-        let mut done: Vec<Rc<FinishedExpr<_>>> = stack
+        let done: HashSet<Rc<FinishedExpr<_>>> = stack
             .extract_if(.., |x| x.is_done())
             .map(|x| Rc::new(x.try_into().unwrap()))
             .collect();
 
-        for x in done.iter() {
-            table.insert(x.clone());
-        }
-
-        let mut stack = stack
+        let stack = stack
             .into_iter()
             .map(|h| {
                 (
@@ -127,20 +150,17 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             })
             .collect::<Vec<_>>();
 
-        while let Some((n, x)) = stack.pop() {
-            if let Some(new) = x.expand(vec![], self, &mut table, &mut stack, max_length, n) {
-                done.push(new);
-            }
+        for x in done.iter() {
+            table.insert(x.clone());
         }
 
-        print!("Done has {} now ", done.len());
-
-        let done = done.into_iter().collect::<HashSet<_>>();
-        println!("{}", done.len());
-
-        done.into_iter()
-            .map(|x| Rc::unwrap_or_clone(x).into())
-            .collect()
+        Enumerator {
+            max_length,
+            stack,
+            table,
+            possibles: self,
+            done,
+        }
     }
 }
 
@@ -597,7 +617,7 @@ mod test {
             LambdaType::et().clone(),
         ];
         for t in t {
-            let d = possibles.alt_enumerate(&t, 10);
+            let d = possibles.alt_enumerator(&t, 10).collect::<Vec<_>>();
             for x in d {
                 let o = x.get_type()?;
                 assert_eq!(o, t);
