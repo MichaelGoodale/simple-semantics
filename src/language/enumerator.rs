@@ -1,6 +1,5 @@
 use std::{
-    cmp::Reverse,
-    collections::{BTreeMap, BinaryHeap},
+    collections::BinaryHeap,
     fmt::Debug,
     hash::Hash,
     rc::{Rc, Weak},
@@ -134,7 +133,7 @@ impl<'src> Iterator for Enumerator<'_, 'src> {
 
 impl<'src> PossibleExpressions<'src, Expr<'src>> {
     ///Enumerate over all possible expressions of type [`t`]
-    pub fn alt_enumerator<'a>(&'a self, t: &LambdaType, max_length: usize) -> Enumerator<'a, 'src> {
+    pub fn enumerator<'a>(&'a self, t: &LambdaType, max_length: usize) -> Enumerator<'a, 'src> {
         let mut stack: Vec<HashedExpr<_>> = self
             .terms(
                 t,
@@ -583,7 +582,7 @@ mod test {
             LambdaType::from_string("<<a,t>,t>").unwrap(),
         ];
         for t in t {
-            for x in possibles.alt_enumerator(&t, 10).collect::<Vec<_>>() {
+            for x in possibles.enumerator(&t, 4) {
                 println!("{x}");
                 let o = x.get_type()?;
                 assert_eq!(o, t);
