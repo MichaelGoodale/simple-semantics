@@ -873,6 +873,7 @@ use thiserror::Error;
 mod lambda_implementation;
 pub use lambda_implementation::ConjoiningError;
 
+#[cfg(feature = "sampling")]
 mod enumerator;
 
 #[cfg(feature = "sampling")]
