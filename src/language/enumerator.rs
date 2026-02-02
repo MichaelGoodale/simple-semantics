@@ -102,6 +102,7 @@ impl Ord for Node<'_> {
 #[derive(Debug, Clone)]
 pub struct Enumerator<'a, 'src> {
     max_length: usize,
+    simples: Vec<RootedLambdaPool<'src, Expr<'src>>>,
     stack: BinaryHeap<Node<'src>>,
     table: WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
     done: HashSet<Rc<FinishedExpr<'src, Expr<'src>>>>,
@@ -112,6 +113,10 @@ impl<'src> Iterator for Enumerator<'_, 'src> {
     type Item = RootedLambdaPool<'src, Expr<'src>>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if !self.simples.is_empty() {
+            return self.simples.pop();
+        }
+
         while let Some(Node(n, x)) = self.stack.pop() {
             if let Some(new) = x.expand(
                 vec![],
@@ -156,10 +161,16 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             .collect();
 
         let mut table: WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>> = WeakHashSet::new();
+
         let done: HashSet<Rc<FinishedExpr<_>>> = stack
             .extract_if(.., |x| x.is_done())
             .map(|x| Rc::new(x.try_into().unwrap()))
             .collect();
+
+        let simples = done
+            .iter()
+            .map(|x| (**x).clone().into())
+            .collect::<Vec<_>>();
 
         let stack = stack
             .into_iter()
@@ -182,6 +193,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
 
         Enumerator {
             max_length,
+            simples,
             stack,
             table,
             possibles: self,
