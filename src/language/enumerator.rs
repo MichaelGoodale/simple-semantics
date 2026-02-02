@@ -96,10 +96,7 @@ impl PartialOrd for Node<'_> {
 
 impl Ord for Node<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other
-            .0
-            .cmp(&self.0)
-            .then(other.1.open().cmp(&self.1.open()))
+        other.0.cmp(&self.0)
     }
 }
 
@@ -259,18 +256,6 @@ fn possible_applications<'a>(
 }
 
 impl<'src> ExprWrapper<'src, Expr<'src>> {
-    fn open(&self) -> usize {
-        self.h
-            .children
-            .iter()
-            .map(|x| match x {
-                FinishedOrType::Type(_) => 1,
-                FinishedOrType::Expr(_) => 0,
-                FinishedOrType::PartiallyExpanded(expr_wrapper) => expr_wrapper.open(),
-            })
-            .sum()
-    }
-
     fn is_constant(&self) -> bool {
         self.h
             .children
@@ -598,7 +583,7 @@ mod test {
             LambdaType::from_string("<<a,t>,t>").unwrap(),
         ];
         for t in t {
-            for x in possibles.alt_enumerator(&t, 5).collect::<Vec<_>>() {
+            for x in possibles.alt_enumerator(&t, 10).collect::<Vec<_>>() {
                 println!("{x}");
                 let o = x.get_type()?;
                 assert_eq!(o, t);
