@@ -4,8 +4,8 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use ahash::HashSet;
-use itertools::repeat_n;
+use ahash::{HashMap, HashMapExt, HashSet};
+use itertools::{Either, repeat_n};
 use thiserror::Error;
 use weak_table::WeakHashSet;
 
@@ -14,7 +14,7 @@ use crate::{
         LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
         types::LambdaType,
     },
-    language::{Expr, MonOp, PossibleExpressions, mutations::PossibleExpr},
+    language::{Expr, MonOp, PossibleExpressions},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -118,12 +118,21 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
     ///Enumerate over all possible expressions of type [`t`]
     pub fn alt_enumerator<'a>(&'a self, t: &LambdaType, max_length: usize) -> Enumerator<'a, 'src> {
         let mut stack: Vec<HashedExpr<_>> = self
-            .terms(t, false, vec![])
-            .iter()
+            .terms(
+                t,
+                false,
+                std::iter::empty(),
+                possible_applications(t, std::iter::empty()),
+            )
+            .into_iter()
             .map(|x| {
-                let mut h: HashedExpr<_> = x.expr().clone().into();
+                let (e, a) = x.into_expr();
+                let mut h: HashedExpr<_> = e.into();
                 if let LambdaExpr::Lambda(_, _) = h.expr {
                     h.children = vec![FinishedOrType::Type(t.rhs().unwrap().clone())];
+                } else if let LambdaExpr::Application { .. } = h.expr {
+                    let (arg, func) = a.unwrap();
+                    h.children = vec![FinishedOrType::Type(arg), FinishedOrType::Type(func)];
                 }
                 h
             })
@@ -180,6 +189,54 @@ fn get_this<'a, 'src, T: LambdaLanguageOfThought + Debug>(
     this
 }
 
+fn possible_applications<'a>(
+    t: &'a LambdaType,
+    variables: impl Iterator<Item = &'a LambdaType>,
+) -> impl Iterator<Item = (LambdaType, LambdaType)> + 'a {
+    let mut possible_types: HashMap<LambdaType, HashSet<LambdaType>> = HashMap::new();
+    let mut new_types: HashSet<(&LambdaType, &LambdaType)> = HashSet::default();
+    let mut base_types: HashSet<_> = variables.collect();
+    base_types.insert(LambdaType::a());
+    base_types.insert(LambdaType::e());
+    base_types.insert(LambdaType::t());
+    base_types.insert(LambdaType::at());
+    base_types.insert(LambdaType::et());
+
+    loop {
+        for subformula in base_types.iter() {
+            if let Ok((argument, result_type)) = subformula.split() {
+                let already_has_type = possible_types
+                    .get(result_type)
+                    .map(|x| x.contains(argument))
+                    .unwrap_or(false);
+
+                if base_types.contains(argument) && !already_has_type {
+                    new_types.insert((result_type, argument));
+                }
+            }
+        }
+        if new_types.is_empty() {
+            break;
+        } else {
+            for (result, argument) in new_types.iter() {
+                possible_types
+                    .entry((*result).clone())
+                    .or_default()
+                    .insert((*argument).clone());
+            }
+            base_types.extend(new_types.drain().map(|(result, _arg)| result));
+        }
+    }
+
+    match possible_types.remove(t) {
+        Some(x) => Either::Left(
+            x.into_iter()
+                .map(|x| (LambdaType::compose(x.clone(), t.clone()), x.clone())),
+        ),
+        None => Either::Right(std::iter::empty()),
+    }
+}
+
 impl<'src> ExprWrapper<'src, Expr<'src>> {
     fn expand(
         mut self,
@@ -207,7 +264,17 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                 _ => None,
             })
         {
-            let mut terms = possibles.terms(typ, false, vec![]);
+            let mut terms = possibles.terms(
+                typ,
+                false,
+                this.variables
+                    .iter()
+                    .rev()
+                    .enumerate()
+                    .filter(|(_, x)| x == &typ)
+                    .map(|(i, x)| LambdaExpr::BoundVariable(i, x.clone())),
+                possible_applications(typ, this.variables.iter()),
+            );
 
             terms.retain(|x| {
                 (x.expr().n_children() + n) <= max_length
@@ -219,18 +286,24 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                         LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, _))
                     ))
             });
+
             let terms = terms
                 .into_iter()
                 .map(|x| {
-                    let (e, _) = x.into_expr();
+                    let (e, a) = x.into_expr();
                     let mut h = HashedExpr::from(e);
                     if let LambdaExpr::Lambda(_, _) = h.expr {
                         h.children = vec![FinishedOrType::Type(typ.rhs().unwrap().clone())];
+                    } else if let LambdaExpr::Application { .. } = h.expr {
+                        let (arg, func) = a.unwrap();
+                        h.children = vec![FinishedOrType::Type(arg), FinishedOrType::Type(func)];
                     }
+
                     h
                 })
                 .collect::<Vec<_>>();
 
+            let this_variables = std::mem::take(&mut this.variables);
             for (mut parent, h) in repeat_n(self, terms.len()).zip(terms) {
                 if h.is_done() {
                     let h = h.try_into().unwrap();
@@ -246,7 +319,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                     this.h.children[i] = FinishedOrType::Expr(h);
                     stack.push((n, parent));
                 } else {
-                    let mut variables = parent.variables.clone();
+                    let mut variables = this_variables.clone();
                     if let Some(t) = h.expr.var_type() {
                         variables.push(t.clone());
                     }
@@ -347,9 +420,11 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> From<LambdaExpr<'src, T>>
                 //"done"
                 vec![FinishedOrType::Type(t.clone())]
             }
-            e => {
-                println!("{e:?}");
-                todo!()
+            LambdaExpr::Application { .. } => {
+                vec![
+                    FinishedOrType::Type(LambdaType::A),
+                    FinishedOrType::Type(LambdaType::T),
+                ]
             }
         };
 
@@ -395,199 +470,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone> From<FinishedExpr<'src, T>>
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-enum ExprOrType<'src, T: LambdaLanguageOfThought> {
-    Type {
-        lambda_type: LambdaType,
-        is_app_subformula: bool,
-    },
-    Expr(LambdaExpr<'src, T>),
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct PartialExpr<'src, T: LambdaLanguageOfThought> {
-    pool: Vec<ExprOrType<'src, T>>,
-    edges: Vec<(usize, usize)>,
-    position: Option<usize>,
-}
-
-impl<'src, T: LambdaLanguageOfThought + Clone + Debug> PartialExpr<'src, T> {
-    fn to_pool(&self) -> RootedLambdaPool<'src, T> {
-        let mut pool = self
-            .pool
-            .iter()
-            .map(|x| match x {
-                ExprOrType::Type { .. } => None,
-                ExprOrType::Expr(lambda_expr) => Some(lambda_expr.clone()),
-            })
-            .collect::<Option<Vec<_>>>()
-            .unwrap();
-
-        for (i, x) in pool.iter_mut().enumerate() {
-            let children = self.edges.iter().filter_map(|(src, dest)| {
-                if *src == i {
-                    Some(LambdaExprRef(*dest as u32))
-                } else {
-                    None
-                }
-            });
-            x.change_children(children);
-        }
-
-        RootedLambdaPool {
-            pool: LambdaPool(pool),
-            root: LambdaExprRef(0),
-        }
-    }
-
-    fn new(t: &LambdaType) -> Self {
-        PartialExpr {
-            pool: vec![ExprOrType::Type {
-                lambda_type: t.clone(),
-                is_app_subformula: false,
-            }],
-            edges: vec![],
-            position: Some(0),
-        }
-    }
-
-    fn parent(&self, i: usize) -> Option<usize> {
-        self.edges
-            .iter()
-            .find_map(|(src, dest)| if *dest == i { Some(*src) } else { None })
-    }
-
-    fn variables(&self, mut i: usize, t: &LambdaType) -> Vec<LambdaExpr<'src, T>> {
-        let mut variables = vec![];
-        let mut debruijn = 0;
-        while let Some(parent) = self.parent(i) {
-            if let ExprOrType::Expr(lambda_expr) = &self.pool[parent]
-                && let Some(v) = lambda_expr.var_type()
-            {
-                if v == t {
-                    variables.push(LambdaExpr::BoundVariable(debruijn, v.clone()));
-                }
-                debruijn += 1;
-            }
-
-            i = parent;
-        }
-        variables
-    }
-
-    fn expand_position(
-        self,
-        possibles: &PossibleExpressions<'src, T>,
-        filter: impl Fn(&LambdaExpr<'src, T>, Option<&LambdaExpr<'src, T>>) -> bool,
-    ) -> impl Iterator<Item = Self> {
-        let ExprOrType::Type {
-            lambda_type,
-            is_app_subformula: _,
-        } = &self.pool[self.position.unwrap()]
-        else {
-            panic!()
-        };
-        let variables = self.variables(self.position.unwrap(), lambda_type);
-
-        let mut terms = possibles.terms(lambda_type, false, variables);
-
-        let parent = self.parent(self.position.unwrap()).map(|x| {
-            let ExprOrType::Expr(lambda_expr) = &self.pool[x] else {
-                panic!()
-            };
-            lambda_expr
-        });
-
-        terms.retain(|x| filter(x.expr(), parent));
-
-        repeat_n(self, terms.len())
-            .zip(terms)
-            .map(|(x, term)| x.set_position(term))
-    }
-
-    fn done(&self) -> bool {
-        self.position.is_none()
-    }
-
-    fn set_position(mut self, term: PossibleExpr<'_, 'src, T>) -> Self {
-        let (lambda_expr, x) = term.into_expr();
-        if x.is_some() {
-            todo!()
-        };
-
-        match &lambda_expr {
-            LambdaExpr::LanguageOfThoughtExpr(e) => {
-                for a in e.get_arguments() {
-                    self.pool.push(ExprOrType::Type {
-                        lambda_type: a,
-                        is_app_subformula: false,
-                    });
-                    self.edges
-                        .push((self.position.unwrap(), self.pool.len() - 1));
-                }
-            }
-            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-            LambdaExpr::Lambda(_, t) => {
-                self.pool.push(ExprOrType::Type {
-                    lambda_type: t.clone(),
-                    is_app_subformula: false,
-                });
-                self.edges
-                    .push((self.position.unwrap(), self.pool.len() - 1));
-            }
-            e => {
-                println!("{e:?}");
-                todo!()
-            }
-        }
-        self.pool[self.position.unwrap()] = ExprOrType::Expr(lambda_expr);
-
-        self.position = self
-            .pool
-            .iter()
-            .position(|x| matches!(x, ExprOrType::Type { .. }));
-
-        self
-    }
-}
-
-impl<'src> PossibleExpressions<'src, Expr<'src>> {
-    ///Enumerate over all possible expressions of type [`t`]
-    pub fn enumerate(
-        &self,
-        t: &LambdaType,
-        max_length: usize,
-    ) -> Vec<RootedLambdaPool<'src, Expr<'src>>> {
-        let x: PartialExpr<'src, Expr<'src>> = PartialExpr::new(t);
-        let mut stack = vec![x];
-        let mut done = vec![];
-        while let Some(s) = stack.pop() {
-            if s.pool.len() > max_length {
-                continue;
-            }
-            for x in s.expand_position(self, |x, y| {
-                !(matches!(
-                    x,
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, _))
-                ) && matches!(
-                    y,
-                    Some(LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
-                        MonOp::Not,
-                        _
-                    )))
-                ))
-            }) {
-                if x.done() {
-                    done.push(x.to_pool());
-                } else {
-                    stack.push(x);
-                }
-            }
-        }
-        done
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -605,20 +487,21 @@ mod test {
 
     #[test]
     fn new_enumerate() -> anyhow::Result<()> {
-        let actors = ["john", "mary", "phil", "sue"];
+        let actors = ["john"]; //, "mary", "phil", "sue"];
         let actor_properties = ["a"];
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
         let t = vec![
-            LambdaType::A,
-            LambdaType::E,
-            LambdaType::T,
-            LambdaType::at().clone(),
-            LambdaType::et().clone(),
+            // LambdaType::A,
+            // LambdaType::E,
+            // LambdaType::T,
+            // LambdaType::at().clone(),
+            //LambdaType::et().clone(),
+            LambdaType::from_string("<<a,t>,t>").unwrap(),
         ];
         for t in t {
-            let d = possibles.alt_enumerator(&t, 10).collect::<Vec<_>>();
-            for x in d {
+            for x in possibles.alt_enumerator(&t, 6).collect::<Vec<_>>() {
+                println!("{x}");
                 let o = x.get_type()?;
                 assert_eq!(o, t);
             }

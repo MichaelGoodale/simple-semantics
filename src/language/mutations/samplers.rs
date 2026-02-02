@@ -154,8 +154,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
         &'a self,
         lambda_type: &LambdaType,
         is_subformula: bool,
-        variables: Vec<LambdaExpr<'src, T>>,
-        //context: &SimpleContext,
+        variables: impl Iterator<Item = LambdaExpr<'src, T>>,
+        applications: impl Iterator<Item = (LambdaType, LambdaType)>,
     ) -> Vec<PossibleExpr<'a, 'src, T>> {
         let mut possibilities = vec![];
         if !is_subformula {
@@ -171,12 +171,11 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
                 possibilities.push(e);
             }
         }
-        possibilities.extend(variables.into_iter().map(PossibleExpr::new_owned));
-        //possibilities.extend(
-        //    context
-        //        .applications(lambda_type)
-        //        .map(|(subformula, argument)| PossibleExpr::new_application(subformula, argument)),
-        //);
+        possibilities.extend(variables.map(PossibleExpr::new_owned));
+        possibilities.extend(
+            applications
+                .map(|(subformula, argument)| PossibleExpr::new_application(subformula, argument)),
+        );
 
         possibilities
     }
