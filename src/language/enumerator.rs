@@ -67,6 +67,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug + 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct FinishedExpr<'src, T: LambdaLanguageOfThought> {
     expr: LambdaExpr<'src, T>,
+    constant_function: bool,
     children: Vec<Rc<FinishedExpr<'src, T>>>,
 }
 
@@ -238,6 +239,18 @@ fn possible_applications<'a>(
 }
 
 impl<'src> ExprWrapper<'src, Expr<'src>> {
+    fn is_constant(&self) -> bool {
+        self.h
+            .children
+            .iter()
+            .filter_map(|x| match x {
+                FinishedOrType::Expr(e) => Some(e.constant_function),
+                FinishedOrType::PartiallyExpanded(e) => Some(e.is_constant()),
+                _ => None,
+            })
+            .any(|x| x)
+    }
+
     fn expand(
         mut self,
         mut path: Vec<usize>,
@@ -277,7 +290,13 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
             );
 
             terms.retain(|x| {
-                (x.expr().n_children() + n) <= max_length
+                (x.expr().n_children() + n
+                    - if matches!(x.expr(), LambdaExpr::Application { .. }) {
+                        1
+                    } else {
+                        0
+                    })
+                    <= max_length
                     && !(matches!(
                         this.h.expr,
                         LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, _))
@@ -303,7 +322,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                 })
                 .collect::<Vec<_>>();
 
-            let this_variables = std::mem::take(&mut this.variables);
+            let this_variables = this.variables.clone();
             for (mut parent, h) in repeat_n(self, terms.len()).zip(terms) {
                 if h.is_done() {
                     let h = h.try_into().unwrap();
@@ -317,7 +336,9 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                     };
                     let this = get_this(&mut parent, &path);
                     this.h.children[i] = FinishedOrType::Expr(h);
-                    stack.push((n, parent));
+                    if !parent.is_constant() {
+                        stack.push((n, parent));
+                    }
                 } else {
                     let mut variables = this_variables.clone();
                     if let Some(t) = h.expr.var_type() {
@@ -325,10 +346,19 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                     }
 
                     let this = get_this(&mut parent, &path);
-                    let n_children = h.children.len();
-                    this.h.children[i] =
-                        FinishedOrType::PartiallyExpanded(ExprWrapper { h, variables });
-                    stack.push((n + n_children, parent));
+
+                    let n = n + h.children.len()
+                        - if matches!(h.expr, LambdaExpr::Application { .. }) {
+                            1
+                        } else {
+                            0
+                        };
+                    let e = ExprWrapper { h, variables };
+                    this.h.children[i] = FinishedOrType::PartiallyExpanded(e);
+
+                    if !parent.is_constant() {
+                        stack.push((n, parent));
+                    }
                 }
             }
         } else if let Some(i) = this
@@ -341,22 +371,37 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
             self.expand(path, possibles, table, stack, max_length, n);
         } else if path.is_empty() {
             let x: FinishedExpr<'src, Expr<'src>> = self.h.try_into().unwrap();
-            match table.get(&x) {
-                Some(x) => return Some(x),
-                None => {
-                    let h = Rc::new(x);
-                    table.insert(h.clone());
-                    return table.get(&h);
+            if !x.constant_function {
+                match table.get(&x) {
+                    Some(x) => return Some(x),
+                    None => {
+                        let h = Rc::new(x);
+                        table.insert(h.clone());
+                        return table.get(&h);
+                    }
                 }
             }
         } else {
-            panic!("idk");
+            panic!("this path should never occur");
         }
         None
     }
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> FinishedExpr<'src, T> {
+    fn has_variable(&self, typ: &LambdaType, depth: usize) -> bool {
+        if let LambdaExpr::BoundVariable(d, x) = &self.expr
+            && d == &depth
+            && x == typ
+        {
+            true
+        } else {
+            self.children
+                .iter()
+                .any(|x| x.has_variable(typ, depth + if self.expr.inc_depth() { 1 } else { 0 }))
+        }
+    }
+
     fn convert(pool: &RootedLambdaPool<'src, T>, i: LambdaExprRef) -> FinishedExpr<'src, T> {
         let expr = pool.get(i).clone();
         let children = expr
@@ -364,7 +409,19 @@ impl<'src, T: LambdaLanguageOfThought + Clone> FinishedExpr<'src, T> {
             .map(|i| Rc::new(FinishedExpr::convert(pool, i)))
             .collect::<Vec<_>>();
 
-        FinishedExpr { expr, children }
+        let constant_function = if children.iter().any(|x| x.constant_function) {
+            true
+        } else if let Some(t) = expr.var_type() {
+            !children.iter().any(|x| x.has_variable(t, 0))
+        } else {
+            false
+        };
+
+        FinishedExpr {
+            expr,
+            children,
+            constant_function,
+        }
     }
 }
 
@@ -395,12 +452,21 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug + PartialOrd + Ord>
             })
             .collect::<Result<_, _>>()?;
 
+        let constant_function = if children.iter().any(|x| x.constant_function) {
+            true
+        } else if let Some(t) = value.expr.var_type() {
+            !children.iter().any(|x| x.has_variable(t, 0))
+        } else {
+            false
+        };
+
         if value.expr.commutative() {
             children.sort();
         }
 
         Ok(FinishedExpr {
             expr: value.expr,
+            constant_function,
             children,
         })
     }
@@ -492,15 +558,15 @@ mod test {
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
         let t = vec![
-            // LambdaType::A,
-            // LambdaType::E,
-            // LambdaType::T,
-            // LambdaType::at().clone(),
-            //LambdaType::et().clone(),
+            LambdaType::A,
+            LambdaType::E,
+            LambdaType::T,
+            LambdaType::at().clone(),
+            LambdaType::et().clone(),
             LambdaType::from_string("<<a,t>,t>").unwrap(),
         ];
         for t in t {
-            for x in possibles.alt_enumerator(&t, 6).collect::<Vec<_>>() {
+            for x in possibles.alt_enumerator(&t, 5).collect::<Vec<_>>() {
                 println!("{x}");
                 let o = x.get_type()?;
                 assert_eq!(o, t);
