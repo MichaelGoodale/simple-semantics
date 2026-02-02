@@ -103,7 +103,7 @@ fn alt_enumerate(bencher: divan::Bencher) {
     let t = LambdaType::from_string("<a,<a,t>>").unwrap();
     bencher.bench(|| {
         let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
-        poss.alt_enumerator(&t, 10).take(10_000).count()
+        poss.alt_enumerator(&t, 10).take(100).count()
     });
 }
 

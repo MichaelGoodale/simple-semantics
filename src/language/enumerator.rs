@@ -1,4 +1,6 @@
 use std::{
+    cmp::Reverse,
+    collections::{BTreeMap, BinaryHeap},
     fmt::Debug,
     hash::Hash,
     rc::{Rc, Weak},
@@ -84,9 +86,27 @@ struct ExprWrapper<'src, T: LambdaLanguageOfThought> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+struct Node<'src>(usize, ExprWrapper<'src, Expr<'src>>);
+
+impl PartialOrd for Node<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Node<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other
+            .0
+            .cmp(&self.0)
+            .then(other.1.open().cmp(&self.1.open()))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Enumerator<'a, 'src> {
     max_length: usize,
-    stack: Vec<(usize, ExprWrapper<'src, Expr<'src>>)>,
+    stack: BinaryHeap<Node<'src>>,
     table: WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
     done: HashSet<Rc<FinishedExpr<'src, Expr<'src>>>>,
     possibles: &'a PossibleExpressions<'src, Expr<'src>>,
@@ -96,7 +116,7 @@ impl<'src> Iterator for Enumerator<'_, 'src> {
     type Item = RootedLambdaPool<'src, Expr<'src>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((n, x)) = self.stack.pop() {
+        while let Some(Node(n, x)) = self.stack.pop() {
             if let Some(new) = x.expand(
                 vec![],
                 self.possibles,
@@ -148,7 +168,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
         let stack = stack
             .into_iter()
             .map(|h| {
-                (
+                Node(
                     1 + h.children.len(),
                     ExprWrapper {
                         variables: std::iter::once(h.expr.var_type().cloned())
@@ -158,7 +178,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
                     },
                 )
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         for x in done.iter() {
             table.insert(x.clone());
@@ -239,6 +259,18 @@ fn possible_applications<'a>(
 }
 
 impl<'src> ExprWrapper<'src, Expr<'src>> {
+    fn open(&self) -> usize {
+        self.h
+            .children
+            .iter()
+            .map(|x| match x {
+                FinishedOrType::Type(_) => 1,
+                FinishedOrType::Expr(_) => 0,
+                FinishedOrType::PartiallyExpanded(expr_wrapper) => expr_wrapper.open(),
+            })
+            .sum()
+    }
+
     fn is_constant(&self) -> bool {
         self.h
             .children
@@ -256,7 +288,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         mut path: Vec<usize>,
         possibles: &PossibleExpressions<'src, Expr<'src>>,
         table: &mut WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
-        stack: &mut Vec<(usize, ExprWrapper<'src, Expr<'src>>)>,
+        stack: &mut BinaryHeap<Node<'src>>,
         max_length: usize,
         n: usize,
     ) -> Option<Rc<FinishedExpr<'src, Expr<'src>>>> {
@@ -337,7 +369,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                     let this = get_this(&mut parent, &path);
                     this.h.children[i] = FinishedOrType::Expr(h);
                     if !parent.is_constant() {
-                        stack.push((n, parent));
+                        stack.push(Node(n, parent));
                     }
                 } else {
                     let mut variables = this_variables.clone();
@@ -357,7 +389,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                     this.h.children[i] = FinishedOrType::PartiallyExpanded(e);
 
                     if !parent.is_constant() {
-                        stack.push((n, parent));
+                        stack.push(Node(n, parent));
                     }
                 }
             }
