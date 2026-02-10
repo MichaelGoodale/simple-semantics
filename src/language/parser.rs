@@ -1,8 +1,3 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    fmt::{Debug, Display},
-};
-
 use crate::{
     Actor, Entity, Event,
     lambda::{
@@ -15,10 +10,15 @@ use chumsky::{
     extra::ParserExtra,
     input::ValueInput,
     label::LabelError,
+    pratt::{infix, left, prefix},
+    prelude::*,
     text::{TextExpected, inline_whitespace},
     util::MaybeRef,
 };
-use chumsky::{pratt::{prefix, infix, left}, prelude::*};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::{Debug, Display},
+};
 
 use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier};
 use thiserror::Error;
@@ -383,9 +383,10 @@ pub type Spanned<T> = (T, Span);
 fn lexer<'src, E>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, E>
 where
     E: ParserExtra<'src, &'src str> + 'src,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>
+    E::Error: LabelError<'src, &'src str, TextExpected<&'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>,
+        + LabelError<'src, &'src str, &'static str>
+        + LabelError<'src, &'src str, TextExpected<()>>,
 {
     choice((
         just(',').to(Token::ArgSep),

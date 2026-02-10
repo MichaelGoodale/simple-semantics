@@ -61,7 +61,8 @@ pub(crate) fn core_type_parser<'src, E>()
 -> impl Parser<'src, &'src str, LambdaType, E> + Clone + 'src
 where
     E: ParserExtra<'src, &'src str> + 'src,
-    E::Error: LabelError<'src, &'src str, TextExpected<'src, &'src str>>,
+    E::Error: LabelError<'src, &'src str, TextExpected<&'src str>>,
+    E::Error: LabelError<'src, &'src str, TextExpected<()>>,
 {
     let atom = choice((
         just('e').to(LambdaType::e().clone()),
@@ -102,7 +103,7 @@ impl<'a> Iterator for RetrievableTypeIterator<'a> {
 
 impl LambdaType {
     ///Takes a type x and returns <<x,t>, t>
-    #[must_use] 
+    #[must_use]
     pub fn lift_type(self) -> LambdaType {
         let t = LambdaType::compose(self, LambdaType::T);
 
@@ -127,13 +128,13 @@ impl LambdaType {
     ///# Ok::<(), anyhow::Error>(())
     ///```
     ///
-    #[must_use] 
+    #[must_use]
     pub fn retrievable_types(&self) -> RetrievableTypeIterator<'_> {
         RetrievableTypeIterator(self)
     }
 
     ///Checks if the type is the lifted version of another.
-    #[must_use] 
+    #[must_use]
     pub fn is_lifted_type_of(&self, t: &LambdaType) -> bool {
         let Ok((a, LambdaType::T)) = self.split() else {
             return false;
@@ -167,35 +168,38 @@ impl LambdaType {
     ///# Ok::<(), anyhow::Error>(())
     ///```
     pub fn from_string(s: &str) -> Result<Self, TypeParsingError> {
-        type_parser().parse(s).into_result().map_err(std::convert::Into::into)
+        type_parser()
+            .parse(s)
+            .into_result()
+            .map_err(std::convert::Into::into)
     }
 
     ///Get the atomic type `a`
-    #[must_use] 
+    #[must_use]
     pub fn a() -> &'static Self {
         &LambdaType::A
     }
 
     ///get the atomic type `e`
-    #[must_use] 
+    #[must_use]
     pub fn e() -> &'static Self {
         &LambdaType::E
     }
 
     ///Get the atomic type `t`
-    #[must_use] 
+    #[must_use]
     pub fn t() -> &'static Self {
         &LambdaType::T
     }
 
     ///Compose two functions
-    #[must_use] 
+    #[must_use]
     pub fn compose(a: Self, b: Self) -> Self {
         LambdaType::Composition(Box::new(a), Box::new(b))
     }
 
     ///Get the `a` to `t` function type.
-    #[must_use] 
+    #[must_use]
     pub fn at() -> &'static Self {
         static VAL: LazyLock<LambdaType> =
             LazyLock::new(|| LambdaType::compose(LambdaType::a().clone(), LambdaType::t().clone()));
@@ -203,7 +207,7 @@ impl LambdaType {
     }
 
     ///Get the `e` to `t` function type.
-    #[must_use] 
+    #[must_use]
     pub fn et() -> &'static Self {
         static VAL: LazyLock<LambdaType> =
             LazyLock::new(|| LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()));
@@ -211,7 +215,7 @@ impl LambdaType {
     }
 
     ///Get the `<e,<e,t>>` function type
-    #[must_use] 
+    #[must_use]
     pub fn eet() -> &'static Self {
         static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
             LambdaType::compose(
@@ -222,7 +226,7 @@ impl LambdaType {
         &VAL
     }
     ///Get the `<<e,t>, t>` function type
-    #[must_use] 
+    #[must_use]
     pub fn ett() -> &'static Self {
         static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
             LambdaType::compose(
@@ -234,7 +238,7 @@ impl LambdaType {
     }
 
     ///The number of elements in this type
-    #[must_use] 
+    #[must_use]
     pub fn size(&self) -> usize {
         match self {
             LambdaType::A | LambdaType::E | LambdaType::T => 1,
@@ -243,7 +247,7 @@ impl LambdaType {
     }
 
     ///Check if `self` can have `other` applied to it.
-    #[must_use] 
+    #[must_use]
     pub fn can_apply(&self, other: &Self) -> bool {
         matches!(&self, LambdaType::Composition(a, _) if a.as_ref() == other)
     }
@@ -267,7 +271,7 @@ impl LambdaType {
     }
 
     ///Checks that the type is a function.
-    #[must_use] 
+    #[must_use]
     pub fn is_function(&self) -> bool {
         matches!(&self, LambdaType::Composition(_, _))
     }
@@ -279,7 +283,7 @@ impl LambdaType {
     }
 
     ///Checks if the type takes a primitive type and returns a primitive type
-    #[must_use] 
+    #[must_use]
     pub fn is_one_place_function(&self) -> bool {
         if let Ok((lhs, rhs)) = self.split() {
             !lhs.is_function() && !rhs.is_function()
