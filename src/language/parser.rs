@@ -18,7 +18,7 @@ use chumsky::{
     text::{TextExpected, inline_whitespace},
     util::MaybeRef,
 };
-use chumsky::{pratt::*, prelude::*};
+use chumsky::{pratt::{prefix, infix, left}, prelude::*};
 
 use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier};
 use thiserror::Error;
@@ -567,7 +567,7 @@ where
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
-pub fn parse_lot<'a>(s: &'a str) -> Result<RootedLambdaPool<'a, Expr<'a>>, LambdaParseError> {
+pub fn parse_lot(s: &str) -> Result<RootedLambdaPool<'_, Expr<'_>>, LambdaParseError> {
     let tokens = lexer::<extra::Err<Rich<char>>>()
         .then_ignore(end())
         .parse(s)
@@ -584,7 +584,7 @@ pub fn parse_lot<'a>(s: &'a str) -> Result<RootedLambdaPool<'a, Expr<'a>>, Lambd
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
-pub fn parse_executable<'a>(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
+pub fn parse_executable(s: &str) -> Result<LanguageExpression<'_>, LambdaParseError> {
     let mut pool = parse_lot(s)?;
     pool.reduce()?;
     Ok(pool.into_pool()?)

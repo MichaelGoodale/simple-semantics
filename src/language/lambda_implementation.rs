@@ -195,11 +195,8 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             Expr::Unary(mon_op, _) => {
                 ArgumentIterator::C([mon_op.get_argument_type().clone()].into_iter())
             }
-            Expr::Variable(Variable::Event(_))
-            | Expr::Variable(Variable::Actor(_))
-            | Expr::Actor(_)
-            | Expr::Event(_)
-            | Expr::Constant(_) => ArgumentIterator::D(empty()),
+            Expr::Variable(Variable::Event(_) | Variable::Actor(_)) | Expr::Actor(_) |
+Expr::Event(_) | Expr::Constant(_) => ArgumentIterator::D(empty()),
         }
     }
 
@@ -413,7 +410,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     ///
     ///This is a generalized kind of Event Identification from Kratzer (1996)
     ///
-    /// - Kratzer, A. (1996). Severing the External Argument from its Verb. In J. Rooryck & L. Zaring (Eds.), Phrase Structure and the Lexicon (pp. 109–137). Springer Netherlands. https://doi.org/10.1007/978-94-015-8617-7_5
+    /// - Kratzer, A. (1996). Severing the External Argument from its Verb. In J. Rooryck & L. Zaring (Eds.), Phrase Structure and the Lexicon (pp. 109–137). Springer Netherlands. <https://doi.org/10.1007/978-94-015-8617-7_5>
     pub fn raised_conjoin(self, other: Self) -> Result<Self, ConjoiningError> {
         let (a, b) = who_raises_who(self, other)?;
         let a_type = a.get_type().unwrap();
@@ -575,16 +572,16 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                             {
                                 let mut s = String::default();
                                 if add_parenthesis_for_bin_op(*bin_op, x_a) {
-                                    s.push_str(&format!("({x})"))
+                                    s.push_str(&format!("({x})"));
                                 } else {
-                                    s.push_str(&x)
-                                };
+                                    s.push_str(&x);
+                                }
                                 s.push_str(&format!(" {bin_op} "));
                                 if add_parenthesis_for_bin_op(*bin_op, y_a) {
-                                    s.push_str(&format!("({y})"))
+                                    s.push_str(&format!("({y})"));
                                 } else {
-                                    s.push_str(&y)
-                                };
+                                    s.push_str(&y);
+                                }
                                 s
                             },
                             AssociativityData::Binom(*bin_op),
@@ -596,8 +593,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     (
                         match mon_op {
                             MonOp::Not => match arg_binom {
-                                AssociativityData::Binom(BinOp::And)
-                                | AssociativityData::Binom(BinOp::Or) => format!("{mon_op}({arg})"),
+                                AssociativityData::Binom(BinOp::And | BinOp::Or) => format!("{mon_op}({arg})"),
                                 AssociativityData::Binom(_)
                                 | AssociativityData::Lambda
                                 | AssociativityData::App

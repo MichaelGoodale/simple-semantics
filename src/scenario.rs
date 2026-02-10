@@ -82,7 +82,7 @@ pub fn scenario_parser<'a>()
             agent: Some(n),
             patient: None,
         }),
-        empty().map(|_| ThetaRoles {
+        empty().map(|()| ThetaRoles {
             agent: None,
             patient: None,
         }),
@@ -118,10 +118,11 @@ pub fn scenario_parser<'a>()
                 acc_event.push(event);
                 if let Some(event_props) = event_props {
                     for property_label in event_props {
+                        let e = Entity::Event(Event::try_from(i + 1).unwrap());
                         acc_props
                             .entry(property_label)
-                            .and_modify(|x| x.push(Entity::Event((i + 1) as Event)))
-                            .or_insert(vec![Entity::Event((i + 1) as Event)]);
+                            .and_modify(|x| x.push(e))
+                            .or_insert_with(|| vec![e]);
                     }
                 }
                 (acc_event, acc_props)
@@ -163,7 +164,7 @@ pub fn scenario_parser<'a>()
         .then_ignore(end())
         .map(|((mut data, lemmas), lot_vec)| {
             data.lemmas = lemmas.into_iter().collect();
-            data.lemmas.sort();
+            data.lemmas.sort_unstable();
             let lot_vec = lot_vec
                 .into_iter()
                 .enumerate()
@@ -182,9 +183,9 @@ pub fn scenario_parser<'a>()
 
             match lot_vec {
                 Ok(lot_vec) => {
-                    lot_vec
-                        .into_iter()
-                        .for_each(|(x, i)| data.scenarios[i].question.extend(x));
+                    for (x, i) in lot_vec {
+                        data.scenarios[i].question.extend(x);
+                    }
                     Ok(data)
                 }
                 Err(e) => Err(e),
@@ -208,7 +209,7 @@ fn add_scenario<'a>(
         .map(|(k, v)| (k, v.into_iter().map(Entity::Actor).collect()))
         .collect();
 
-    for (k, mut v) in event_props.into_iter() {
+    for (k, mut v) in event_props {
         properties
             .entry(k)
             .and_modify(|value| value.append(&mut v))
@@ -222,7 +223,7 @@ fn add_scenario<'a>(
         properties,
     });
 
-    let s: Vec<&str> = s.split(" ").collect();
+    let s: Vec<&str> = s.split(' ').collect();
 
     training_dataset.1.extend(s.clone());
     training_dataset.0.sentences.push(s);

@@ -163,7 +163,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                             v.push(Token::CloseDelim);
                         } else {
                             v.extend(x_v);
-                        };
+                        }
                         v.push(Token::Func(bin_op.to_string()));
                         if add_parenthesis_for_bin_op(*bin_op, y_a) {
                             v.push(Token::OpenDelim);
@@ -185,27 +185,23 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     let mut new_v = vec![];
                     let child_asso = self.tokens(LambdaExprRef(arg.0), c, &mut new_v, false);
 
-                    match mon_op {
-                        MonOp::Not => match child_asso {
-                            AssociativityData::Binom(BinOp::And)
-                            | AssociativityData::Binom(BinOp::Or) => {
-                                v.push(Token::OpenDelim);
-                                v.extend(new_v);
-                                v.push(Token::CloseDelim);
-                            }
-                            AssociativityData::Binom(_)
-                            | AssociativityData::Lambda
-                            | AssociativityData::App
-                            | AssociativityData::Monop => {
-                                v.extend(new_v);
-                            }
-                        },
-                        _ => {
+                    if mon_op == &MonOp::Not { match child_asso {
+                        AssociativityData::Binom(BinOp::And | BinOp::Or) => {
                             v.push(Token::OpenDelim);
                             v.extend(new_v);
                             v.push(Token::CloseDelim);
                         }
-                    };
+                        AssociativityData::Binom(_)
+                        | AssociativityData::Lambda
+                        | AssociativityData::App
+                        | AssociativityData::Monop => {
+                            v.extend(new_v);
+                        }
+                    } } else {
+                        v.push(Token::OpenDelim);
+                        v.extend(new_v);
+                        v.push(Token::CloseDelim);
+                    }
 
                     AssociativityData::Monop
                 }

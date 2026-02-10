@@ -49,13 +49,12 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug + 
             };
 
             let h: FinishedExpr<'src, T> = h.try_into().unwrap();
-            let h = match table.get(&h) {
-                Some(h) => h,
-                None => {
-                    let h = Rc::new(h);
-                    table.insert(h.clone());
-                    table.get(&h).unwrap()
-                }
+            let h = if let Some(h) = table.get(&h) {
+                h
+            } else {
+                let h = Rc::new(h);
+                table.insert(h.clone());
+                table.get(&h).unwrap()
             };
             *self = FinishedOrType::Expr(h);
             true
@@ -138,6 +137,7 @@ impl<'src> Iterator for Enumerator<'_, 'src> {
 
 impl<'src> PossibleExpressions<'src, Expr<'src>> {
     ///Enumerate over all possible expressions of type [`t`]
+    #[must_use]
     pub fn enumerator<'a>(&'a self, t: &LambdaType, max_length: usize) -> Enumerator<'a, 'src> {
         let mut stack: Vec<HashedExpr<_>> = self
             .terms(
@@ -187,7 +187,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             })
             .collect();
 
-        for x in done.iter() {
+        for x in &done {
             table.insert(x.clone());
         }
 
@@ -232,12 +232,11 @@ fn possible_applications<'a>(
     base_types.insert(LambdaType::et());
 
     loop {
-        for subformula in base_types.iter() {
+        for subformula in &base_types {
             if let Ok((argument, result_type)) = subformula.split() {
                 let already_has_type = possible_types
                     .get(result_type)
-                    .map(|x| x.contains(argument))
-                    .unwrap_or(false);
+                    .is_some_and(|x| x.contains(argument));
 
                 if base_types.contains(argument) && !already_has_type {
                     new_types.insert((result_type, argument));
@@ -246,15 +245,14 @@ fn possible_applications<'a>(
         }
         if new_types.is_empty() {
             break;
-        } else {
-            for (result, argument) in new_types.iter() {
-                possible_types
-                    .entry((*result).clone())
-                    .or_default()
-                    .insert((*argument).clone());
-            }
-            base_types.extend(new_types.drain().map(|(result, _arg)| result));
         }
+        for (result, argument) in &new_types {
+            possible_types
+                .entry((*result).clone())
+                .or_default()
+                .insert((*argument).clone());
+        }
+        base_types.extend(new_types.drain().map(|(result, _arg)| result));
     }
 
     match possible_types.remove(t) {
@@ -274,7 +272,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
             .filter_map(|x| match x {
                 FinishedOrType::Expr(e) => Some(e.constant_function),
                 FinishedOrType::PartiallyExpanded(e) => Some(e.is_constant()),
-                _ => None,
+                FinishedOrType::Type(_) => None,
             })
             .any(|x| x)
     }
@@ -319,11 +317,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
 
             terms.retain(|x| {
                 (x.expr().n_children() + n
-                    - if matches!(x.expr(), LambdaExpr::Application { .. }) {
-                        1
-                    } else {
-                        0
-                    })
+                    - usize::from(matches!(x.expr(), LambdaExpr::Application { .. })))
                     <= max_length
                     && !(matches!(
                         this.h.expr,
@@ -354,13 +348,12 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
             for (mut parent, h) in repeat_n(self, terms.len()).zip(terms) {
                 if h.is_done() {
                     let h = h.try_into().unwrap();
-                    let h = match table.get(&h) {
-                        Some(h) => h,
-                        None => {
-                            let h = Rc::new(h);
-                            table.insert(h.clone());
-                            table.get(&h).unwrap()
-                        }
+                    let h = if let Some(h) = table.get(&h) {
+                        h
+                    } else {
+                        let h = Rc::new(h);
+                        table.insert(h.clone());
+                        table.get(&h).unwrap()
                     };
                     let this = get_this(&mut parent, &path);
                     this.h.children[i] = FinishedOrType::Expr(h);
@@ -376,11 +369,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                     let this = get_this(&mut parent, &path);
 
                     let n = n + h.children.len()
-                        - if matches!(h.expr, LambdaExpr::Application { .. }) {
-                            1
-                        } else {
-                            0
-                        };
+                        - usize::from(matches!(h.expr, LambdaExpr::Application { .. }));
                     let e = ExprWrapper { h, variables };
                     this.h.children[i] = FinishedOrType::PartiallyExpanded(e);
 
@@ -400,13 +389,12 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         } else if path.is_empty() {
             let x: FinishedExpr<'src, Expr<'src>> = self.h.try_into().unwrap();
             if !x.constant_function {
-                match table.get(&x) {
-                    Some(x) => return Some(x),
-                    None => {
-                        let h = Rc::new(x);
-                        table.insert(h.clone());
-                        return table.get(&h);
-                    }
+                if let Some(x) = table.get(&x) {
+                    return Some(x);
+                } else {
+                    let h = Rc::new(x);
+                    table.insert(h.clone());
+                    return table.get(&h);
                 }
             }
         } else {
@@ -426,7 +414,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> FinishedExpr<'src, T> {
         } else {
             self.children
                 .iter()
-                .any(|x| x.has_variable(typ, depth + if self.expr.inc_depth() { 1 } else { 0 }))
+                .any(|x| x.has_variable(typ, depth + usize::from(self.expr.inc_depth())))
         }
     }
 
@@ -447,13 +435,13 @@ impl<'src, T: LambdaLanguageOfThought + Clone> FinishedExpr<'src, T> {
 
         FinishedExpr {
             expr,
-            children,
             constant_function,
+            children,
         }
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone> HashedExpr<'src, T> {
+impl<T: LambdaLanguageOfThought + Clone> HashedExpr<'_, T> {
     fn is_done(&self) -> bool {
         self.children.iter().all(|x| match x {
             FinishedOrType::Expr(_) => true,

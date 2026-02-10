@@ -56,6 +56,7 @@ pub struct Scenario<'a> {
 
 impl<'a> Scenario<'a> {
     ///Create a new scenario.
+    #[must_use] 
     pub fn new(
         actors: Vec<Actor<'a>>,
         thematic_relations: Vec<ThetaRoles<'a>>,
@@ -70,22 +71,26 @@ impl<'a> Scenario<'a> {
     }
 
     ///Get the representation of all events as a slice of [`ThetaRoles`].
+    #[must_use] 
     pub fn thematic_relations(&self) -> &[ThetaRoles<'a>] {
         &self.thematic_relations
     }
 
     ///Get the properties (e.g. what predicates apply) of the entities in a scenario.
+    #[must_use] 
     pub fn properties(&self) -> &BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>> {
         &self.properties
     }
 
     ///Get a slice of all [`Actor`]s in the [`Scenario`]
+    #[must_use] 
     pub fn actors(&self) -> &[Actor<'_>] {
         &self.actors
     }
 
     ///Get the questions associated with a scenario (which may be empty if there are no questions).
     ///Questions are representated as [`RootedLambdaPool`] which return a truth value.
+    #[must_use] 
     pub fn questions(&self) -> &[RootedLambdaPool<'a, Expr<'a>>] {
         &self.question
     }
@@ -132,7 +137,7 @@ impl<'a> ScenarioDataset<'a> {
         }
 
         let mut lemmas: Vec<_> = lemmas.into_iter().collect();
-        lemmas.sort();
+        lemmas.sort_unstable();
         Ok(ScenarioDataset {
             scenarios,
             sentences,
@@ -141,11 +146,13 @@ impl<'a> ScenarioDataset<'a> {
     }
 
     ///Is the dataset empty?
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.scenarios.is_empty()
     }
 
     ///The number of scenarios in the [`ScenarioDataset`].
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.scenarios.len()
     }
@@ -171,6 +178,7 @@ impl<'a> ScenarioDataset<'a> {
     }
 
     ///Get the available lemmas of a dataset.
+    #[must_use] 
     pub fn lemmas(&self) -> &[&'a str] {
         &self.lemmas
     }

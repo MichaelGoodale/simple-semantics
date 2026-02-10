@@ -35,12 +35,12 @@ pub enum LambdaError {
         lambda: LambdaType,
     },
 
-    ///An internally caused error if DeBruijn indices are invalid.
+    ///An internally caused error if `DeBruijn` indices are invalid.
     #[error(
         "A bound variable {var:?} cannot have a DeBruijn index higher than its lambda depth ({depth})"
     )]
     BadBoundVariable {
-        ///The DeBruijn index
+        ///The `DeBruijn` index
         var: LambdaExprRef,
         ///The depth of the expression
         depth: usize,
@@ -198,7 +198,7 @@ impl<'a> From<&'a str> for FreeVar<'a> {
     }
 }
 
-impl<'a> From<usize> for FreeVar<'a> {
+impl From<usize> for FreeVar<'_> {
     fn from(value: usize) -> Self {
         FreeVar::Anonymous(value)
     }
@@ -266,6 +266,7 @@ pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
 
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     ///Creates an anonymous free variable with [`index`] of type [`t`]
+    #[must_use] 
     pub fn new_free_variable(index: usize, t: LambdaType) -> RootedLambdaPool<'src, T> {
         RootedLambdaPool {
             pool: LambdaPool(vec![LambdaExpr::FreeVariable(FreeVar::Anonymous(index), t)]),
@@ -295,6 +296,7 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
 
     ///Get the length of a lambda tree
     #[allow(clippy::len_without_is_empty)]
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.pool.0.len()
     }
@@ -323,6 +325,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
 
     ///Combine two lambda expressions by applying one to the other. Returns [`None`] if that is
     ///impossible.
+    #[must_use] 
     pub fn merge(mut self, other: Self) -> Option<Self> {
         let self_type = self.pool.get_type(self.root).expect("malformed type");
         let other_type = other.pool.get_type(other.root).expect("malformed type");
@@ -392,13 +395,13 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
             .bfs_from(self.root)
             .filter_map(|(x, d)| match self.pool.get(x) {
                 LambdaExpr::FreeVariable(var, var_type) if *var == fvar => {
-                    if &lambda_type != var_type {
+                    if &lambda_type == var_type {
+                        Some(Ok((x, d)))
+                    } else {
                         Some(Err(LambdaError::BadFreeVariable {
                             free_var: var_type.clone(),
                             lambda: lambda_type.clone(),
                         }))
-                    } else {
-                        Some(Ok((x, d)))
                     }
                 }
                 _ => None,
@@ -406,7 +409,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
             .collect::<Result<Vec<_>, LambdaError>>()?;
 
         if !vars.is_empty() || always_abstract {
-            for (x, lambda_depth) in vars.into_iter() {
+            for (x, lambda_depth) in vars {
                 *self.pool.get_mut(x) =
                     LambdaExpr::BoundVariable(lambda_depth, lambda_type.clone());
             }
@@ -487,7 +490,7 @@ pub(crate) struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
     queue: VecDeque<(LambdaExprRef, Bvar)>,
 }
 
-impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
+impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     pub(crate) fn n_children(&self) -> usize {
         match self {
             LambdaExpr::Lambda(..) => 1,
@@ -529,10 +532,10 @@ impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, '_, T> {
                 }
                 LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
                 LambdaExpr::LanguageOfThoughtExpr(x) => {
-                    let depth = lambda_depth + if x.inc_depth() { 1 } else { 0 };
+                    let depth = lambda_depth + usize::from(x.inc_depth());
 
                     x.get_children()
-                        .for_each(|x| self.queue.push_back((x, depth)))
+                        .for_each(|x| self.queue.push_back((x, depth)));
                 }
             }
             Some((x, lambda_depth))
@@ -552,7 +555,7 @@ pub(crate) struct MutableLambdaPoolBFSIterator<'a, 'src: 'a, T: LambdaLanguageOf
 impl<'a, 'src: 'a, T: LambdaLanguageOfThought + 'a> MutableLambdaPoolBFSIterator<'a, 'src, T> {
     fn new(pool: &mut LambdaPool<'src, T>, x: LambdaExprRef) -> Self {
         Self {
-            pool: pool as *mut LambdaPool<'src, T>,
+            pool: std::ptr::from_mut::<LambdaPool<'src, T>>(pool),
             queue: VecDeque::from([(x, 0)]),
             phantom: PhantomData,
         }
@@ -576,10 +579,10 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
                 }
                 LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
                 LambdaExpr::LanguageOfThoughtExpr(x) => {
-                    let depth = lambda_depth + if x.inc_depth() { 1 } else { 0 };
+                    let depth = lambda_depth + usize::from(x.inc_depth());
 
                     x.get_children()
-                        .for_each(|x| self.queue.push_back((x, depth)))
+                        .for_each(|x| self.queue.push_back((x, depth)));
                 }
             }
             Some((
@@ -686,7 +689,17 @@ where
     fn replace_section(&mut self, to_replace: &[(LambdaExprRef, usize)], to_copy: LambdaExprRef) {
         let n = to_replace.len();
         for (i, (x, depth)) in to_replace.iter().enumerate() {
-            if i != n - 1 {
+            if i == n - 1 {
+                for (x, d, _) in self.bfs_from_mut(to_copy) {
+                    if let LambdaExpr::BoundVariable(bound_depth, _) = x
+                        && *bound_depth >= d
+                    {
+                        *bound_depth += depth;
+                    }
+                }
+                //Last iteration so we don't need to copy anymore.
+                *self.get_mut(*x) = self.get(to_copy).clone();
+            } else {
                 let mut len = self.0.len();
                 let mut first = true;
                 let mut head = None;
@@ -715,16 +728,6 @@ where
                 );
 
                 *self.get_mut(*x) = head.unwrap();
-            } else {
-                for (x, d, _) in self.bfs_from_mut(to_copy) {
-                    if let LambdaExpr::BoundVariable(bound_depth, _) = x
-                        && *bound_depth >= d
-                    {
-                        *bound_depth += depth;
-                    }
-                }
-                //Last iteration so we don't need to copy anymore.
-                *self.get_mut(*x) = self.get(to_copy).clone();
             }
         }
     }
@@ -793,18 +796,18 @@ where
         Ok(())
     }
 
-    ///Iterates through a pool and de-allocates dangling refs and updates ExprRefs to new
+    ///Iterates through a pool and de-allocates dangling refs and updates `ExprRefs` to new
     ///addresses. Basically garbage collection.
     pub(crate) fn cleanup(&mut self, root: LambdaExprRef) -> LambdaExprRef {
         let findable: HashSet<_> = self.bfs_from(root).map(|(x, _)| x.0 as usize).collect();
         let mut remap = (0..self.0.len()).collect::<Vec<_>>();
         let mut adjustment = 0;
 
-        for i in remap.iter_mut() {
-            if !findable.contains(i) {
-                adjustment += 1;
-            } else {
+        for i in &mut remap {
+            if findable.contains(i) {
                 *i -= adjustment;
+            } else {
+                adjustment += 1;
             }
         }
 
@@ -813,7 +816,7 @@ where
             i += 1;
             findable.contains(&(i - 1))
         });
-        for x in self.0.iter_mut() {
+        for x in &mut self.0 {
             x.remap_refs(&remap);
         }
         LambdaExprRef(remap[root.0 as usize] as u32)
@@ -827,7 +830,7 @@ where
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought> LambdaExpr<'src, T> {
+impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     pub(crate) fn change_children(&mut self, mut children: impl Iterator<Item = LambdaExprRef>) {
         match self {
             LambdaExpr::Lambda(lambda_expr_ref, _) => *lambda_expr_ref = children.next().unwrap(),
@@ -880,7 +883,7 @@ pub enum LambdaSummaryStats {
     Malformed,
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'src, T> {
+impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'_, T> {
     ///Convert an expression `phi` of type `x` and convert it to `lambda <x,t> P P(phi)`
     pub fn lift(&mut self) -> Result<(), TypeError> {
         let t =
@@ -898,6 +901,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPoo
     }
 
     ///Get [`LambdaSummaryStats`] for an expression, e.g. how many context functions, size, etc.
+    #[must_use] 
     pub fn stats(&self) -> LambdaSummaryStats {
         let lambda_type = self.get_type();
         if lambda_type.is_err() {

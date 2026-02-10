@@ -68,13 +68,13 @@ impl MonOp<'_> {
         match self {
             MonOp::Property(_, ActorOrEvent::Actor) => LambdaType::a(),
             MonOp::Property(_, ActorOrEvent::Event) => LambdaType::e(),
-            MonOp::Iota(ActorOrEvent::Actor) | MonOp::Iota(ActorOrEvent::Event) => LambdaType::t(),
+            MonOp::Iota(ActorOrEvent::Actor | ActorOrEvent::Event) => LambdaType::t(),
             MonOp::Not => LambdaType::t(),
         }
     }
 }
 
-impl<'a> Display for MonOp<'a> {
+impl Display for MonOp<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MonOp::Not => write!(f, "~"),
@@ -187,7 +187,7 @@ impl Display for Quantifier {
 ///which is handled elsewhere.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum Expr<'a> {
-    ///A quantified expression. Variables are implemented with DeBruijn indices.
+    ///A quantified expression. Variables are implemented with `DeBruijn` indices.
     Quantifier {
         ///What kind of quantifier
         quantifier: Quantifier,
@@ -246,6 +246,7 @@ pub struct ExecutionConfig {
 
 impl ExecutionConfig {
     ///Create a new [`ExecutionConfig`]
+    #[must_use] 
     pub const fn new(
         max_steps: Option<usize>,
         #[cfg(not(target_arch = "wasm32"))] timeout: Option<Duration>,
@@ -259,25 +260,29 @@ impl ExecutionConfig {
     }
 
     ///Forbid quantification over an empty set
+    #[must_use] 
     pub const fn forbid_empty_quantification(mut self) -> Self {
         self.empty_quantification = false;
         self
     }
 
     ///Allow quantification over an empty set
+    #[must_use] 
     pub const fn allow_empty_quantification(mut self) -> Self {
         self.empty_quantification = true;
         self
     }
 
-    ///Set max_steps on a config
+    ///Set `max_steps` on a config
+    #[must_use] 
     pub const fn with_max_steps(mut self, max_steps: usize) -> Self {
         self.max_steps = Some(max_steps);
         self
     }
 
-    ///Set max_duration on a config
+    ///Set `max_duration` on a config
     #[cfg(not(target_arch = "wasm32"))]
+    #[must_use] 
     pub const fn with_timeout(mut self, time_out: Duration) -> Self {
         self.timeout = Some(time_out);
         self
@@ -586,7 +591,7 @@ impl<'a> ExprPool<'a> {
     }
 }
 
-impl<'a, 'b> Execution<'a, 'b> {
+impl<'a> Execution<'a, '_> {
     fn quantification(
         &mut self,
         quantifier: &Quantifier,
@@ -603,13 +608,13 @@ impl<'a, 'b> Execution<'a, 'b> {
                 let mut domain = vec![];
                 match var_type {
                     ActorOrEvent::Actor => {
-                        for e in scenario.actors.iter() {
+                        for e in &scenario.actors {
                             variables.set(self.quantifier_depth - 1, Entity::Actor(e));
                             let truth_value_for_e: bool = self
                                 .interp(restrictor, scenario, &mut variables)?
                                 .try_into()?;
                             if truth_value_for_e {
-                                domain.push(Entity::Actor(e))
+                                domain.push(Entity::Actor(e));
                             }
                         }
                     }
@@ -620,7 +625,7 @@ impl<'a, 'b> Execution<'a, 'b> {
                                 .interp(restrictor, scenario, &mut variables)?
                                 .try_into()?;
                             if truth_value_for_e {
-                                domain.push(Entity::Event(e))
+                                domain.push(Entity::Event(e));
                             }
                         }
                     }
@@ -759,11 +764,11 @@ impl<'a, 'b> Execution<'a, 'b> {
                                 }
                             }
                             BinOp::Or => {
-                                if !phi {
+                                if phi {
+                                    true
+                                } else {
                                     let rhs = self.interp(*rhs, scenario, variables)?;
                                     rhs.try_into()?
-                                } else {
-                                    true
                                 }
                             }
                             _ => panic!("impossible because of previous check"),

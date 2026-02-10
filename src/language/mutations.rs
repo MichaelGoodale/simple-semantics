@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ActorOrEvent, BinOp, Constant, Display, Expr, ExprRef, MonOp, Quantifier, RootedLambdaPool,
+    thiserror,
+};
 use crate::lambda::{
     LambdaError, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
     types::{LambdaType, TypeError},
@@ -56,7 +59,7 @@ impl<'src, T: LambdaLanguageOfThought> TryFrom<ExprOrType<'src, T>> for LambdaEx
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought> ExprOrType<'src, T> {
+impl<T: LambdaLanguageOfThought> ExprOrType<'_, T> {
     fn parent(&self) -> Option<usize> {
         match self {
             ExprOrType::Type { parent, .. } | ExprOrType::Expr { parent, .. } => *parent,
@@ -73,7 +76,7 @@ struct UnfinishedLambdaPool<'src, T: LambdaLanguageOfThought> {
     pool: Vec<ExprOrType<'src, T>>,
 }
 
-impl<'src, T: LambdaLanguageOfThought> Default for UnfinishedLambdaPool<'src, T> {
+impl<T: LambdaLanguageOfThought> Default for UnfinishedLambdaPool<'_, T> {
     fn default() -> Self {
         Self { pool: vec![] }
     }
@@ -94,7 +97,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
                     lambda_type: t.rhs().unwrap().clone(),
                     parent: Some(c.position),
                     is_app_subformula: false,
-                })
+                });
             }
             LambdaExpr::BoundVariable(b, _) => {
                 c.use_bvar(*b);
@@ -150,7 +153,7 @@ impl EnumerationType for NormalEnumeration {
     }
 
     fn push(&mut self, context: Context, _: bool) {
-        self.0.push(Reverse(context))
+        self.0.push(Reverse(context));
     }
 
     fn get_yield(&mut self) -> Option<ExprDetails> {
@@ -168,11 +171,7 @@ impl EnumerationType for NormalEnumeration {
 
 impl ExprDetails {
     fn score(&self) -> f64 {
-        (1.0 / (self.size as f64))
-            + match self.constant_function {
-                true => 0.0,
-                false => 10.0,
-            }
+        (1.0 / (self.size as f64)) + if self.constant_function { 0.0 } else { 10.0 }
     }
 
     pub fn has_constant_function(&self) -> bool {
@@ -318,12 +317,12 @@ where
         if (self.filter)(&e.expr_details) {
             self.n_seen += 1;
             if self.reservoir_size > self.reservoir.len() {
-                self.reservoir.push(e)
+                self.reservoir.push(e);
             } else if let Some(t) = self.threshold()
                 && e.k > t
             {
                 self.reservoir.pop();
-                self.reservoir.push(e)
+                self.reservoir.push(e);
             }
             if self.n_seen >= self.reservoir_size * 20 {
                 self.pq.clear();
@@ -411,6 +410,7 @@ impl<'src> TypeAgnosticSampler<'src, Expr<'src>> {
     }
 
     ///Get a reference to the [`PossibleExpressions`] used by the model
+    #[must_use]
     pub fn possibles(&self) -> &PossibleExpressions<'src, Expr<'src>> {
         &self.possible_expressions
     }
@@ -418,6 +418,7 @@ impl<'src> TypeAgnosticSampler<'src, Expr<'src>> {
 
 impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///Create a sampler which can sample arbitrary types.
+    #[must_use]
     pub fn typeless_sampler(
         possible_expressions: PossibleExpressions<'src, T>,
         max_expr: usize,
@@ -445,7 +446,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Distribution<RootedLambdaPool<'sr
     for LambdaSampler<'src, T>
 {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> RootedLambdaPool<'src, T> {
-        let w = WeightedIndex::new(self.expr_details.iter().map(|x| x.score())).unwrap();
+        let w = WeightedIndex::new(self.expr_details.iter().map(ExprDetails::score)).unwrap();
         let i = w.sample(rng);
         self.lambdas
             .get(i)
@@ -464,8 +465,8 @@ pub trait EnumerationType {
     fn include(&mut self, n: usize) -> impl Iterator<Item = bool> + 'static;
 }
 
-fn try_yield<'a, 'src, T, F, E>(
-    x: &mut LambdaEnumerator<'a, 'src, T, F, E>,
+fn try_yield<'src, T, F, E>(
+    x: &mut LambdaEnumerator<'_, 'src, T, F, E>,
 ) -> Option<(RootedLambdaPool<'src, T>, ExprDetails)>
 where
     T: LambdaLanguageOfThought,
@@ -503,7 +504,7 @@ where
         }
     }
 
-    ///Change the eager_filter function for this enumerator
+    ///Change the `eager_filter` function for this enumerator
     pub fn eager_filter<F2>(self, eager_filter: F2) -> LambdaEnumerator<'a, 'src, T, F2, E> {
         let LambdaEnumerator {
             pools,
@@ -521,7 +522,7 @@ where
     }
 }
 
-impl<'a, 'src, F, E> Iterator for LambdaEnumerator<'a, 'src, Expr<'src>, F, E>
+impl<'src, F, E> Iterator for LambdaEnumerator<'_, 'src, Expr<'src>, F, E>
 where
     F: Fn(&Context) -> bool,
     E: EnumerationType,
@@ -572,7 +573,7 @@ where
                                 Expr::Constant(Constant::EveryEvent),
                             ),
                         }));
-                    };
+                    }
 
                     (possibles, lambda_type.clone())
                 }
@@ -601,16 +602,15 @@ where
                         c.position = *p;
                         self.pq.push(c, true);
                         continue;
-                    } else {
-                        //If the parent is None, we're done!
-                        self.pq.push_yield(ExprDetails {
-                            id: c.pool_index,
-                            root: LambdaExprRef(c.position as u32),
-                            size: c.depth,
-                            constant_function: c.is_constant(),
-                        });
-                        continue;
                     }
+                    //If the parent is None, we're done!
+                    self.pq.push_yield(ExprDetails {
+                        id: c.pool_index,
+                        root: LambdaExprRef(c.position as u32),
+                        size: c.depth,
+                        constant_function: c.is_constant(),
+                    });
+                    continue;
                 }
             };
 
@@ -778,6 +778,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     }
 
     ///Create a [`LambdaSampler`] of a given type.
+    #[must_use]
     pub fn enumerator<'a>(
         t: &LambdaType,
         possible_expressions: &'a PossibleExpressions<'src, Expr<'src>>,
@@ -802,6 +803,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     }
 
     ///Creates a reusable random sampler by enumerating over the first `max_expr` expressions
+    #[must_use]
     pub fn sampler(
         t: &LambdaType,
         possible_expressions: &PossibleExpressions<'src, Expr<'src>>,
@@ -867,7 +869,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             .bfs_from(self.root)
             .filter_map(|(i, _)| match self.get(i) {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier { subformula, .. }) => {
-                    if !self
+                    if self
                         .pool
                         .bfs_from(LambdaExprRef(subformula.0))
                         .any(|(x, d)| {
@@ -878,9 +880,9 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                             }
                         })
                     {
-                        Some((i, LambdaExprRef(subformula.0)))
-                    } else {
                         None
+                    } else {
+                        Some((i, LambdaExprRef(subformula.0)))
                     }
                 }
                 _ => None,
@@ -1001,10 +1003,10 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 })
                 .collect();
 
-            new_pool.iter_mut().for_each(|x| {
+            for x in &mut new_pool {
                 let child: Vec<_> = x.get_children().map(|x| *lookup.get(&x).unwrap()).collect();
                 x.change_children(child.into_iter());
-            });
+            }
 
             self.pool.0.extend(new_pool);
             self.pool.0.swap(position.0 as usize, offset);

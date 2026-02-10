@@ -1,7 +1,9 @@
+use super::{
+    Debug, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, LambdaType, RandomPQ,
+    RootedLambdaPool, TypeError,
+};
 use ahash::{HashMap, HashSet};
 use itertools::Either;
-
-use super::*;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(super) enum ConstantFunctionState {
@@ -16,13 +18,13 @@ impl ConstantFunctionState {
             ConstantFunctionState::Constant => (),
             ConstantFunctionState::PotentiallyConstant => match new {
                 ConstantFunctionState::Constant => *self = ConstantFunctionState::Constant,
-                ConstantFunctionState::PotentiallyConstant => (),
-                ConstantFunctionState::NonConstant => (),
+                ConstantFunctionState::PotentiallyConstant | ConstantFunctionState::NonConstant => {
+                }
             },
             ConstantFunctionState::NonConstant => match new {
                 ConstantFunctionState::Constant => *self = ConstantFunctionState::Constant,
                 ConstantFunctionState::PotentiallyConstant => {
-                    *self = ConstantFunctionState::PotentiallyConstant
+                    *self = ConstantFunctionState::PotentiallyConstant;
                 }
                 ConstantFunctionState::NonConstant => *self = ConstantFunctionState::NonConstant,
             },
@@ -31,19 +33,17 @@ impl ConstantFunctionState {
 
     fn use_var(&mut self) {
         match self {
-            ConstantFunctionState::Constant => (),
             ConstantFunctionState::PotentiallyConstant => {
-                *self = ConstantFunctionState::NonConstant
+                *self = ConstantFunctionState::NonConstant;
             }
-            ConstantFunctionState::NonConstant => (),
+            ConstantFunctionState::Constant | ConstantFunctionState::NonConstant => (),
         }
     }
 
     fn done(&mut self) {
         match self {
-            ConstantFunctionState::Constant => (),
             ConstantFunctionState::PotentiallyConstant => *self = ConstantFunctionState::Constant,
-            ConstantFunctionState::NonConstant => (),
+            ConstantFunctionState::Constant | ConstantFunctionState::NonConstant => (),
         }
     }
 }
@@ -105,7 +105,7 @@ impl Context {
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
+impl<T: LambdaLanguageOfThought> LambdaPool<'_, T> {
     //If something at position `pos` can be moved from `old_context` to `new_context`
     fn compatible_with(
         &self,
@@ -141,17 +141,19 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
 impl Context {
     #[allow(clippy::len_without_is_empty)]
     ///The length of the context thus far.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.depth
     }
 
     ///The number of variables in the current [`Context`]
+    #[must_use]
     pub fn n_vars(&self) -> usize {
         self.lambdas.len()
     }
 
-    pub(super) fn from_pos<'src, T: LambdaLanguageOfThought>(
-        pool: &RootedLambdaPool<'src, T>,
+    pub(super) fn from_pos<T: LambdaLanguageOfThought>(
+        pool: &RootedLambdaPool<'_, T>,
         pos: LambdaExprRef,
     ) -> (Context, bool) {
         let mut context = Context::new(0, vec![]);
@@ -192,9 +194,9 @@ impl Context {
         (context, return_is_subformula)
     }
 
-    pub(super) fn find_compatible<'src, T: LambdaLanguageOfThought>(
+    pub(super) fn find_compatible<T: LambdaLanguageOfThought>(
         &self,
-        pool: &RootedLambdaPool<'src, T>,
+        pool: &RootedLambdaPool<'_, T>,
         pos: LambdaExprRef,
     ) -> Result<Vec<LambdaExprRef>, TypeError> {
         let t = pool.pool.get_type(pos)?;
@@ -240,13 +242,12 @@ impl Context {
         base_types.insert(LambdaType::et());
 
         loop {
-            for subformula in base_types.iter() {
+            for subformula in &base_types {
                 if let Ok((argument, result_type)) = subformula.split() {
                     let already_has_type = self
                         .possible_types
                         .get(result_type)
-                        .map(|x| x.contains(argument))
-                        .unwrap_or(false);
+                        .is_some_and(|x| x.contains(argument));
 
                     if base_types.contains(argument) && !already_has_type {
                         new_types.insert((result_type, argument));
@@ -255,15 +256,14 @@ impl Context {
             }
             if new_types.is_empty() {
                 break;
-            } else {
-                for (result, argument) in new_types.iter() {
-                    self.possible_types
-                        .entry((*result).clone())
-                        .or_default()
-                        .insert((*argument).clone());
-                }
-                base_types.extend(new_types.drain().map(|(result, _arg)| result));
             }
+            for (result, argument) in &new_types {
+                self.possible_types
+                    .entry((*result).clone())
+                    .or_default()
+                    .insert((*argument).clone());
+            }
+            base_types.extend(new_types.drain().map(|(result, _arg)| result));
         }
     }
 
@@ -310,6 +310,7 @@ impl Context {
     }
 
     ///Does the context have any constant functions preceding it?
+    #[must_use]
     pub fn is_constant(&self) -> bool {
         self.constant_function == ConstantFunctionState::Constant
     }
