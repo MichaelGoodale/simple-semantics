@@ -1,6 +1,6 @@
 use crate::utils::ArgumentIterator;
 use ahash::HashMap;
-use std::iter::empty;
+use std::{fmt::Write, iter::empty};
 use thiserror::Error;
 
 use super::{
@@ -41,13 +41,9 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
     fn n_children(&self) -> usize {
         match self {
-            Expr::Quantifier { .. } => 2,
-            Expr::Variable(_) => 0,
-            Expr::Actor(_) => 0,
-            Expr::Event(_) => 0,
-            Expr::Constant(_) => 0,
-            Expr::Binary(..) => 2,
+            Expr::Quantifier { .. } | Expr::Binary(..) => 2,
             Expr::Unary(..) => 1,
+            Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => 0,
         }
     }
 
@@ -130,10 +126,8 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
     fn get_type(&self) -> &LambdaType {
         match self {
             Expr::Quantifier { .. } => LambdaType::t(),
-            Expr::Variable(Variable::Event(_)) => LambdaType::e(),
-            Expr::Variable(Variable::Actor(_)) => LambdaType::a(),
-            Expr::Actor(_) => LambdaType::a(),
-            Expr::Event(_) => LambdaType::e(),
+            Expr::Variable(Variable::Actor(_)) | Expr::Actor(_) => LambdaType::a(),
+            Expr::Variable(Variable::Event(_)) | Expr::Event(_) => LambdaType::e(),
             Expr::Binary(bin, ..) => match bin {
                 BinOp::AgentOf | BinOp::PatientOf | BinOp::And | BinOp::Or => LambdaType::t(),
             },
@@ -177,16 +171,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
     fn get_arguments(&self) -> impl Iterator<Item = LambdaType> {
         match self {
-            Expr::Quantifier {
-                var_type: ActorOrEvent::Actor,
-                ..
-            } => {
-                ArgumentIterator::A([LambdaType::t().clone(), LambdaType::t().clone()].into_iter())
-            }
-            Expr::Quantifier {
-                var_type: ActorOrEvent::Event,
-                ..
-            } => {
+            Expr::Quantifier { .. } => {
                 ArgumentIterator::A([LambdaType::t().clone(), LambdaType::t().clone()].into_iter())
             }
             Expr::Binary(b, _, _) => {
@@ -195,8 +180,10 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             Expr::Unary(mon_op, _) => {
                 ArgumentIterator::C([mon_op.get_argument_type().clone()].into_iter())
             }
-            Expr::Variable(Variable::Event(_) | Variable::Actor(_)) | Expr::Actor(_) |
-Expr::Event(_) | Expr::Constant(_) => ArgumentIterator::D(empty()),
+            Expr::Variable(Variable::Event(_) | Variable::Actor(_))
+            | Expr::Actor(_)
+            | Expr::Event(_)
+            | Expr::Constant(_) => ArgumentIterator::D(empty()),
         }
     }
 
@@ -572,13 +559,13 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                             {
                                 let mut s = String::default();
                                 if add_parenthesis_for_bin_op(*bin_op, x_a) {
-                                    s.push_str(&format!("({x})"));
+                                    write!(s, "({x})").unwrap();
                                 } else {
                                     s.push_str(&x);
                                 }
-                                s.push_str(&format!(" {bin_op} "));
+                                write!(s, " {bin_op} ").unwrap();
                                 if add_parenthesis_for_bin_op(*bin_op, y_a) {
-                                    s.push_str(&format!("({y})"));
+                                    write!(s, "({y})").unwrap();
                                 } else {
                                     s.push_str(&y);
                                 }
@@ -593,7 +580,9 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     (
                         match mon_op {
                             MonOp::Not => match arg_binom {
-                                AssociativityData::Binom(BinOp::And | BinOp::Or) => format!("{mon_op}({arg})"),
+                                AssociativityData::Binom(BinOp::And | BinOp::Or) => {
+                                    format!("{mon_op}({arg})")
+                                }
                                 AssociativityData::Binom(_)
                                 | AssociativityData::Lambda
                                 | AssociativityData::App

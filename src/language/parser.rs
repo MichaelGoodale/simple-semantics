@@ -353,12 +353,11 @@ impl Display for Token<'_> {
             Token::OpenDelim => write!(f, "("),
             Token::ArgSep => write!(f, ","),
             Token::CloseDelim => write!(f, ")"),
-            Token::Bool(constant) => write!(f, "{constant}"),
             Token::And => write!(f, "&"),
             Token::Or => write!(f, "|"),
             Token::Not => write!(f, "~"),
             Token::BinOp(bin_op) => write!(f, "{bin_op}"),
-            Token::Constant(constant) => write!(f, "{constant}"),
+            Token::Bool(constant) | Token::Constant(constant) => write!(f, "{constant}"),
             Token::Property(k, actor_or_event) => write!(f, "p{actor_or_event}_{k}"),
             Token::Quantifier(quantifier, actor_or_event) => write!(
                 f,

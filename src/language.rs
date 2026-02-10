@@ -68,8 +68,7 @@ impl MonOp<'_> {
         match self {
             MonOp::Property(_, ActorOrEvent::Actor) => LambdaType::a(),
             MonOp::Property(_, ActorOrEvent::Event) => LambdaType::e(),
-            MonOp::Iota(ActorOrEvent::Actor | ActorOrEvent::Event) => LambdaType::t(),
-            MonOp::Not => LambdaType::t(),
+            MonOp::Iota(ActorOrEvent::Actor | ActorOrEvent::Event) | MonOp::Not => LambdaType::t(),
         }
     }
 }
@@ -150,13 +149,13 @@ pub enum Variable {
 }
 
 impl Variable {
-    fn id(&self) -> u32 {
+    fn id(self) -> u32 {
         match self {
-            Variable::Actor(a) | Variable::Event(a) => *a,
+            Variable::Actor(a) | Variable::Event(a) => a,
         }
     }
 
-    fn as_lambda_type(&self) -> &'static LambdaType {
+    fn as_lambda_type(self) -> &'static LambdaType {
         match self {
             Variable::Actor(_) => LambdaType::a(),
             Variable::Event(_) => LambdaType::e(),
@@ -246,7 +245,7 @@ pub struct ExecutionConfig {
 
 impl ExecutionConfig {
     ///Create a new [`ExecutionConfig`]
-    #[must_use] 
+    #[must_use]
     pub const fn new(
         max_steps: Option<usize>,
         #[cfg(not(target_arch = "wasm32"))] timeout: Option<Duration>,
@@ -260,21 +259,21 @@ impl ExecutionConfig {
     }
 
     ///Forbid quantification over an empty set
-    #[must_use] 
+    #[must_use]
     pub const fn forbid_empty_quantification(mut self) -> Self {
         self.empty_quantification = false;
         self
     }
 
     ///Allow quantification over an empty set
-    #[must_use] 
+    #[must_use]
     pub const fn allow_empty_quantification(mut self) -> Self {
         self.empty_quantification = true;
         self
     }
 
     ///Set `max_steps` on a config
-    #[must_use] 
+    #[must_use]
     pub const fn with_max_steps(mut self, max_steps: usize) -> Self {
         self.max_steps = Some(max_steps);
         self
@@ -282,7 +281,7 @@ impl ExecutionConfig {
 
     ///Set `max_duration` on a config
     #[cfg(not(target_arch = "wasm32"))]
-    #[must_use] 
+    #[must_use]
     pub const fn with_timeout(mut self, time_out: Duration) -> Self {
         self.timeout = Some(time_out);
         self
@@ -571,13 +570,11 @@ impl<'a> ExprPool<'a> {
 
     fn get_type(&self, expr: ExprRef) -> LanguageResultType {
         match self.get(expr) {
-            Expr::Quantifier { .. } => LanguageResultType::Bool,
-            Expr::Variable(Variable::Event(_)) => LanguageResultType::Event,
-            Expr::Variable(Variable::Actor(_)) => LanguageResultType::Actor,
-            Expr::Actor(_) => LanguageResultType::Actor,
-            Expr::Event(_) => LanguageResultType::Event,
-            Expr::Binary(..) => LanguageResultType::Bool,
-            Expr::Unary(..) => LanguageResultType::Bool,
+            Expr::Variable(Variable::Actor(_)) | Expr::Actor(_) => LanguageResultType::Actor,
+            Expr::Variable(Variable::Event(_)) | Expr::Event(_) => LanguageResultType::Event,
+            Expr::Quantifier { .. } | Expr::Binary(..) | Expr::Unary(..) => {
+                LanguageResultType::Bool
+            }
             Expr::Constant(constant) => match constant {
                 Constant::Everyone | Constant::Property(_, ActorOrEvent::Actor) => {
                     LanguageResultType::ActorSet
@@ -594,8 +591,8 @@ impl<'a> ExprPool<'a> {
 impl<'a> Execution<'a, '_> {
     fn quantification(
         &mut self,
-        quantifier: &Quantifier,
-        var_type: &ActorOrEvent,
+        quantifier: Quantifier,
+        var_type: ActorOrEvent,
         restrictor: ExprRef,
         subformula: ExprRef,
         scenario: &Scenario<'a>,
@@ -719,8 +716,8 @@ impl<'a> Execution<'a, '_> {
                 restrictor,
                 subformula,
             } => self.quantification(
-                quantifier,
-                var_type,
+                *quantifier,
+                *var_type,
                 *restrictor,
                 *subformula,
                 scenario,

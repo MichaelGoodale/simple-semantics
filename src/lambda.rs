@@ -266,7 +266,7 @@ pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
 
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     ///Creates an anonymous free variable with [`index`] of type [`t`]
-    #[must_use] 
+    #[must_use]
     pub fn new_free_variable(index: usize, t: LambdaType) -> RootedLambdaPool<'src, T> {
         RootedLambdaPool {
             pool: LambdaPool(vec![LambdaExpr::FreeVariable(FreeVar::Anonymous(index), t)]),
@@ -296,7 +296,7 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
 
     ///Get the length of a lambda tree
     #[allow(clippy::len_without_is_empty)]
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.pool.0.len()
     }
@@ -325,7 +325,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
 
     ///Combine two lambda expressions by applying one to the other. Returns [`None`] if that is
     ///impossible.
-    #[must_use] 
+    #[must_use]
     pub fn merge(mut self, other: Self) -> Option<Self> {
         let self_type = self.pool.get_type(self.root).expect("malformed type");
         let other_type = other.pool.get_type(other.root).expect("malformed type");
@@ -493,9 +493,8 @@ pub(crate) struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
 impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     pub(crate) fn n_children(&self) -> usize {
         match self {
+            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => 0,
             LambdaExpr::Lambda(..) => 1,
-            LambdaExpr::BoundVariable(..) => 0,
-            LambdaExpr::FreeVariable(..) => 0,
             LambdaExpr::Application { .. } => 2,
             LambdaExpr::LanguageOfThoughtExpr(e) => e.n_children(),
         }
@@ -901,7 +900,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'_, 
     }
 
     ///Get [`LambdaSummaryStats`] for an expression, e.g. how many context functions, size, etc.
-    #[must_use] 
+    #[must_use]
     pub fn stats(&self) -> LambdaSummaryStats {
         let lambda_type = self.get_type();
         if lambda_type.is_err() {
