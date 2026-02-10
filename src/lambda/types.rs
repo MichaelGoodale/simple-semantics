@@ -1,16 +1,13 @@
 //! Defines the basic type system of the lambda calculus
-use std::{fmt::Display, sync::LazyLock};
-
 use chumsky::{
     extra::ParserExtra,
     label::LabelError,
     prelude::*,
     text::{TextExpected, inline_whitespace},
 };
-
 #[cfg(feature = "sampling")]
-use rand::{Rng, seq::IteratorRandom};
-
+use rand::{Rng, RngExt, seq::IteratorRandom};
+use std::{fmt::Display, sync::LazyLock};
 use thiserror::Error;
 
 ///Unable to parse a type.

@@ -1,23 +1,21 @@
-use std::{
-    cmp::Reverse,
-    collections::{BinaryHeap, VecDeque},
-    fmt::Debug,
-};
-
-use ahash::HashMap;
-use chumsky::container::Container;
-use rand::{
-    Rng,
-    distr::{Distribution, weighted::WeightedIndex},
-    seq::{IndexedRandom, IteratorRandom},
-};
-use thiserror::Error;
-
 use super::*;
 use crate::lambda::{
     LambdaError, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
     types::{LambdaType, TypeError},
 };
+use ahash::HashMap;
+use chumsky::container::Container;
+use rand::{
+    Rng, RngExt,
+    distr::{Distribution, weighted::WeightedIndex},
+    seq::{IndexedRandom, IteratorRandom},
+};
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, VecDeque},
+    fmt::Debug,
+};
+use thiserror::Error;
 
 mod context;
 mod samplers;
@@ -335,7 +333,7 @@ where
     }
 
     fn include(&mut self, n: usize) -> impl Iterator<Item = bool> + 'static {
-        let x = (0..n).choose_multiple(self.rng, (n / 2).max(1));
+        let x = (0..n).sample(self.rng, (n / 2).max(1));
         let mut v = vec![false; n];
         for i in x {
             v[i] = true;
