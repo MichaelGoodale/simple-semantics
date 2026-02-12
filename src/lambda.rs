@@ -5,6 +5,7 @@ use crate::utils::ArgumentIterator;
 use std::{
     collections::{HashSet, VecDeque},
     fmt::{Debug, Display},
+    hash::Hash,
     iter::empty,
     marker::PhantomData,
 };
@@ -130,6 +131,10 @@ pub trait LambdaLanguageOfThought {
         false
     }
 
+    ///Checks if two expressions are the same, *ignoring* their subtrees (so different children
+    ///shouldn't matter)
+    fn same_expr(&self, other: &Self) -> bool;
+
     ///Convert from a [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]. May return an
     ///error if there are any lambda terms left in the [`RootedLambdaPool<T>`] (e.g. not fully
     ///reduced).
@@ -151,6 +156,10 @@ impl LambdaLanguageOfThought for () {
 
     fn var_type(&self) -> Option<&LambdaType> {
         None
+    }
+
+    fn same_expr(&self, _other: &Self) -> bool {
+        true
     }
 
     fn remap_refs(&mut self, _: &[usize]) {}
@@ -257,11 +266,95 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 ///A lambda expression with its root defined.
 pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
     pub(crate) pool: LambdaPool<'src, T>,
     pub(crate) root: LambdaExprRef,
+}
+
+impl<'src, T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPool<'src, T> {
+    fn eq(&self, other: &Self) -> bool {
+        let mut bfs = self.pool.bfs_from(self.root).map(|(x, _)| self.pool.get(x));
+        let mut o_bfs = other
+            .pool
+            .bfs_from(other.root)
+            .map(|(x, _)| other.pool.get(x));
+        loop {
+            let x = bfs.next();
+            let y = o_bfs.next();
+            match (x, y) {
+                (None, None) => return true,
+                (None, Some(_)) | (Some(_), None) => return false,
+                (Some(a), Some(b)) => {
+                    if !a.same_expr(b) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + HashLambda> Hash for RootedLambdaPool<'src, T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for x in self.pool.bfs_from(self.root).map(|(x, _)| self.pool.get(x)) {
+            match x {
+                LambdaExpr::Lambda(_, lambda_type) => {
+                    0.hash(state);
+                    lambda_type.hash(state)
+                }
+                LambdaExpr::BoundVariable(a, lambda_type) => {
+                    1.hash(state);
+                    a.hash(state);
+                    lambda_type.hash(state);
+                }
+                LambdaExpr::FreeVariable(free_var, lambda_type) => {
+                    2.hash(state);
+                    free_var.hash(state);
+                    lambda_type.hash(state);
+                }
+                LambdaExpr::Application { .. } => {
+                    3.hash(state);
+                }
+                LambdaExpr::LanguageOfThoughtExpr(x) => {
+                    4.hash(state);
+                    x.hash_expr(state);
+                }
+            }
+        }
+    }
+}
+
+///In order to hash a [`RootedLambdaPool`], this trait must be implemented.
+///It allows trees to be hashed without regard for the precise layout of their pools, only the
+///actual tree.
+pub trait HashLambda {
+    ///Hash the expression (without paying attention to subtrees which should be handled
+    ///[`RootedLambdaPool`]'s hash implementation)
+    fn hash_expr<H: std::hash::Hasher>(&self, state: &mut H);
+}
+
+impl<'src, T: PartialEq + Eq + LambdaLanguageOfThought> Eq for RootedLambdaPool<'src, T> {}
+
+impl<'a, T: LambdaLanguageOfThought> LambdaExpr<'a, T> {
+    fn same_expr(&self, other: &Self) -> bool {
+        match self {
+            LambdaExpr::Lambda(_, lambda_type) => {
+                matches!(other, LambdaExpr::Lambda(_, other_type) if lambda_type == other_type)
+            }
+            LambdaExpr::BoundVariable(x, a) => {
+                matches!(other, LambdaExpr::BoundVariable(y, b) if x==y && a==b)
+            }
+            LambdaExpr::FreeVariable(free_var, lambda_type) => {
+                matches!(other, LambdaExpr::FreeVariable(o_var, o_type) if o_var == free_var && o_type == lambda_type)
+            }
+            LambdaExpr::Application { .. } => matches!(self, LambdaExpr::Application { .. }),
+            LambdaExpr::LanguageOfThoughtExpr(x) => {
+                matches!(other, LambdaExpr::LanguageOfThoughtExpr(y) if x.same_expr(y))
+            }
+        }
+    }
 }
 
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
@@ -997,6 +1090,8 @@ impl<'a, T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<'a, T>>>> for
 #[cfg(test)]
 mod test {
 
+    use std::hash::{DefaultHasher, Hasher};
+
     use super::*;
     use crate::language::{
         ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp,
@@ -1341,6 +1436,18 @@ mod test {
         println!("{phi}");
         phi.reduce()?;
         println!("{phi}");
+        assert_eq!(
+            phi,
+            RootedLambdaPool::parse(
+                "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))"
+            )?
+        );
+        assert!(check_hashes(
+            &phi,
+            &RootedLambdaPool::parse(
+                "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+            )?,
+        ));
         let pool = phi.into_pool()?;
         assert_eq!(
             "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
@@ -1349,12 +1456,39 @@ mod test {
         let phi = man.merge(every).unwrap();
         let mut phi = sleeps.merge(phi).unwrap();
         phi.reduce()?;
+        assert_eq!(
+            phi,
+            RootedLambdaPool::parse(
+                "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+            )?
+        );
+
+        assert!(check_hashes(
+            &phi,
+            &RootedLambdaPool::parse(
+                "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+            )?,
+        ));
+
         let pool = phi.into_pool()?;
         assert_eq!(
             "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
             pool.to_string()
         );
         Ok(())
+    }
+
+    fn check_hashes<'src>(
+        phi: &RootedLambdaPool<'src, Expr<'src>>,
+        psi: &RootedLambdaPool<'src, Expr<'src>>,
+    ) -> bool {
+        let mut hasher1 = DefaultHasher::new();
+        let mut hasher2 = DefaultHasher::new();
+
+        phi.hash(&mut hasher1);
+        psi.hash(&mut hasher2);
+
+        hasher1.finish() == hasher2.finish()
     }
 
     #[test]

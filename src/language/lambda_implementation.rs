@@ -1,6 +1,6 @@
-use crate::utils::ArgumentIterator;
+use crate::{lambda::HashLambda, utils::ArgumentIterator};
 use ahash::HashMap;
-use std::{fmt::Write, iter::empty};
+use std::{fmt::Write, hash::Hash, iter::empty};
 use thiserror::Error;
 
 use super::{
@@ -146,6 +146,23 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         }
     }
 
+    fn same_expr(&self, other: &Self) -> bool {
+        match self {
+            Expr::Quantifier {
+                quantifier: q1,
+                var_type: v1,
+                ..
+            } => {
+                matches!(other, Expr::Quantifier{ quantifier: q2, var_type: v2, .. } if q1==q2 && v1==v2)
+            }
+            Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => {
+                self == other
+            }
+            Expr::Binary(b1, ..) => matches!(other, Expr::Binary(b2, ..) if b1==b2),
+            Expr::Unary(m1, _) => matches!(other, Expr::Unary(m2,_) if m1==m2),
+        }
+    }
+
     fn to_pool(pool: RootedLambdaPool<Self>) -> Result<Self::Pool, Self::ConversionError> {
         let processed_pool = pool
             .pool
@@ -189,6 +206,46 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
     fn commutative(&self) -> bool {
         matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
+    }
+}
+
+impl HashLambda for Expr<'_> {
+    fn hash_expr<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Expr::Quantifier {
+                quantifier,
+                var_type,
+                ..
+            } => {
+                0.hash(state);
+                quantifier.hash(state);
+                var_type.hash(state);
+            }
+            Expr::Variable(variable) => {
+                1.hash(state);
+                variable.hash(state);
+            }
+            Expr::Actor(a) => {
+                2.hash(state);
+                a.hash(state);
+            }
+            Expr::Event(b) => {
+                3.hash(state);
+                b.hash(state);
+            }
+            Expr::Binary(bin_op, ..) => {
+                4.hash(state);
+                bin_op.hash(state);
+            }
+            Expr::Unary(mon_op, _) => {
+                5.hash(state);
+                mon_op.hash(state);
+            }
+            Expr::Constant(constant) => {
+                6.hash(state);
+                constant.hash(state);
+            }
+        }
     }
 }
 
@@ -803,9 +860,17 @@ mod test {
         sentence.lambda_abstract_free_variable(FreeVar::Anonymous(0), LambdaType::A, true)?;
         let mut sentence = sentence.merge(everyone).unwrap();
         sentence.reduce()?;
+
         assert_eq!(
             sentence.to_string(),
             "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
+        );
+
+        assert_eq!(
+            sentence,
+            RootedLambdaPool::parse(
+                "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
+            )?
         );
 
         let everyone = RootedLambdaPool::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
@@ -820,8 +885,10 @@ mod test {
         let mut sentence = sentence.merge(everyone).unwrap();
         sentence.reduce()?;
         assert_eq!(
-            sentence.to_string(),
-            "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z)) | some(z, all_a, every_e(a, all_e, AgentOf(y, a) & pe_likes(a) & PatientOf(x, a)))))"
+            sentence,
+            RootedLambdaPool::parse(
+                "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z)) | some(z, all_a, every_e(a, all_e, AgentOf(y, a) & pe_likes(a) & PatientOf(x, a)))))"
+            )?
         );
         Ok(())
     }
