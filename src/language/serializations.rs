@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     lambda::{FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
@@ -16,6 +16,16 @@ impl Serialize for LambdaType {
         S: serde::Serializer,
     {
         serializer.serialize_str(self.to_string().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for LambdaType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        LambdaType::from_string(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -185,19 +195,21 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     let mut new_v = vec![];
                     let child_asso = self.tokens(LambdaExprRef(arg.0), c, &mut new_v, false);
 
-                    if mon_op == &MonOp::Not { match child_asso {
-                        AssociativityData::Binom(BinOp::And | BinOp::Or) => {
-                            v.push(Token::OpenDelim);
-                            v.extend(new_v);
-                            v.push(Token::CloseDelim);
+                    if mon_op == &MonOp::Not {
+                        match child_asso {
+                            AssociativityData::Binom(BinOp::And | BinOp::Or) => {
+                                v.push(Token::OpenDelim);
+                                v.extend(new_v);
+                                v.push(Token::CloseDelim);
+                            }
+                            AssociativityData::Binom(_)
+                            | AssociativityData::Lambda
+                            | AssociativityData::App
+                            | AssociativityData::Monop => {
+                                v.extend(new_v);
+                            }
                         }
-                        AssociativityData::Binom(_)
-                        | AssociativityData::Lambda
-                        | AssociativityData::App
-                        | AssociativityData::Monop => {
-                            v.extend(new_v);
-                        }
-                    } } else {
+                    } else {
                         v.push(Token::OpenDelim);
                         v.extend(new_v);
                         v.push(Token::CloseDelim);
@@ -270,7 +282,19 @@ impl Serialize for RootedLambdaPool<'_, Expr<'_>> {
 #[cfg(test)]
 mod test {
 
-    use crate::lambda::RootedLambdaPool;
+    use crate::lambda::{RootedLambdaPool, types::LambdaType};
+
+    #[test]
+    fn type_serializing() -> anyhow::Result<()> {
+        for s in ["a", "<a,t>", "<<e,<e,<<a,t>,t>>>, t>"] {
+            let t = LambdaType::from_string(s)?;
+            let t_str = serde_json::to_string(&t)?;
+            let t_json: LambdaType = serde_json::from_str(t_str.as_str())?;
+            assert_eq!(t, t_json);
+        }
+
+        Ok(())
+    }
 
     #[test]
     fn serializing() -> anyhow::Result<()> {

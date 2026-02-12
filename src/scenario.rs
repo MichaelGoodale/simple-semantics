@@ -477,6 +477,10 @@ mod test {
                 .first()
                 .unwrap()
         );
+        let s = serde_json::to_string(&scenario)?;
+        let scenario_2: Scenario = serde_json::from_str(s.as_str())?;
+        assert_eq!(scenario, scenario_2);
+
         Ok(())
     }
 }

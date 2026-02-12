@@ -6,6 +6,7 @@ use ahash::HashSet;
 use chumsky::prelude::*;
 use lambda::RootedLambdaPool;
 use language::{Expr, LambdaParseError};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeMap, fmt::Display};
 use thiserror::Error;
 
@@ -15,10 +16,11 @@ pub type Actor<'a> = &'a str;
 ///They are representated as indices to the relevant [`ThetaRoles`] in a given [`Scenario`].
 pub type Event = u8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 ///The union of [`Actor`] and [`Event`]
 pub enum Entity<'a> {
     ///See [`Actor`]
+    #[serde(borrow)]
     Actor(Actor<'a>),
     ///See [`Event`]
     Event(Event),
@@ -34,9 +36,10 @@ impl Display for Entity<'_> {
 }
 
 ///The representation of the theta roles of a given event.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Eq, Hash, Serialize, Deserialize)]
 pub struct ThetaRoles<'a> {
     ///The agent of the event.
+    #[serde(borrow)]
     pub agent: Option<Actor<'a>>,
     ///The patient of the event.
     pub patient: Option<Actor<'a>>,
@@ -46,17 +49,47 @@ type PropertyLabel<'a> = &'a str;
 
 ///The representation of a scenario. A moment consisting of various events, the present actors and
 ///any predicates that apply to either.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Scenario<'a> {
+    #[serde(borrow)]
     actors: Vec<Actor<'a>>,
     thematic_relations: Vec<ThetaRoles<'a>>,
     properties: BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>>,
+    #[serde(
+        serialize_with = "serialize_rooted_lambda_pool_vec",
+        deserialize_with = "deserialize_rooted_lambda_pool_vec",
+        borrow
+    )]
     question: Vec<RootedLambdaPool<'a, Expr<'a>>>,
+}
+
+fn serialize_rooted_lambda_pool_vec<'a, S>(
+    pools: &Vec<RootedLambdaPool<'a, Expr<'a>>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let strings: Vec<String> = pools.iter().map(|pool| pool.to_string()).collect();
+    strings.serialize(serializer)
+}
+
+fn deserialize_rooted_lambda_pool_vec<'de, D>(
+    deserializer: D,
+) -> Result<Vec<RootedLambdaPool<'de, Expr<'de>>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let strings: Vec<&'de str> = Vec::<&'de str>::deserialize(deserializer)?;
+    strings
+        .into_iter()
+        .map(|s| RootedLambdaPool::parse(s).map_err(serde::de::Error::custom))
+        .collect()
 }
 
 impl<'a> Scenario<'a> {
     ///Create a new scenario.
-    #[must_use] 
+    #[must_use]
     pub fn new(
         actors: Vec<Actor<'a>>,
         thematic_relations: Vec<ThetaRoles<'a>>,
@@ -71,26 +104,26 @@ impl<'a> Scenario<'a> {
     }
 
     ///Get the representation of all events as a slice of [`ThetaRoles`].
-    #[must_use] 
+    #[must_use]
     pub fn thematic_relations(&self) -> &[ThetaRoles<'a>] {
         &self.thematic_relations
     }
 
     ///Get the properties (e.g. what predicates apply) of the entities in a scenario.
-    #[must_use] 
+    #[must_use]
     pub fn properties(&self) -> &BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>> {
         &self.properties
     }
 
     ///Get a slice of all [`Actor`]s in the [`Scenario`]
-    #[must_use] 
+    #[must_use]
     pub fn actors(&self) -> &[Actor<'_>] {
         &self.actors
     }
 
     ///Get the questions associated with a scenario (which may be empty if there are no questions).
     ///Questions are representated as [`RootedLambdaPool`] which return a truth value.
-    #[must_use] 
+    #[must_use]
     pub fn questions(&self) -> &[RootedLambdaPool<'a, Expr<'a>>] {
         &self.question
     }
@@ -108,8 +141,9 @@ impl<'a> Scenario<'a> {
 
 ///A struct defining a dataset of different [`Scenario`]s as well as their associated sentences all
 ///lemmas in the dataset.
-#[derive(Debug, Default, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScenarioDataset<'a> {
+    #[serde(borrow)]
     scenarios: Vec<Scenario<'a>>,
     sentences: Vec<Vec<&'a str>>,
     lemmas: Vec<&'a str>,
@@ -146,13 +180,13 @@ impl<'a> ScenarioDataset<'a> {
     }
 
     ///Is the dataset empty?
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.scenarios.is_empty()
     }
 
     ///The number of scenarios in the [`ScenarioDataset`].
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.scenarios.len()
     }
@@ -178,7 +212,7 @@ impl<'a> ScenarioDataset<'a> {
     }
 
     ///Get the available lemmas of a dataset.
-    #[must_use] 
+    #[must_use]
     pub fn lemmas(&self) -> &[&'a str] {
         &self.lemmas
     }
