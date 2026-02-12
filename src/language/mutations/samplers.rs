@@ -157,23 +157,20 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
     pub(crate) fn terms<'a>(
         &'a self,
         lambda_type: &LambdaType,
-        is_subformula: bool,
+        include_lambdas: bool,
         variables: impl Iterator<Item = LambdaExpr<'src, T>>,
         applications: impl Iterator<Item = (LambdaType, LambdaType)>,
     ) -> Vec<PossibleExpr<'a, 'src, T>> {
         let mut possibilities = vec![];
-        if !is_subformula {
-            if let Some(x) = self.expressions.get(lambda_type).map(|x| {
-                x.iter()
-                    .flat_map(|(_, v)| v.iter().map(PossibleExpr::new_borrowed))
-            }) {
-                possibilities.extend(x);
-            }
-
-            if let Ok((lhs, _)) = lambda_type.split() {
-                let e = PossibleExpr::new_owned(LambdaExpr::Lambda(LambdaExprRef(0), lhs.clone()));
-                possibilities.push(e);
-            }
+        if let Some(x) = self.expressions.get(lambda_type).map(|x| {
+            x.iter()
+                .flat_map(|(_, v)| v.iter().map(PossibleExpr::new_borrowed))
+        }) {
+            possibilities.extend(x);
+        }
+        if include_lambdas && let Ok((lhs, _)) = lambda_type.split() {
+            let e = PossibleExpr::new_owned(LambdaExpr::Lambda(LambdaExprRef(0), lhs.clone()));
+            possibilities.push(e);
         }
         possibilities.extend(variables.map(PossibleExpr::new_owned));
         possibilities.extend(

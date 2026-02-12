@@ -142,7 +142,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
         let mut stack: Vec<HashedExpr<_>> = self
             .terms(
                 t,
-                false,
+                true,
                 std::iter::empty(),
                 possible_applications(t, std::iter::empty()),
             )
@@ -305,7 +305,9 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         {
             let mut terms = possibles.terms(
                 typ,
-                false,
+                //the function of a application shouldn't have lambdas, since otherwise we could just
+                //apply the argument there.
+                i != 0 || !matches!(this.h.expr, LambdaExpr::Application { .. }),
                 this.variables
                     .iter()
                     .rev()
@@ -554,6 +556,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone> From<FinishedExpr<'src, T>>
 
 #[cfg(test)]
 mod test {
+    use ahash::HashSetExt;
+
     use super::*;
 
     #[test]
@@ -582,11 +586,24 @@ mod test {
             LambdaType::from_string("<<a,t>,t>").unwrap(),
         ];
         for t in t {
-            for x in possibles.enumerator(&t, 4) {
+            println!("{t}");
+            let mut count = 0;
+            let mut pool_set = HashSet::new();
+            let mut reduced_pool_set = HashSet::new();
+
+            for mut x in possibles.enumerator(&t, 6) {
                 println!("{x}");
                 let o = x.get_type()?;
                 assert_eq!(o, t);
+                count += 1;
+                pool_set.insert(x.clone());
+                x.reduce()?;
+                x.cleanup();
+                reduced_pool_set.insert(x);
             }
+            assert!(count > 0);
+            assert_eq!(pool_set.len(), count);
+            assert_eq!(pool_set.len(), reduced_pool_set.len());
         }
         Ok(())
     }
