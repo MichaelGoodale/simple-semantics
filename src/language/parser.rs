@@ -1,7 +1,7 @@
 use crate::{
     Actor, Entity, Event,
     lambda::{
-        Bvar, LambdaExpr, LambdaExprRef, LambdaPool, ReductionError, RootedLambdaPool,
+        Bvar, FreeVar, LambdaExpr, LambdaExprRef, LambdaPool, ReductionError, RootedLambdaPool,
         types::{LambdaType, TypeError, core_type_parser},
     },
     language::{Constant, Expr, MonOp, lambda_implementation::LambdaConversionError},
@@ -222,7 +222,13 @@ impl<'src> VariableContext<'src> {
             }
             //Do free var
             _ => match lambda_type {
-                Some(lambda_type) => LambdaExpr::FreeVariable(variable.into(), lambda_type),
+                Some(lambda_type) => {
+                    let free_var = variable
+                        .parse::<usize>()
+                        .map_or(FreeVar::Named(variable), FreeVar::Anonymous);
+
+                    LambdaExpr::FreeVariable(free_var, lambda_type)
+                }
                 None => {
                     return Err(LambdaParseError::UnTypedFreeVariable(variable.to_string()));
                 }
