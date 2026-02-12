@@ -6,7 +6,7 @@ use ahash::HashSet;
 use chumsky::prelude::*;
 use lambda::RootedLambdaPool;
 use language::{Expr, LambdaParseError};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 use thiserror::Error;
 
@@ -55,36 +55,7 @@ pub struct Scenario<'a> {
     actors: Vec<Actor<'a>>,
     thematic_relations: Vec<ThetaRoles<'a>>,
     properties: BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>>,
-    #[serde(
-        serialize_with = "serialize_rooted_lambda_pool_vec",
-        deserialize_with = "deserialize_rooted_lambda_pool_vec",
-        borrow
-    )]
     question: Vec<RootedLambdaPool<'a, Expr<'a>>>,
-}
-
-fn serialize_rooted_lambda_pool_vec<'a, S>(
-    pools: &Vec<RootedLambdaPool<'a, Expr<'a>>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    let strings: Vec<String> = pools.iter().map(|pool| pool.to_string()).collect();
-    strings.serialize(serializer)
-}
-
-fn deserialize_rooted_lambda_pool_vec<'de, D>(
-    deserializer: D,
-) -> Result<Vec<RootedLambdaPool<'de, Expr<'de>>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let strings: Vec<&'de str> = Vec::<&'de str>::deserialize(deserializer)?;
-    strings
-        .into_iter()
-        .map(|s| RootedLambdaPool::parse(s).map_err(serde::de::Error::custom))
-        .collect()
 }
 
 impl<'a> Scenario<'a> {

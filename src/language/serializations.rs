@@ -28,6 +28,26 @@ impl<'de> Deserialize<'de> for LambdaType {
         LambdaType::from_string(&s).map_err(serde::de::Error::custom)
     }
 }
+impl<'src> Serialize for RootedLambdaPool<'src, Expr<'src>> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
+impl<'de, 'a> Deserialize<'de> for RootedLambdaPool<'a, Expr<'a>>
+where
+    'de: 'a,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = <&'de str>::deserialize(deserializer)?;
+        RootedLambdaPool::parse(s).map_err(serde::de::Error::custom)
+    }
+}
 
 impl RootedLambdaPool<'_, Expr<'_>> {
     pub(super) fn tokens<'a, 'b: 'a>(
@@ -268,14 +288,25 @@ pub(super) enum Token<'a> {
     CloseDelim,
 }
 
-impl Serialize for RootedLambdaPool<'_, Expr<'_>> {
+///A special kind of RootedLambdaPool that should be used to display in fancy math modes, e.g. with
+///Typst or (potentially) LaTeX.
+pub struct MathModeExpression<'a>(Vec<Token<'a>>);
+
+impl<'src> RootedLambdaPool<'src, Expr<'src>> {
+    ///Get a [`MathModeExpression`] to be serialized for documents.
+    pub fn for_document<'a>(&'a self) -> MathModeExpression<'a> {
+        let mut v: Vec<Token> = vec![];
+        self.tokens(self.root, VarContext::default(), &mut v, false);
+        MathModeExpression(v)
+    }
+}
+
+impl Serialize for MathModeExpression<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut v: Vec<Token> = vec![];
-        self.tokens(self.root, VarContext::default(), &mut v, false);
-        v.serialize(serializer)
+        self.0.serialize(serializer)
     }
 }
 
@@ -353,7 +384,7 @@ mod test {
             ),
         ] {
             let expression = RootedLambdaPool::parse(statement)?;
-            assert_eq!(json, serde_json::to_string(&expression)?);
+            assert_eq!(json, serde_json::to_string(&expression.for_document())?);
         }
 
         Ok(())
