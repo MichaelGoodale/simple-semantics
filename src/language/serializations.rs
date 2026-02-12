@@ -288,13 +288,14 @@ pub(super) enum Token<'a> {
     CloseDelim,
 }
 
-///A special kind of RootedLambdaPool that should be used to display in fancy math modes, e.g. with
+///A special kind of `RootedLambdaPool` that should be used to display in fancy math modes, e.g. with
 ///Typst or (potentially) LaTeX.
 pub struct MathModeExpression<'a>(Vec<Token<'a>>);
 
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     ///Get a [`MathModeExpression`] to be serialized for documents.
-    pub fn for_document<'a>(&'a self) -> MathModeExpression<'a> {
+    #[must_use]
+    pub fn for_document(&self) -> MathModeExpression<'_> {
         let mut v: Vec<Token> = vec![];
         self.tokens(self.root, VarContext::default(), &mut v, false);
         MathModeExpression(v)

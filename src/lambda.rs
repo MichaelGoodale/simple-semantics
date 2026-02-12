@@ -273,7 +273,7 @@ pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
     pub(crate) root: LambdaExprRef,
 }
 
-impl<'src, T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPool<'src, T> {
+impl<T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPool<'_, T> {
     fn eq(&self, other: &Self) -> bool {
         let mut bfs = self.pool.bfs_from(self.root).map(|(x, _)| self.pool.get(x));
         let mut o_bfs = other
@@ -296,13 +296,13 @@ impl<'src, T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPoo
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + HashLambda> Hash for RootedLambdaPool<'src, T> {
+impl<T: LambdaLanguageOfThought + HashLambda> Hash for RootedLambdaPool<'_, T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         for x in self.pool.bfs_from(self.root).map(|(x, _)| self.pool.get(x)) {
             match x {
                 LambdaExpr::Lambda(_, lambda_type) => {
                     0.hash(state);
-                    lambda_type.hash(state)
+                    lambda_type.hash(state);
                 }
                 LambdaExpr::BoundVariable(a, lambda_type) => {
                     1.hash(state);
@@ -335,9 +335,9 @@ pub trait HashLambda {
     fn hash_expr<H: std::hash::Hasher>(&self, state: &mut H);
 }
 
-impl<'src, T: PartialEq + Eq + LambdaLanguageOfThought> Eq for RootedLambdaPool<'src, T> {}
+impl<T: PartialEq + Eq + LambdaLanguageOfThought> Eq for RootedLambdaPool<'_, T> {}
 
-impl<'a, T: LambdaLanguageOfThought> LambdaExpr<'a, T> {
+impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     fn same_expr(&self, other: &Self) -> bool {
         match self {
             LambdaExpr::Lambda(_, lambda_type) => {
