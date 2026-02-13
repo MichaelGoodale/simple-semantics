@@ -1,4 +1,4 @@
-use std::{collections::BinaryHeap, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
 use ahash::{HashMap, HashMapExt, HashSet};
 use itertools::{Either, repeat_n};
@@ -71,7 +71,7 @@ impl Ord for Node<'_> {
 pub struct Enumerator<'a, 'src> {
     max_length: usize,
     simples: Vec<RootedLambdaPool<'src, Expr<'src>>>,
-    stack: BinaryHeap<Node<'src>>,
+    stack: Vec<Node<'src>>,
     done: HashSet<FinishedExpr<'src, Expr<'src>>>,
     possibles: &'a PossibleExpressions<'src, Expr<'src>>,
 }
@@ -245,7 +245,7 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         mut self,
         mut path: Vec<usize>,
         possibles: &PossibleExpressions<'src, Expr<'src>>,
-        stack: &mut BinaryHeap<Node<'src>>,
+        stack: &mut Vec<Node<'src>>,
         max_length: usize,
         n: usize,
     ) -> Option<FinishedExpr<'src, Expr<'src>>> {
