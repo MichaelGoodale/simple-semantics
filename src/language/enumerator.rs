@@ -1,14 +1,8 @@
-use std::{
-    collections::BinaryHeap,
-    fmt::Debug,
-    hash::Hash,
-    rc::{Rc, Weak},
-};
+use std::{collections::BinaryHeap, fmt::Debug, hash::Hash};
 
 use ahash::{HashMap, HashMapExt, HashSet};
 use itertools::{Either, repeat_n};
 use thiserror::Error;
-use weak_table::WeakHashSet;
 
 use crate::{
     lambda::{
@@ -22,49 +16,20 @@ use crate::{
 enum FinishedOrType<'src, T: LambdaLanguageOfThought> {
     Type(LambdaType),
     PartiallyExpanded(ExprWrapper<'src, T>),
-    Expr(Rc<FinishedExpr<'src, T>>),
+    Expr(FinishedExpr<'src, T>),
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug + Ord>
     FinishedOrType<'src, T>
 {
-    fn mark_finished(&mut self, table: &mut WeakHashSet<Weak<FinishedExpr<'src, T>>>) {
-        //annoying stuff to get h out.
+    fn mark_finished(&mut self) {
         let temp = std::mem::replace(self, FinishedOrType::Type(LambdaType::A));
         let FinishedOrType::PartiallyExpanded(ExprWrapper { h, .. }) = temp else {
             panic!()
         };
 
         let h: FinishedExpr<'src, T> = h.try_into().unwrap();
-        let h = if let Some(h) = table.get(&h) {
-            h
-        } else {
-            let h = Rc::new(h);
-            table.insert(h.clone());
-            table.get(&h).unwrap()
-        };
         *self = FinishedOrType::Expr(h);
-    }
-
-    fn make_not_partial_if_possible(
-        &mut self,
-        table: &mut WeakHashSet<Weak<FinishedExpr<'src, T>>>,
-    ) -> bool {
-        if let FinishedOrType::PartiallyExpanded(ExprWrapper { h, variables: _ }) = self {
-            if !h.is_done() {
-                let now_done = h
-                    .children
-                    .iter_mut()
-                    .all(|x| x.make_not_partial_if_possible(table));
-                if !now_done {
-                    return false;
-                }
-            }
-            self.mark_finished(table);
-            true
-        } else {
-            matches!(self, FinishedOrType::Expr(_))
-        }
     }
 }
 
@@ -72,7 +37,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug + 
 struct FinishedExpr<'src, T: LambdaLanguageOfThought> {
     expr: LambdaExpr<'src, T>,
     constant_function: bool,
-    children: Vec<Rc<FinishedExpr<'src, T>>>,
+    children: Vec<FinishedExpr<'src, T>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -107,8 +72,7 @@ pub struct Enumerator<'a, 'src> {
     max_length: usize,
     simples: Vec<RootedLambdaPool<'src, Expr<'src>>>,
     stack: BinaryHeap<Node<'src>>,
-    table: WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
-    done: HashSet<Rc<FinishedExpr<'src, Expr<'src>>>>,
+    done: HashSet<FinishedExpr<'src, Expr<'src>>>,
     possibles: &'a PossibleExpressions<'src, Expr<'src>>,
 }
 
@@ -121,17 +85,11 @@ impl<'src> Iterator for Enumerator<'_, 'src> {
         }
 
         while let Some(Node(n, x)) = self.stack.pop() {
-            if let Some(new) = x.expand(
-                vec![],
-                self.possibles,
-                &mut self.table,
-                &mut self.stack,
-                self.max_length,
-                n,
-            ) {
+            if let Some(new) = x.expand(vec![], self.possibles, &mut self.stack, self.max_length, n)
+            {
                 let h = new.clone();
                 if self.done.insert(new) {
-                    return Some((*h).clone().into());
+                    return Some(h.into());
                 }
             }
         }
@@ -164,17 +122,12 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             })
             .collect();
 
-        let mut table: WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>> = WeakHashSet::new();
-
-        let done: HashSet<Rc<FinishedExpr<_>>> = stack
+        let done: HashSet<FinishedExpr<_>> = stack
             .extract_if(.., |x| x.is_done())
-            .map(|x| Rc::new(x.try_into().unwrap()))
+            .map(|x| x.try_into().unwrap())
             .collect();
 
-        let simples = done
-            .iter()
-            .map(|x| (**x).clone().into())
-            .collect::<Vec<_>>();
+        let simples = done.iter().map(|x| (*x).clone().into()).collect::<Vec<_>>();
 
         let stack = stack
             .into_iter()
@@ -191,15 +144,10 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
             })
             .collect();
 
-        for x in &done {
-            table.insert(x.clone());
-        }
-
         Enumerator {
             max_length,
             simples,
             stack,
-            table,
             possibles: self,
             done,
         }
@@ -269,18 +217,14 @@ fn possible_applications<'a>(
 }
 
 impl<'src> ExprWrapper<'src, Expr<'src>> {
-    fn percolate_up(
-        &mut self,
-        path: &[usize],
-        table: &mut WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
-    ) {
+    fn percolate_up(&mut self, path: &[usize]) {
         if let Some((this_i, path)) = path.split_last() {
             let parent_of_path = get_this(self, path);
             if parent_of_path.h.children[*this_i].is_ready_to_be_marked_done() {
-                parent_of_path.h.children[*this_i].mark_finished(table);
+                parent_of_path.h.children[*this_i].mark_finished();
             }
             if parent_of_path.h.is_done() {
-                self.percolate_up(path, table);
+                self.percolate_up(path);
             }
         }
     }
@@ -301,11 +245,10 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         mut self,
         mut path: Vec<usize>,
         possibles: &PossibleExpressions<'src, Expr<'src>>,
-        table: &mut WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
         stack: &mut BinaryHeap<Node<'src>>,
         max_length: usize,
         n: usize,
-    ) -> Option<Rc<FinishedExpr<'src, Expr<'src>>>> {
+    ) -> Option<FinishedExpr<'src, Expr<'src>>> {
         let this = get_this(&mut self, &path);
 
         //Initialize any types that haven't been started.
@@ -365,19 +308,12 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
             let this_variables = this.variables.clone();
             for (mut parent, h) in repeat_n(self, terms.len()).zip(terms) {
                 if h.is_done() {
-                    let h = h.try_into().unwrap();
-                    let h = if let Some(h) = table.get(&h) {
-                        h
-                    } else {
-                        let h = Rc::new(h);
-                        table.insert(h.clone());
-                        table.get(&h).unwrap()
-                    };
                     let this = get_this(&mut parent, &path);
-                    this.h.children[i] = FinishedOrType::Expr(h);
+                    this.h.children[i] = FinishedOrType::Expr(h.try_into().unwrap());
                     if i == this.h.children.len() - 1 {
-                        parent.percolate_up(&path, table);
+                        parent.percolate_up(&path);
                     }
+
                     if !parent.is_constant() {
                         stack.push(Node(n, parent));
                     }
@@ -406,17 +342,11 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
             .position(|x| matches!(x, FinishedOrType::PartiallyExpanded(_)))
         {
             path.push(i);
-            self.expand(path, possibles, table, stack, max_length, n);
+            self.expand(path, possibles, stack, max_length, n);
         } else if path.is_empty() {
             let x: FinishedExpr<'src, Expr<'src>> = self.h.try_into().unwrap();
             if !x.constant_function {
-                if let Some(x) = table.get(&x) {
-                    return Some(x);
-                } else {
-                    let h = Rc::new(x);
-                    table.insert(h.clone());
-                    return table.get(&h);
-                }
+                return Some(x);
             }
         } else {
             panic!("this path should never occur");
@@ -443,7 +373,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> FinishedExpr<'src, T> {
         let expr = pool.get(i).clone();
         let children = expr
             .get_children()
-            .map(|i| Rc::new(FinishedExpr::convert(pool, i)))
+            .map(|i| FinishedExpr::convert(pool, i))
             .collect::<Vec<_>>();
 
         let constant_function = if children.iter().any(|x| x.constant_function) {
@@ -561,7 +491,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> From<FinishedExpr<'src, T>>
 {
     fn from(value: FinishedExpr<'src, T>) -> Self {
         let mut pool = vec![None];
-        let mut stack = vec![(Rc::new(value), LambdaExprRef(0))];
+        let mut stack = vec![(value, LambdaExprRef(0))];
         while let Some((x, i)) = stack.pop() {
             for x in x.children.iter().cloned() {
                 stack.push((x, LambdaExprRef((pool.len()) as u32)));
