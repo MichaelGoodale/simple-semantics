@@ -28,6 +28,24 @@ enum FinishedOrType<'src, T: LambdaLanguageOfThought> {
 impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug + Ord>
     FinishedOrType<'src, T>
 {
+    fn mark_finished(&mut self, table: &mut WeakHashSet<Weak<FinishedExpr<'src, T>>>) {
+        //annoying stuff to get h out.
+        let temp = std::mem::replace(self, FinishedOrType::Type(LambdaType::A));
+        let FinishedOrType::PartiallyExpanded(ExprWrapper { h, .. }) = temp else {
+            panic!()
+        };
+
+        let h: FinishedExpr<'src, T> = h.try_into().unwrap();
+        let h = if let Some(h) = table.get(&h) {
+            h
+        } else {
+            let h = Rc::new(h);
+            table.insert(h.clone());
+            table.get(&h).unwrap()
+        };
+        *self = FinishedOrType::Expr(h);
+    }
+
     fn make_not_partial_if_possible(
         &mut self,
         table: &mut WeakHashSet<Weak<FinishedExpr<'src, T>>>,
@@ -42,21 +60,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug + 
                     return false;
                 }
             }
-            //annoying stuff to get h out.
-            let temp = std::mem::replace(self, FinishedOrType::Type(LambdaType::A));
-            let FinishedOrType::PartiallyExpanded(ExprWrapper { h, .. }) = temp else {
-                panic!()
-            };
-
-            let h: FinishedExpr<'src, T> = h.try_into().unwrap();
-            let h = if let Some(h) = table.get(&h) {
-                h
-            } else {
-                let h = Rc::new(h);
-                table.insert(h.clone());
-                table.get(&h).unwrap()
-            };
-            *self = FinishedOrType::Expr(h);
+            self.mark_finished(table);
             true
         } else {
             matches!(self, FinishedOrType::Expr(_))
@@ -265,6 +269,22 @@ fn possible_applications<'a>(
 }
 
 impl<'src> ExprWrapper<'src, Expr<'src>> {
+    fn percolate_up(
+        &mut self,
+        path: &[usize],
+        table: &mut WeakHashSet<Weak<FinishedExpr<'src, Expr<'src>>>>,
+    ) {
+        if let Some((this_i, path)) = path.split_last() {
+            let parent_of_path = get_this(self, path);
+            if parent_of_path.h.children[*this_i].is_ready_to_be_marked_done() {
+                parent_of_path.h.children[*this_i].mark_finished(table);
+            }
+            if parent_of_path.h.is_done() {
+                self.percolate_up(path, table);
+            }
+        }
+    }
+
     fn is_constant(&self) -> bool {
         self.h
             .children
@@ -287,10 +307,6 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
         n: usize,
     ) -> Option<Rc<FinishedExpr<'src, Expr<'src>>>> {
         let this = get_this(&mut self, &path);
-
-        this.h.children.iter_mut().for_each(|x| {
-            x.make_not_partial_if_possible(table);
-        });
 
         //Initialize any types that haven't been started.
         if let Some((i, typ)) = this
@@ -359,6 +375,9 @@ impl<'src> ExprWrapper<'src, Expr<'src>> {
                     };
                     let this = get_this(&mut parent, &path);
                     this.h.children[i] = FinishedOrType::Expr(h);
+                    if i == this.h.children.len() - 1 {
+                        parent.percolate_up(&path, table);
+                    }
                     if !parent.is_constant() {
                         stack.push(Node(n, parent));
                     }
@@ -449,6 +468,16 @@ impl<T: LambdaLanguageOfThought + Clone> HashedExpr<'_, T> {
             FinishedOrType::Expr(_) => true,
             FinishedOrType::PartiallyExpanded(_) | FinishedOrType::Type(_) => false,
         })
+    }
+}
+
+impl<T: LambdaLanguageOfThought + Clone> FinishedOrType<'_, T> {
+    fn is_ready_to_be_marked_done(&self) -> bool {
+        match self {
+            FinishedOrType::Expr(_) => false,
+            FinishedOrType::PartiallyExpanded(e) => e.h.is_done(),
+            FinishedOrType::Type(_) => false,
+        }
     }
 }
 
@@ -578,14 +607,14 @@ mod test {
         let event_properties = ["e"];
         let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
         let t = vec![
-            LambdaType::A,
-            LambdaType::E,
-            LambdaType::T,
-            LambdaType::at().clone(),
-            LambdaType::et().clone(),
-            LambdaType::from_string("<<a,t>,t>").unwrap(),
+            (LambdaType::A, 19),
+            (LambdaType::E, 22),
+            (LambdaType::T, 96),
+            (LambdaType::at().clone(), 18),
+            (LambdaType::et().clone(), 22),
+            (LambdaType::from_string("<<a,t>,t>").unwrap(), 37),
         ];
-        for t in t {
+        for (t, how_many) in t {
             println!("{t}");
             let mut count = 0;
             let mut pool_set = HashSet::new();
@@ -601,7 +630,8 @@ mod test {
                 x.cleanup();
                 reduced_pool_set.insert(x);
             }
-            assert!(count > 0);
+            assert_eq!(count, how_many);
+            println!("{t} {count}");
             assert_eq!(pool_set.len(), count);
             assert_eq!(pool_set.len(), reduced_pool_set.len());
         }
