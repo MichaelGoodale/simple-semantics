@@ -92,6 +92,12 @@ pub enum ReductionError {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct LambdaExprRef(pub u32);
 
+impl LambdaExprRef {
+    pub(crate) fn new(x: usize) -> Self {
+        LambdaExprRef(u32::try_from(x).expect("Reference is too high!"))
+    }
+}
+
 ///A trait which allows one to define a language of thought that interacts with the lambda
 ///calculus. An example implementation can be found for [`crate::language::Expr`].
 pub trait LambdaLanguageOfThought {
@@ -105,7 +111,7 @@ pub trait LambdaLanguageOfThought {
 
     ///Update the references such that `LambdaExprRef(0)` is remapped to `LambdaExprRef(remap[0])`.
     ///(Used in garbage collection).
-    fn remap_refs(&mut self, remap: &[usize]);
+    fn remap_refs(&mut self, remap: &[u32]);
 
     ///Returns true if this is somewhere that can bind variables (e.g. should we increment debruijn
     ///indices
@@ -138,6 +144,10 @@ pub trait LambdaLanguageOfThought {
     ///Convert from a [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]. May return an
     ///error if there are any lambda terms left in the [`RootedLambdaPool<T>`] (e.g. not fully
     ///reduced).
+    ///
+    ///# Errors
+    ///Returns a [`ConversionError`] if the pool cannot be converted for some reason (usually
+    ///unreduced lambda types)
     fn to_pool(pool: RootedLambdaPool<Self>) -> Result<Self::Pool, Self::ConversionError>
     where
         Self: Sized;
@@ -162,7 +172,7 @@ impl LambdaLanguageOfThought for () {
         true
     }
 
-    fn remap_refs(&mut self, _: &[usize]) {}
+    fn remap_refs(&mut self, _: &[u32]) {}
 
     fn change_children(&mut self, _: impl Iterator<Item = LambdaExprRef>) {}
 
@@ -402,6 +412,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     }
 
     ///The type of the lambda expression
+    ///
+    ///# Errors
+    ///Returns a [`TypeError`] if the underlying pool is malformed leading to no possible type
+    ///being extractible.
     pub fn get_type(&self) -> Result<LambdaType, TypeError> {
         self.pool.get_type(self.root)
     }
@@ -418,6 +432,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
 
     ///Combine two lambda expressions by applying one to the other. Returns [`None`] if that is
     ///impossible.
+    ///
+    ///# Panics
+    ///Will panic if either pool is malformed such that no type can be found.
     #[must_use]
     pub fn merge(mut self, other: Self) -> Option<Self> {
         let self_type = self.pool.get_type(self.root).expect("malformed type");
@@ -450,6 +467,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     }
 
     ///Reduce a lambda expression
+    ///
+    ///# Errors
+    ///Will throw a [`ReductionError`] if there is something makes the reduction improper.
     pub fn reduce(&mut self) -> Result<(), ReductionError> {
         self.pool.reduce(self.root)?;
         Ok(())
@@ -457,12 +477,18 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
 
     ///Convert a lambda expression to its executable version (should only be done if there are only
     ///[`LambdaExpr::LanguageOfThoughtExpr`] expressions.
+    ///
+    ///# Errors
+    ///Will throw a [`T::ConversionError`] if there are any lambda terms left in the pool
     pub fn into_pool(mut self) -> Result<T::Pool, T::ConversionError> {
         self.cleanup();
         T::to_pool(self)
     }
 
     ///Replace a free variable with a value.
+    ///
+    ///# Errors
+    ///Will return an error if a [`FreeVar`] with the same name but different type already exists
     pub fn bind_free_variable(
         &mut self,
         fvar: FreeVar<'src>,
@@ -476,6 +502,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     }
 
     ///Replace a free variable by lambda abstracting it. (e.g. $P(x_{free})$ to $\lambda x P(x)$).
+    ///
+    ///# Errors
+    ///Will throw an error if the free variable has the wrong type.
     pub fn lambda_abstract_free_variable(
         &mut self,
         fvar: FreeVar<'src>,
@@ -512,6 +541,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     }
 
     ///Apply a free variable to a function.
+    ///
+    ///# Errors
+    ///Will throw an error if there is an issue with the reduction
     pub fn apply_new_free_variable(
         &mut self,
         fvar: FreeVar<'src>,
@@ -539,10 +571,12 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
         mut other_root: LambdaExprRef,
         mut other_pool: LambdaPool<'src, T>,
     ) -> LambdaExprRef {
-        let shift_n = self.0.len();
-        let remap: Vec<_> = (0..other_pool.0.len()).map(|x| x + shift_n).collect();
+        let shift_n = u32::try_from(self.0.len()).unwrap();
+        let remap: Vec<_> = (0..u32::try_from(other_pool.0.len()).unwrap())
+            .map(|x| x + shift_n)
+            .collect();
         other_pool.0.iter_mut().for_each(|x| x.remap_refs(&remap));
-        other_root.0 += shift_n as u32;
+        other_root.0 += shift_n;
         self.0.append(&mut other_pool.0);
         other_root
     }
@@ -792,7 +826,7 @@ where
                 //Last iteration so we don't need to copy anymore.
                 *self.get_mut(*x) = self.get(to_copy).clone();
             } else {
-                let mut len = self.0.len();
+                let mut len = u32::try_from(self.0.len()).unwrap();
                 let mut first = true;
                 let mut head = None;
                 self.0.extend(
@@ -806,8 +840,8 @@ where
                             }
 
                             let old_len = len;
-                            len += expr.n_children();
-                            expr.change_children((old_len..len).map(|x| LambdaExprRef(x as u32)));
+                            len += u32::try_from(expr.n_children()).unwrap();
+                            expr.change_children((old_len..len).map(LambdaExprRef));
                             if first {
                                 head = Some(expr);
                                 first = false;
@@ -859,14 +893,14 @@ where
                 self.bfs_from_mut(inner_term)
                     .filter_map(|(expr, d, expr_ref)| {
                         if let LambdaExpr::BoundVariable(b_d, _) = expr {
-                            if *b_d > d {
-                                //Decrement locally free variables
-                                *b_d -= 1;
-                                None
-                            } else if *b_d == d {
-                                Some((expr_ref, *b_d))
-                            } else {
-                                None
+                            match (*b_d).cmp(&d) {
+                                std::cmp::Ordering::Greater => {
+                                    //Decrement locally free variables
+                                    *b_d -= 1;
+                                    None
+                                }
+                                std::cmp::Ordering::Equal => Some((expr_ref, *b_d)),
+                                std::cmp::Ordering::Less => None,
                             }
                         } else {
                             None
@@ -891,8 +925,8 @@ where
     ///Iterates through a pool and de-allocates dangling refs and updates `ExprRefs` to new
     ///addresses. Basically garbage collection.
     pub(crate) fn cleanup(&mut self, root: LambdaExprRef) -> LambdaExprRef {
-        let findable: HashSet<_> = self.bfs_from(root).map(|(x, _)| x.0 as usize).collect();
-        let mut remap = (0..self.0.len()).collect::<Vec<_>>();
+        let findable: HashSet<_> = self.bfs_from(root).map(|(x, _)| x.0).collect();
+        let mut remap = (0..u32::try_from(self.0.len()).unwrap()).collect::<Vec<_>>();
         let mut adjustment = 0;
 
         for i in &mut remap {
@@ -911,7 +945,7 @@ where
         for x in &mut self.0 {
             x.remap_refs(&remap);
         }
-        LambdaExprRef(remap[root.0 as usize] as u32)
+        LambdaExprRef(remap[root.0 as usize])
     }
 
     pub fn reduce(&mut self, root: LambdaExprRef) -> Result<(), ReductionError> {
@@ -938,17 +972,17 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
         }
     }
 
-    fn remap_refs(&mut self, remap: &[usize]) {
+    fn remap_refs(&mut self, remap: &[u32]) {
         match self {
             LambdaExpr::Lambda(x, _) => {
-                *x = LambdaExprRef(remap[x.0 as usize] as u32);
+                *x = LambdaExprRef(remap[x.0 as usize]);
             }
             LambdaExpr::Application {
                 subformula,
                 argument,
             } => {
-                *subformula = LambdaExprRef(remap[subformula.0 as usize] as u32);
-                *argument = LambdaExprRef(remap[argument.0 as usize] as u32);
+                *subformula = LambdaExprRef(remap[subformula.0 as usize]);
+                *argument = LambdaExprRef(remap[argument.0 as usize]);
             }
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
             LambdaExpr::LanguageOfThoughtExpr(x) => x.remap_refs(remap),
@@ -977,6 +1011,9 @@ pub enum LambdaSummaryStats {
 
 impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'_, T> {
     ///Convert an expression `phi` of type `x` and convert it to `lambda <x,t> P P(phi)`
+    ///
+    ///# Errors
+    ///Will return a type error if the type of the lambda expression is malformed
     pub fn lift(&mut self) -> Result<(), TypeError> {
         let t =
             LambdaType::Composition(Box::new(self.get_type()?.clone()), Box::new(LambdaType::T));
@@ -994,6 +1031,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'_, 
 
     ///Get [`LambdaSummaryStats`] for an expression, e.g. how many context functions, size, etc.
     #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn stats(&self) -> LambdaSummaryStats {
         let lambda_type = self.get_type();
         if lambda_type.is_err() {

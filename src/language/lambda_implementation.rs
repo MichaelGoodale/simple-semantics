@@ -102,22 +102,22 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         }
     }
 
-    fn remap_refs(&mut self, remap: &[usize]) {
+    fn remap_refs(&mut self, remap: &[u32]) {
         match self {
             Expr::Quantifier {
                 restrictor,
                 subformula,
                 ..
             } => {
-                *restrictor = ExprRef(remap[restrictor.0 as usize] as u32);
-                *subformula = ExprRef(remap[subformula.0 as usize] as u32);
+                *restrictor = ExprRef(remap[restrictor.0 as usize]);
+                *subformula = ExprRef(remap[subformula.0 as usize]);
             }
             Expr::Binary(_, x, y) => {
-                *x = ExprRef(remap[x.0 as usize] as u32);
-                *y = ExprRef(remap[y.0 as usize] as u32);
+                *x = ExprRef(remap[x.0 as usize]);
+                *y = ExprRef(remap[y.0 as usize]);
             }
             Expr::Unary(_, x) => {
-                *x = ExprRef(remap[x.0 as usize] as u32);
+                *x = ExprRef(remap[x.0 as usize]);
             }
             Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => (),
         }
@@ -171,10 +171,10 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             .map(|x| match x {
                 LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x),
                 LambdaExpr::BoundVariable(x, LambdaType::A) => {
-                    Ok(Expr::Variable(Variable::Actor(x as u32)))
+                    Ok(Expr::Variable(Variable::Actor(u32::try_from(x).unwrap())))
                 }
                 LambdaExpr::BoundVariable(x, LambdaType::E) => {
-                    Ok(Expr::Variable(Variable::Event(x as u32)))
+                    Ok(Expr::Variable(Variable::Event(u32::try_from(x).unwrap())))
                 }
                 _ => Err(LambdaConversionError::StillHasLambdaTerms),
             })
@@ -406,6 +406,11 @@ fn who_raises_who<'a>(
 impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     ///Takes two lambda expressions, phi and psi of type <x, t> where x is any type and returns phi
     ///AND psi.
+    ///
+    ///# Errors
+    ///Returns a [`ConjoiningError`] if `self` and `other` are not of the right types such that a
+    //conjoining can happen.
+    #[allow(clippy::missing_panics_doc)]
     pub fn conjoin(self, other: Self) -> Result<Self, ConjoiningError> {
         let self_type = self.get_type().unwrap();
         let other_type = other.get_type().unwrap();
@@ -455,6 +460,11 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     ///This is a generalized kind of Event Identification from Kratzer (1996)
     ///
     /// - Kratzer, A. (1996). Severing the External Argument from its Verb. In J. Rooryck & L. Zaring (Eds.), Phrase Structure and the Lexicon (pp. 109–137). Springer Netherlands. <https://doi.org/10.1007/978-94-015-8617-7_5>
+    ///
+    ///# Errors
+    ///Returns a [`ConjoiningError`] if `self` and `other` are not of the right types such that a
+    //raised conjoining can happen.
+    #[allow(clippy::missing_panics_doc)]
     pub fn raised_conjoin(self, other: Self) -> Result<Self, ConjoiningError> {
         let (a, b) = who_raises_who(self, other)?;
         let a_type = a.get_type().unwrap();
@@ -508,10 +518,14 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
     }
 
     ///Create a [`RootedLambdaPool<Expr>`] from a string.
+    ///
+    ///# Errors
+    ///Returns a [`LambdaParseError`] if the input string is malformed and not a LOT expression.
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         parse_lot(s)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn string(
         &self,
         expr: LambdaExprRef,

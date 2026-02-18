@@ -290,6 +290,11 @@ impl ExecutionConfig {
 
 impl<'a> LanguageExpression<'a> {
     ///Run a [`LanguageExpression`] in the language of thought and return the [`LanguageResult`]
+    ///
+    ///# Errors
+    ///Will return a [`LanguageTypeError`] if the [`LanguageExpression`] is malformed, the code
+    ///times out or runs for too many steps according to the config, or if there is a
+    ///presupposition error. See [`LanguageTypeError`]
     pub fn run(
         &self,
         scenario: &Scenario<'a>,
@@ -311,6 +316,10 @@ impl<'a> LanguageExpression<'a> {
 
     ///Parse a given language of thought expression and return the [`LanguageExpression`]. This
     ///does not support tools from the lambda calculus, see [`RootedLambdaPool`].
+    ///
+    ///# Errors
+    ///Will return a [`LambdaParseError`]  if the language of thought expression has any
+    ///lambda terms or if it is malformed
     pub fn parse(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
         Ok(RootedLambdaPool::parse(s)?.into_pool()?)
     }
@@ -702,6 +711,7 @@ impl<'a> Execution<'a, '_> {
         Ok(LanguageResult::Bool(result))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn interp(
         &mut self,
         expr: ExprRef,

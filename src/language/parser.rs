@@ -64,6 +64,7 @@ impl<'a, T: Display> From<Vec<Rich<'a, T>>> for LambdaParseError {
 }
 
 impl<'src> ParseTree<'src> {
+    #[allow(clippy::too_many_lines)]
     fn add_to_pool(
         &self,
         pool: &mut LambdaPool<'src, Expr<'src>>,
@@ -590,6 +591,9 @@ pub fn parse_lot(s: &str) -> Result<RootedLambdaPool<'_, Expr<'_>>, LambdaParseE
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
+///
+///# Errors
+///Will panic if the expression is malformed, or if not all lambda terms can be reduced.
 pub fn parse_executable(s: &str) -> Result<LanguageExpression<'_>, LambdaParseError> {
     let mut pool = parse_lot(s)?;
     pool.reduce()?;

@@ -8,6 +8,7 @@ use crate::lambda::RootedLambdaPool;
 use crate::language::LambdaParseError;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ScenarioDataset, ThetaRoles};
 
+#[allow(clippy::too_many_lines)]
 pub fn scenario_parser<'a>()
 -> impl Parser<'a, &'a str, Result<ScenarioDataset<'a>, LambdaParseError>, extra::Err<Rich<'a, char>>>
 {
@@ -231,7 +232,7 @@ fn add_scenario<'a>(
 }
 
 mod utilities;
-use utilities::*;
+use utilities::{CartesianN, SetCounter};
 
 ///Generates all scenarios that can be generated with a given set of primitives
 pub struct ScenarioIterator<'a> {
@@ -274,6 +275,10 @@ pub struct PossibleEvent<'a> {
 impl<'a> Scenario<'a> {
     ///Returns a [`ScenarioIterator`] which goes over all possible scenarios with the provided
     ///actors and event descriptions
+    ///
+    ///# Panics
+    ///This function will panic if the set of events by event kinds and actors is greater than [`u32::MAX`].
+    #[must_use]
     pub fn all_scenarios(
         actors: &[Actor<'a>],
         event_kinds: &[PossibleEvent<'a>],
@@ -306,7 +311,9 @@ impl<'a> Iterator for ScenarioIterator<'a> {
                 self.current_props = new_props;
                 self.current_event_set =
                     generate_all_events(&self.current_actors, &self.event_kinds);
-                self.counter = SetCounter::new(self.current_event_set.len() as u32);
+                self.counter = SetCounter::new(
+                    u32::try_from(self.current_event_set.len()).expect("Too many events!"),
+                );
             } else {
                 return None;
             }
@@ -370,7 +377,7 @@ fn generate_all_events<'a>(
                         },
                         e.label,
                     )
-                }))
+                }));
             }
             EventType::Transitive => all_events.extend(
                 itertools::repeat_n(actors.iter().copied(), 2)

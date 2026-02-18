@@ -50,6 +50,7 @@ where
 }
 
 impl RootedLambdaPool<'_, Expr<'_>> {
+    #[allow(clippy::too_many_lines)]
     pub(super) fn tokens<'a, 'b: 'a>(
         &'a self,
         expr: LambdaExprRef,

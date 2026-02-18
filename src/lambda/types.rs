@@ -83,7 +83,7 @@ fn type_parser<'a>() -> impl Parser<'a, &'a str, LambdaType, extra::Err<Rich<'a,
     core_type_parser().padded().then_ignore(end())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 ///A struct which recursively gets the right hand side of a given lambda expression
 pub struct RetrievableTypeIterator<'a>(&'a LambdaType);
 
@@ -167,6 +167,9 @@ impl LambdaType {
     ///let x = LambdaType::from_string("<e,<e,t>>")?;
     ///# Ok::<(), anyhow::Error>(())
     ///```
+    ///
+    ///# Errors
+    ///Returns a [`TypeParsingError`] if the string is malformed and doesn't represent a type.
     pub fn from_string(s: &str) -> Result<Self, TypeParsingError> {
         type_parser()
             .parse(s)
@@ -252,8 +255,10 @@ impl LambdaType {
         matches!(&self, LambdaType::Composition(a, _) if a.as_ref() == other)
     }
 
-    ///Split a function type into input and output. Returns a [`TypeError`] if the type is not a
-    ///function.
+    ///Split a function type into input and output.
+    ///
+    ///# Errors
+    ///Returns a [`TypeError`] if the type is not a function.
     pub fn split(&self) -> Result<(&LambdaType, &LambdaType), TypeError> {
         match &self {
             LambdaType::Composition(a, b) => Ok((a, b)),
@@ -261,7 +266,10 @@ impl LambdaType {
         }
     }
 
-    ///Applies a function type to self. Returns a [`TypeError`] if the type is not the right type
+    ///Applies a function type to self.
+    ///
+    ///# Errors
+    ///Returns a [`TypeError`] if the type is not the right type
     ///for the function.
     pub fn apply(&self, other: &Self) -> Result<&Self, TypeError> {
         if !self.can_apply(other) {
@@ -276,8 +284,10 @@ impl LambdaType {
         matches!(&self, LambdaType::Composition(_, _))
     }
 
-    ///Get the left-hand side of a function. Returns a [`TypeError`] if the type is not a
-    ///function.
+    ///Get the left-hand side of a function.
+    ///
+    ///# Errors
+    ///Returns a [`TypeError`] if the type is not a function.
     pub fn lhs(&self) -> Result<&Self, TypeError> {
         Ok(self.split()?.0)
     }
@@ -292,8 +302,10 @@ impl LambdaType {
         }
     }
 
-    ///Get the right-hand side of a function. Returns a [`TypeError`] if the type is not a
-    ///function.
+    ///Get the right-hand side of a function.
+    ///
+    ///# Errors
+    ///Returns a [`TypeError`] if the type is not a function.
     pub fn rhs(&self) -> Result<&Self, TypeError> {
         Ok(self.split()?.1)
     }

@@ -100,6 +100,7 @@ impl<'src> Iterator for Enumerator<'_, 'src> {
 impl<'src> PossibleExpressions<'src, Expr<'src>> {
     ///Enumerate over all possible expressions of type [`t`]
     #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn enumerator<'a>(&'a self, t: &LambdaType, max_length: usize) -> Enumerator<'a, 'src> {
         let mut stack: Vec<HashedExpr<_>> = self
             .terms(
@@ -404,9 +405,8 @@ impl<T: LambdaLanguageOfThought + Clone> HashedExpr<'_, T> {
 impl<T: LambdaLanguageOfThought + Clone> FinishedOrType<'_, T> {
     fn is_ready_to_be_marked_done(&self) -> bool {
         match self {
-            FinishedOrType::Expr(_) => false,
             FinishedOrType::PartiallyExpanded(e) => e.h.is_done(),
-            FinishedOrType::Type(_) => false,
+            FinishedOrType::Expr(_) | FinishedOrType::Type(_) => false,
         }
     }
 }
@@ -494,14 +494,14 @@ impl<'src, T: LambdaLanguageOfThought + Clone> From<FinishedExpr<'src, T>>
         let mut stack = vec![(value, LambdaExprRef(0))];
         while let Some((x, i)) = stack.pop() {
             for x in x.children.iter().cloned() {
-                stack.push((x, LambdaExprRef((pool.len()) as u32)));
+                stack.push((x, LambdaExprRef::new(pool.len())));
                 pool.push(None);
             }
             let mut e = x.expr.clone();
             e.change_children(
                 (0..e.n_children())
                     .rev()
-                    .map(|i| LambdaExprRef((pool.len() - i - 1) as u32)),
+                    .map(|i| LambdaExprRef::new(pool.len() - i - 1)),
             );
             pool[i.0 as usize] = Some(e);
         }

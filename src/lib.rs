@@ -106,7 +106,7 @@ impl<'a> Scenario<'a> {
     }
 
     fn events(&self) -> impl Iterator<Item = Event> {
-        0..(self.thematic_relations.len() as Event)
+        0..Event::try_from(self.thematic_relations.len()).unwrap()
     }
 }
 
@@ -132,6 +132,9 @@ impl Display for DatasetError {
 
 impl<'a> ScenarioDataset<'a> {
     ///Create a new [`ScenarioDataset`]
+    ///
+    ///# Errors
+    ///Returns a dataset error if `scenarios.len() != sentence.len()`
     pub fn new(
         scenarios: Vec<Scenario<'a>>,
         sentences: Vec<Vec<&'a str>>,
@@ -189,6 +192,10 @@ impl<'a> ScenarioDataset<'a> {
     }
 
     ///Parse a list of sentences and scenarios and return the dataset.
+    ///
+    ///# Errors
+    ///Returns a [`LambdaParseError`] if the string is malformed and doesn't represent a
+    ///[`ScenarioDataset`]
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
         let parser = scenario::scenario_parser();
         let parse = parser.parse(s).into_result();

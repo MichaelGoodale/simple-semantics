@@ -92,7 +92,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
         match &mut lambda_expr {
             LambdaExpr::Lambda(body, arg) => {
                 c.add_lambda(arg);
-                *body = LambdaExprRef(self.pool.len() as u32);
+                *body = LambdaExprRef::new(self.pool.len());
                 self.pool.push(ExprOrType::Type {
                     lambda_type: t.rhs().unwrap().clone(),
                     parent: Some(c.position),
@@ -107,8 +107,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
                 subformula,
                 argument,
             } => {
-                *subformula = LambdaExprRef(self.pool.len() as u32);
-                *argument = LambdaExprRef((self.pool.len() + 1) as u32);
+                *subformula = LambdaExprRef::new(self.pool.len());
+                *argument = LambdaExprRef::new(self.pool.len() + 1);
                 let (subformula, argument) = app_details.unwrap();
                 self.pool.push(ExprOrType::Type {
                     lambda_type: subformula,
@@ -132,9 +132,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
                         parent: Some(c.position),
                         is_app_subformula: false,
                     }));
-                e.change_children(
-                    (children_start..self.pool.len()).map(|x| LambdaExprRef(x as u32)),
-                );
+                e.change_children((children_start..self.pool.len()).map(LambdaExprRef::new));
             }
         }
         self.pool[c.position] = ExprOrType::Expr {
@@ -170,6 +168,7 @@ impl EnumerationType for NormalEnumeration {
 }
 
 impl ExprDetails {
+    #[allow(clippy::cast_precision_loss)]
     fn score(&self) -> f64 {
         (1.0 / (self.size as f64)) + if self.constant_function { 0.0 } else { 10.0 }
     }
@@ -376,6 +375,7 @@ pub struct TypeAgnosticSampler<'src, T: LambdaLanguageOfThought> {
 }
 
 impl<'src> TypeAgnosticSampler<'src, Expr<'src>> {
+    #[allow(clippy::missing_panics_doc)]
     ///Samples an expression of a given type
     pub fn sample(
         &mut self,
@@ -418,6 +418,9 @@ impl<'src> TypeAgnosticSampler<'src, Expr<'src>> {
 
 impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///Create a sampler which can sample arbitrary types.
+    ///
+    ///# Panics
+    ///Will panic if `max_types` == 0 or `max_expr` == 0
     #[must_use]
     pub fn typeless_sampler(
         possible_expressions: PossibleExpressions<'src, T>,
@@ -529,6 +532,7 @@ where
 {
     type Item = (RootedLambdaPool<'src, Expr<'src>>, ExprDetails);
 
+    #[allow(clippy::too_many_lines)]
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(x) = try_yield(self) {
             return Some(x);
@@ -563,7 +567,7 @@ where
                                 }),
                             ..
                         } = self.pools[c.pool_index].pool[*p]
-                        && restrictor.0 == c.position as u32
+                        && restrictor.0 == u32::try_from(c.position).unwrap()
                     {
                         possibles.push(PossibleExpr::new_borrowed(match var_type {
                             ActorOrEvent::Actor => &LambdaExpr::LanguageOfThoughtExpr(
@@ -606,7 +610,7 @@ where
                     //If the parent is None, we're done!
                     self.pq.push_yield(ExprDetails {
                         id: c.pool_index,
-                        root: LambdaExprRef(c.position as u32),
+                        root: LambdaExprRef(u32::try_from(c.position).unwrap()),
                         size: c.depth,
                         constant_function: c.is_constant(),
                     });
@@ -617,16 +621,12 @@ where
             let n = possibles.len();
             let included = self.pq.include(n);
             if n == 0 {
-                // dbg!(&self.pools[c.pool_index]);
-                //   panic!("There is no possible expression of type {lambda_type}");
-                //This is a dead-end.
                 continue;
             }
             let n_pools = self.pools.len();
             if n_pools.is_multiple_of(10_000) {
                 self.pools.shrink_to_fit();
             }
-
             for _ in 0..n.saturating_sub(1) {
                 self.pools.push(self.pools[c.pool_index].clone());
             }
@@ -661,13 +661,19 @@ where
 
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     ///Create a [`LambdaSampler`] of a given type.
+    ///
+    ///# Errors
+    ///Will return a [`LambdaError`] if the tree is malformed
+    ///
+    ///# Panics
+    ///Will panic if the size of the tree is greater than [`u32::MAX`].
     pub fn resample_from_expr<'a>(
         &mut self,
         possible_expressions: &'a PossibleExpressions<'src, Expr<'src>>,
         helpers: Option<&HashMap<LambdaType, Vec<RootedLambdaPool<'src, Expr<'src>>>>>,
         rng: &mut impl Rng,
     ) -> Result<(), LambdaError> {
-        let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
+        let position = LambdaExprRef(u32::try_from((0..self.len()).choose(rng).unwrap()).unwrap());
         let t = self.pool.get_type(position)?;
 
         let pool = if let Some(helpers) = helpers
@@ -691,7 +697,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             pool
         };
 
-        let offset = self.len() as u32;
+        let offset = u32::try_from(self.len()).unwrap();
         let new_root = pool.root.0 + offset;
         self.pool.0.extend(pool.pool.0.into_iter().map(|mut x| {
             let children: Vec<_> = x
@@ -824,6 +830,9 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     }
 
     ///Randomly generate a [`RootedLambdaPool`] of type `t`.
+    ///
+    ///# Panics
+    ///Will panic if no such type can be generated.
     pub fn random_expr(
         t: &LambdaType,
         possible_expressions: &PossibleExpressions<'src, Expr<'src>>,
@@ -904,12 +913,18 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     }
 
     ///Replace a random expression with something else of the same type.
+    ///
+    ///# Errors
+    ///Will return a [`TypeError`] if there is no compatible type to replace
+    ///
+    ///# Panics
+    ///Will panic if the size of the tree is greater than [`u32::MAX`].
     pub fn swap_expr(
         &mut self,
         possible_expressions: &PossibleExpressions<'src, Expr<'src>>,
         rng: &mut impl Rng,
     ) -> Result<(), TypeError> {
-        let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
+        let position = LambdaExprRef(u32::try_from((0..self.len()).choose(rng).unwrap()).unwrap());
 
         let (context, _) = Context::from_pos(self, position);
 
@@ -984,8 +999,14 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 
     ///Replace a random expression with something else of the same type from within the same
     ///expression.
+    ///
+    ///# Errors
+    ///Will return [`TypeError`] if a compatible subtree can't be found.
+    ///
+    ///# Panics
+    ///Will panic if the size of the tree is greater than [`u32::MAX`].
     pub fn swap_subtree(&mut self, rng: &mut impl Rng) -> Result<(), TypeError> {
-        let position = LambdaExprRef((0..self.len()).choose(rng).unwrap() as u32);
+        let position = LambdaExprRef(u32::try_from((0..self.len()).choose(rng).unwrap()).unwrap());
         let (context, _) = Context::from_pos(self, position);
         let alt = context.find_compatible(self, position)?;
         if let Some(new_pos) = alt.choose(rng).copied() {
@@ -998,7 +1019,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                     let n = lookup.len();
                     lookup
                         .entry(x)
-                        .or_insert(LambdaExprRef((n + offset) as u32));
+                        .or_insert(LambdaExprRef(u32::try_from(n + offset).unwrap()));
                     self.get(x).clone()
                 })
                 .collect();
