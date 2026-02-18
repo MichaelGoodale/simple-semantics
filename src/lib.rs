@@ -201,3 +201,4 @@ pub mod language;
 mod utils;
 pub use language::{LanguageExpression, LanguageResult, parse_executable};
 mod scenario;
+pub use scenario::{EventType, PossibleEvent, ScenarioIterator};
