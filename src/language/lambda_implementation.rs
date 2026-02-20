@@ -207,6 +207,46 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
     fn commutative(&self) -> bool {
         matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
     }
+
+    fn cmp_expr(&self, other: &Self) -> std::cmp::Ordering {
+        self.ordering()
+            .cmp(&other.ordering())
+            .then_with(|| match (self, other) {
+                (
+                    Expr::Quantifier {
+                        quantifier,
+                        var_type,
+                        ..
+                    },
+                    Expr::Quantifier {
+                        quantifier: o_q,
+                        var_type: o_type,
+                        ..
+                    },
+                ) => var_type.cmp(o_type).then(quantifier.cmp(o_q)),
+                (Expr::Variable(x), Expr::Variable(y)) => x.cmp(y),
+                (Expr::Actor(x), Expr::Actor(y)) => x.cmp(y),
+                (Expr::Event(x), Expr::Event(y)) => x.cmp(y),
+                (Expr::Binary(x, ..), Expr::Binary(y, ..)) => x.cmp(y),
+                (Expr::Unary(x, _), Expr::Unary(y, _)) => x.cmp(y),
+                (Expr::Constant(x), Expr::Constant(y)) => x.cmp(y),
+                _ => panic!("Any non identical types already filtered"),
+            })
+    }
+}
+
+impl Expr<'_> {
+    fn ordering(&self) -> usize {
+        match self {
+            Expr::Quantifier { .. } => 0,
+            Expr::Variable(_) => 1,
+            Expr::Actor(_) => 2,
+            Expr::Event(_) => 3,
+            Expr::Binary(..) => 4,
+            Expr::Unary(..) => 5,
+            Expr::Constant(_) => 6,
+        }
+    }
 }
 
 impl HashLambda for Expr<'_> {

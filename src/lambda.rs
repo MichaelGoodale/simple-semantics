@@ -3,6 +3,7 @@
 
 use crate::utils::ArgumentIterator;
 use std::{
+    cmp::Ordering,
     collections::{HashSet, VecDeque},
     fmt::{Debug, Display},
     hash::Hash,
@@ -141,6 +142,9 @@ pub trait LambdaLanguageOfThought {
     ///shouldn't matter)
     fn same_expr(&self, other: &Self) -> bool;
 
+    ///Provides the lexicographic ordering of two expressions (ignoring children)
+    fn cmp_expr(&self, other: &Self) -> std::cmp::Ordering;
+
     ///Convert from a [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]. May return an
     ///error if there are any lambda terms left in the [`RootedLambdaPool<T>`] (e.g. not fully
     ///reduced).
@@ -190,6 +194,10 @@ impl LambdaLanguageOfThought for () {
 
     fn to_pool(_: RootedLambdaPool<Self>) -> Result<Self::Pool, ()> {
         Ok(())
+    }
+
+    fn cmp_expr(&self, _other: &Self) -> std::cmp::Ordering {
+        Ordering::Equal
     }
 }
 
@@ -305,6 +313,73 @@ impl<T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPool<'_, 
         }
     }
 }
+impl<T: PartialEq + LambdaLanguageOfThought> Eq for RootedLambdaPool<'_, T> {}
+
+impl<T: LambdaLanguageOfThought + PartialEq + Eq> PartialOrd for RootedLambdaPool<'_, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: LambdaLanguageOfThought + PartialEq + Eq> Ord for RootedLambdaPool<'_, T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.len().cmp(&other.len()).then_with(|| {
+            let mut bfs = self.pool.bfs_from(self.root).map(|(x, _)| self.pool.get(x));
+            let mut o_bfs = other
+                .pool
+                .bfs_from(other.root)
+                .map(|(x, _)| other.pool.get(x));
+            loop {
+                let x = bfs.next();
+                let y = o_bfs.next();
+                match (x, y) {
+                    (None, None) => break Ordering::Equal,
+                    (None, Some(_)) => break Ordering::Less,
+                    (Some(_), None) => break Ordering::Greater,
+                    (Some(a), Some(b)) => match a.cmp_expr(b) {
+                        Ordering::Less => break Ordering::Less,
+                        Ordering::Greater => break Ordering::Greater,
+                        Ordering::Equal => (),
+                    },
+                }
+            }
+        })
+    }
+}
+
+impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
+    fn ordering(&self) -> usize {
+        match self {
+            LambdaExpr::Lambda(..) => 0,
+            LambdaExpr::BoundVariable(..) => 1,
+            LambdaExpr::FreeVariable(..) => 2,
+            LambdaExpr::Application { .. } => 3,
+            LambdaExpr::LanguageOfThoughtExpr(_) => 4,
+        }
+    }
+
+    fn cmp_expr(&self, other: &Self) -> std::cmp::Ordering {
+        self.ordering()
+            .cmp(&other.ordering())
+            .then_with(|| match (self, other) {
+                (LambdaExpr::Lambda(_, lambda_type), LambdaExpr::Lambda(_, o_type)) => {
+                    lambda_type.cmp(o_type)
+                }
+                (
+                    LambdaExpr::BoundVariable(x, lambda_type),
+                    LambdaExpr::BoundVariable(y, o_type),
+                ) => x.cmp(y).then(lambda_type.cmp(o_type)),
+                (LambdaExpr::FreeVariable(x, lambda_type), LambdaExpr::FreeVariable(y, o_type)) => {
+                    x.cmp(y).then(lambda_type.cmp(o_type))
+                }
+                (LambdaExpr::Application { .. }, LambdaExpr::Application { .. }) => Ordering::Equal,
+                (LambdaExpr::LanguageOfThoughtExpr(x), LambdaExpr::LanguageOfThoughtExpr(y)) => {
+                    x.cmp_expr(y)
+                }
+                _ => panic!("Previous check ensures they are the saame variant"),
+            })
+    }
+}
 
 impl<T: LambdaLanguageOfThought + HashLambda> Hash for RootedLambdaPool<'_, T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -344,8 +419,6 @@ pub trait HashLambda {
     ///[`RootedLambdaPool`]'s hash implementation)
     fn hash_expr<H: std::hash::Hasher>(&self, state: &mut H);
 }
-
-impl<T: PartialEq + Eq + LambdaLanguageOfThought> Eq for RootedLambdaPool<'_, T> {}
 
 impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     fn same_expr(&self, other: &Self) -> bool {
@@ -1128,12 +1201,59 @@ impl<'a, T: LambdaLanguageOfThought> TryFrom<Vec<Option<LambdaExpr<'a, T>>>> for
 #[cfg(test)]
 mod test {
 
-    use std::hash::{DefaultHasher, Hasher};
+    use std::{
+        collections::BTreeSet,
+        hash::{DefaultHasher, Hasher},
+    };
 
     use super::*;
     use crate::language::{
         ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp,
     };
+
+    #[test]
+    fn ordering() -> anyhow::Result<()> {
+        let x = [
+            "a_0",
+            "lambda a x (pa_man(x))",
+            "lambda a x (pa_man(a_m))",
+            "lambda a x (((lambda a y (pa_woman(y)))(a_m)) & pa_man(x))",
+            "lambda a x (((lambda a y (pa_woman(a_m)))(a_m)) & pa_man(x))",
+            "lambda a y (pa_woman(a_m))",
+            "lambda a y (lambda a x (y))",
+            "some(x, pa_man(x), True)",
+            "some(x, pa_man(x), pa_man(x))",
+            "some(x, True, pa_man(x))",
+            "some(x, True, True)",
+        ];
+
+        let set: BTreeSet<_> = x
+            .into_iter()
+            .map(RootedLambdaPool::parse)
+            .collect::<Result<_, _>>()?;
+        assert_eq!(set.len(), 11);
+        let order: Vec<_> = set.into_iter().map(|x| x.to_string()).collect();
+
+        let sorted = vec![
+            "a_0",
+            "lambda a x lambda a y x",
+            "lambda a x pa_man(x)",
+            "lambda a x pa_man(a_m)",
+            "lambda a x pa_woman(a_m)",
+            "some(x, True, True)",
+            "some(x, pa_man(x), True)",
+            "some(x, True, pa_man(x))",
+            "some(x, pa_man(x), pa_man(x))",
+            "lambda a x (lambda a y pa_woman(y))(a_m) & pa_man(x)",
+            "lambda a x (lambda a y pa_woman(a_m))(a_m) & pa_man(x)",
+        ];
+
+        for (x, y) in order.into_iter().zip(sorted) {
+            assert_eq!(x, y);
+        }
+
+        Ok(())
+    }
 
     #[test]
     fn stats() -> anyhow::Result<()> {
