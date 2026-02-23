@@ -49,7 +49,6 @@ fn load_dataset() -> anyhow::Result<()> {
             .map(|x| x.split(" ").collect::<Vec<_>>())
             .into_iter()
             .collect::<Vec<_>>(),
-        ["John", "Mary", "ran", "saw"].into_iter().collect(),
     )?;
 
     assert_eq!(data, parsed_data);

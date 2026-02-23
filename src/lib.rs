@@ -5,7 +5,7 @@
 use ahash::HashSet;
 use chumsky::prelude::*;
 use lambda::RootedLambdaPool;
-use language::{Expr, LambdaParseError};
+use language::Expr;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 use thiserror::Error;
@@ -138,12 +138,11 @@ impl<'a> ScenarioDataset<'a> {
     pub fn new(
         scenarios: Vec<Scenario<'a>>,
         sentences: Vec<Vec<&'a str>>,
-        lemmas: HashSet<&'a str>,
     ) -> Result<Self, DatasetError> {
         if scenarios.len() != sentences.len() {
             return Err(DatasetError {});
         }
-
+        let lemmas = sentences.iter().flatten().copied().collect::<HashSet<_>>();
         let mut lemmas: Vec<_> = lemmas.into_iter().collect();
         lemmas.sort_unstable();
         Ok(ScenarioDataset {
@@ -196,10 +195,25 @@ impl<'a> ScenarioDataset<'a> {
     ///# Errors
     ///Returns a [`LambdaParseError`] if the string is malformed and doesn't represent a
     ///[`ScenarioDataset`]
-    pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
-        let parser = scenario::scenario_parser();
+    pub fn parse(s: &'a str) -> Result<Self, ScenarioParsingError> {
+        let parser = scenario::scenario_dataset_parser();
         let parse = parser.parse(s).into_result();
-        parse?
+        parse.map_err(ScenarioParsingError::from)
+    }
+}
+
+impl From<Vec<Rich<'_, char>>> for ScenarioParsingError {
+    fn from(value: Vec<Rich<'_, char>>) -> Self {
+        ScenarioParsingError(value.into_iter().map(|x| x.to_string()).collect())
+    }
+}
+
+///An error that arises from parsing a [`Scenario`] or [`ScenarioDataset`]
+#[derive(Debug, Clone, Eq, PartialEq, Error)]
+pub struct ScenarioParsingError(pub Vec<String>);
+impl Display for ScenarioParsingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.join(" "))
     }
 }
 

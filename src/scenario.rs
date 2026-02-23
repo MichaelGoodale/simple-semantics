@@ -1,22 +1,153 @@
-use ahash::HashSet;
-use chumsky::text::newline;
+use crate::{ScenarioParsingError, lambda::RootedLambdaPool};
 use chumsky::{prelude::*, text::inline_whitespace};
 use itertools::Itertools;
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, fmt::Display};
 
-use crate::lambda::RootedLambdaPool;
-use crate::language::LambdaParseError;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ScenarioDataset, ThetaRoles};
 
-#[allow(clippy::too_many_lines)]
-pub fn scenario_parser<'a>()
--> impl Parser<'a, &'a str, Result<ScenarioDataset<'a>, LambdaParseError>, extra::Err<Rich<'a, char>>>
-{
-    let string = none_of("\"")
-        .repeated()
-        .to_slice()
-        .delimited_by(just('"'), just('"'));
+impl Display for Scenario<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<")?;
+        let mut first = true;
+        for actor in &self.actors {
+            if !first {
+                write!(f, ", ")?;
+            }
 
+            write!(f, "{actor}")?;
+            let mut first_property = true;
+            for (property, prop_actors) in &self.properties {
+                if prop_actors.contains(&Entity::Actor(actor)) {
+                    if first_property {
+                        first_property = false;
+                        write!(f, " (")?;
+                    } else {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{property}")?;
+                }
+            }
+            if !first_property {
+                write!(f, ")")?;
+            }
+
+            first = false;
+        }
+        if self.thematic_relations.is_empty() {
+            return write!(f, ">");
+        }
+
+        write!(f, ";")?;
+        let mut first = true;
+
+        for (i, e) in self.thematic_relations.iter().enumerate() {
+            if !first {
+                write!(f, ", ")?;
+            }
+
+            write!(f, "{{")?;
+
+            if let Some(a) = e.agent {
+                write!(f, "A: {a}")?;
+                if e.patient.is_some() {
+                    write!(f, " ")?;
+                }
+            }
+
+            if let Some(p) = e.patient {
+                write!(f, "P: {p}")?;
+            }
+
+            let mut first_property = true;
+            for (property, prop_actors) in &self.properties {
+                if prop_actors.contains(&Entity::Event(u8::try_from(i).unwrap())) {
+                    if first_property {
+                        first_property = false;
+                        if e.agent.is_some() || e.patient.is_some() {
+                            write!(f, " (")?;
+                        } else {
+                            write!(f, "(")?;
+                        }
+                    } else {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{property}")?;
+                }
+            }
+            if !first_property {
+                write!(f, ")")?;
+            }
+
+            write!(f, "}}")?;
+            first = false;
+        }
+
+        write!(f, ">")
+    }
+}
+
+impl<'a> Scenario<'a> {
+    ///Parses a scenario from a string.
+    ///```
+    ///# use simple_semantics::Scenario;
+    ///let s = "<a (Red), b, c (Blue, Red);{(Green)}, {A: a}, {P: c (Blue)}>";
+    ///let scenario = Scenario::parse(s).unwrap();
+    ///assert_eq!(scenario.to_string(), s);
+    ///```
+    ///
+    ///# Errors
+    ///Will return an error if the [`Scenario`] is incorrectly formatted.
+    pub fn parse(s: &'a str) -> Result<Self, ScenarioParsingError> {
+        Ok(scenario_parser()
+            .padded()
+            .then_ignore(end())
+            .parse(s)
+            .into_result()?)
+    }
+}
+
+pub fn theta_role_parser<'a>()
+-> impl Parser<'a, &'a str, ThetaRoles<'a>, extra::Err<Rich<'a, char>>> + Copy {
+    let theta_role = |c: char| {
+        just(c)
+            .padded()
+            .ignore_then(just(':'))
+            .ignore_then(text::ident().padded())
+            .padded()
+    };
+
+    choice((
+        theta_role('A')
+            .then_ignore(just(','))
+            .then(theta_role('P'))
+            .map(|(a, p)| ThetaRoles {
+                agent: Some(a),
+                patient: Some(p),
+            }),
+        theta_role('P')
+            .then_ignore(just(','))
+            .then(theta_role('A'))
+            .map(|(p, a)| ThetaRoles {
+                agent: Some(a),
+                patient: Some(p),
+            }),
+        theta_role('P').map(|n| ThetaRoles {
+            agent: None,
+            patient: Some(n),
+        }),
+        theta_role('A').map(|n| ThetaRoles {
+            agent: Some(n),
+            patient: None,
+        }),
+        empty().map(|()| ThetaRoles {
+            agent: None,
+            patient: None,
+        }),
+    ))
+}
+
+pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Err<Rich<'a, char>>> {
     let properties = text::ident()
         .padded()
         .separated_by(just(','))
@@ -53,45 +184,10 @@ pub fn scenario_parser<'a>()
             },
         );
 
-    let theta_role = |c: char| {
-        just(c)
-            .padded()
-            .ignore_then(just(':'))
-            .ignore_then(text::ident().padded())
-            .padded()
-    };
-
-    let event = choice((
-        theta_role('A')
-            .then_ignore(just(','))
-            .then(theta_role('P'))
-            .map(|(a, p)| ThetaRoles {
-                agent: Some(a),
-                patient: Some(p),
-            }),
-        theta_role('P')
-            .then_ignore(just(','))
-            .then(theta_role('A'))
-            .map(|(p, a)| ThetaRoles {
-                agent: Some(a),
-                patient: Some(p),
-            }),
-        theta_role('P').map(|n| ThetaRoles {
-            agent: None,
-            patient: Some(n),
-        }),
-        theta_role('A').map(|n| ThetaRoles {
-            agent: Some(n),
-            patient: None,
-        }),
-        empty().map(|()| ThetaRoles {
-            agent: None,
-            patient: None,
-        }),
-    ))
-    .then(properties.or_not())
-    .delimited_by(just('{'), just('}'))
-    .padded();
+    let event = theta_role_parser()
+        .then(properties.or_not())
+        .delimited_by(just('{'), just('}'))
+        .padded();
 
     let events = event
         .or_not()
@@ -131,79 +227,69 @@ pub fn scenario_parser<'a>()
             },
         );
 
-    let scenario = string
-        .then_ignore(inline_whitespace().at_least(1))
-        .then(
-            actors
-                .then((just(';')).ignore_then(events).or_not())
-                .padded()
-                .delimited_by(just('<'), just('>')),
-        )
-        .map(|(s, ((actors, actor_props), events))| (s, actors, actor_props, events));
+    let scenario = actors
+        .then((just(';')).ignore_then(events).or_not())
+        .padded()
+        .delimited_by(just('<'), just('>'))
+        .map(|((actors, actor_props), events)| new_scenario(actors, actor_props, events));
 
     let scenario = scenario.then(
         inline_whitespace()
             .at_least(1)
-            .ignore_then(any().and_is(newline().not()).repeated().to_slice())
+            .ignore_then(
+                none_of("\n;")
+                    .repeated()
+                    .to_slice()
+                    .try_map(|x, s| RootedLambdaPool::parse(x).map_err(|e| Rich::custom(s, e)))
+                    .separated_by(just(';'))
+                    .collect::<Vec<_>>(),
+            )
             .or_not(),
     );
 
-    scenario
-        .map(|((s, actors, actor_props, events), lot)| {
-            let mut dataset = (ScenarioDataset::default(), HashSet::default());
-            add_scenario(&mut dataset, s, actors, actor_props, events);
-            (dataset, vec![lot])
+    scenario.map(|(mut scenario, questions)| {
+        if let Some(question) = questions {
+            scenario.question = question;
+        }
+        scenario
+    })
+}
+
+#[allow(clippy::too_many_lines)]
+pub fn scenario_dataset_parser<'a>()
+-> impl Parser<'a, &'a str, ScenarioDataset<'a>, extra::Err<Rich<'a, char>>> {
+    let string_scenario_pair = none_of("\"")
+        .repeated()
+        .to_slice()
+        .delimited_by(just('"'), just('"'))
+        .map(|x: &str| x.split(' '))
+        .then_ignore(inline_whitespace().at_least(1))
+        .then(scenario_parser());
+
+    string_scenario_pair
+        .separated_by(text::newline())
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .map(|v| {
+            let mut scenarios = vec![];
+            let mut sentences = vec![];
+            for (a, b) in v {
+                sentences.push(a.collect());
+                scenarios.push(b);
+            }
+            ScenarioDataset::new(scenarios, sentences).unwrap()
         })
-        .foldl(
-            text::newline().ignore_then(scenario).repeated(),
-            |(mut dataset, mut lot_vec), ((s, actors, actor_props, events), lot)| {
-                add_scenario(&mut dataset, s, actors, actor_props, events);
-                lot_vec.push(lot);
-                (dataset, lot_vec)
-            },
-        )
         .padded()
         .then_ignore(end())
-        .map(|((mut data, lemmas), lot_vec)| {
-            data.lemmas = lemmas.into_iter().collect();
-            data.lemmas.sort_unstable();
-            let lot_vec = lot_vec
-                .into_iter()
-                .enumerate()
-                .filter_map(|(i, x)| {
-                    x.map(|s: &str| {
-                        s.split(';')
-                            .map(|s| match RootedLambdaPool::parse(s) {
-                                Ok(x) => Ok(x),
-                                Err(e) => Err(e),
-                            })
-                            .collect::<Result<Vec<_>, LambdaParseError>>()
-                            .map(|s| (s, i))
-                    })
-                })
-                .collect::<Result<Vec<(Vec<_>, usize)>, LambdaParseError>>();
-
-            match lot_vec {
-                Ok(lot_vec) => {
-                    for (x, i) in lot_vec {
-                        data.scenarios[i].question.extend(x);
-                    }
-                    Ok(data)
-                }
-                Err(e) => Err(e),
-            }
-        })
 }
 
 type EventParseType<'a> = Option<(Vec<ThetaRoles<'a>>, BTreeMap<&'a str, Vec<Entity<'a>>>)>;
 
-fn add_scenario<'a>(
-    training_dataset: &mut (ScenarioDataset<'a>, HashSet<&'a str>),
-    s: &'a str,
+fn new_scenario<'a>(
     actors: Vec<Actor<'a>>,
     actor_props: BTreeMap<&'a str, Vec<&'a str>>,
     events: EventParseType<'a>,
-) {
+) -> Scenario<'a> {
     let (events, event_props) = events.unwrap_or_else(|| (Vec::default(), BTreeMap::default()));
 
     let mut properties: BTreeMap<&str, Vec<Entity>> = actor_props
@@ -218,17 +304,12 @@ fn add_scenario<'a>(
             .or_insert(v);
     }
 
-    training_dataset.0.scenarios.push(Scenario {
+    Scenario {
         question: vec![],
         actors,
         thematic_relations: events,
         properties,
-    });
-
-    let s: Vec<&str> = s.split(' ').collect();
-
-    training_dataset.1.extend(s.clone());
-    training_dataset.0.sentences.push(s);
+    }
 }
 
 mod utilities;
@@ -245,7 +326,7 @@ pub struct ScenarioIterator<'a> {
 }
 
 ///The kinds of possible events
-#[derive(Debug, Clone, Eq, PartialEq, Copy, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum EventType {
     ///An intransitive with only an agent
     Unergative,
@@ -264,9 +345,10 @@ pub enum EventType {
 }
 
 ///A description of a possible kind of event (e.g. kind of verb)
-#[derive(Debug, Clone, Eq, PartialEq, Copy, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct PossibleEvent<'a> {
     ///Name of the event predicate
+    #[serde(borrow)]
     pub label: PropertyLabel<'a>,
     ///What kind of theta roles can be assigned to this event
     pub event_type: EventType,
@@ -492,6 +574,7 @@ mod test {
     use crate::scenario::generate_all_events;
 
     use super::*;
+    use ahash::HashSet;
 
     #[test]
     fn generate_all_actors() {
@@ -727,26 +810,26 @@ mod test {
     #[test]
     #[should_panic]
     fn parse_trailing() {
-        scenario_parser().parse("<John>trailing").unwrap().unwrap();
+        scenario_dataset_parser().parse("<John>trailing").unwrap();
     }
 
     #[test]
     fn white_space_shenanigans() -> anyhow::Result<()> {
-        scenario_parser()
+        scenario_dataset_parser()
             .parse("\"blah\" <John; {A: John (run)}>")
-            .unwrap()?;
-        scenario_parser()
+            .unwrap();
+        scenario_dataset_parser()
             .parse("\" s\" <John ; {A: John (run)}>")
-            .unwrap()?;
-        scenario_parser()
+            .unwrap();
+        scenario_dataset_parser()
             .parse("\"\" < John ; { A : John (run)}>")
-            .unwrap()?;
-        scenario_parser()
+            .unwrap();
+        scenario_dataset_parser()
             .parse("\"aaa\"      < John ; { A :  John ( run )  } >")
-            .unwrap()?;
-        scenario_parser()
+            .unwrap();
+        scenario_dataset_parser()
             .parse("\"aaa\" < John; {A: John ( run)}>")
-            .unwrap()?;
+            .unwrap();
         Ok(())
     }
 
@@ -775,9 +858,9 @@ mod test {
 
         assert_eq!(
             scenarios,
-            *scenario_parser()
+            *scenario_dataset_parser()
                 .parse("\"John\" <John>\n\"Mary\" <Mary>\n\"John\" <John>")
-                .unwrap()?
+                .unwrap()
                 .scenarios
         );
 
@@ -813,9 +896,9 @@ mod test {
 
         assert_eq!(
             scenarios,
-            *scenario_parser()
+            *scenario_dataset_parser()
                 .parse("\"John runs\" <John; {A: John (run)}>\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>")
-                .unwrap()?
+                .unwrap()
                 .scenarios
         );
         Ok(())
@@ -823,9 +906,9 @@ mod test {
 
     #[test]
     fn parse_scenarios_with_questions() -> anyhow::Result<()> {
-        let scenarios = scenario_parser()
+        let scenarios = scenario_dataset_parser()
                 .parse("\"John runs\" <John; {A: John (run)}> lambda a x (x)\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>  a_0")
-                .unwrap()?;
+                .unwrap();
 
         assert_eq!(
             scenarios.scenarios[0].question.first().unwrap().to_string(),
@@ -837,9 +920,9 @@ mod test {
             "a_0"
         );
 
-        let scenarios = scenario_parser()
+        let scenarios = scenario_dataset_parser()
                 .parse("\"John runs\" <John; {A: John (run)}> lambda a x (x)\n\"Mary runs\" <Mary; {A: Mary (run)}>\n\"John sees Mary\" <Mary, John; {A: John, P: Mary (see)}>  a_0; a_1; a_3")
-                .unwrap()?;
+                .unwrap();
         assert_eq!(scenarios.scenarios[2].question.len(), 3);
 
         assert_eq!(
@@ -860,27 +943,27 @@ mod test {
 
         assert_eq!(
             scenario,
-            *scenario_parser()
+            *scenario_dataset_parser()
                 .parse("\"John\" <John>")
-                .unwrap()?
+                .unwrap()
                 .scenarios
                 .first()
                 .unwrap()
         );
         assert_eq!(
             scenario,
-            *scenario_parser()
+            *scenario_dataset_parser()
                 .parse("\"John\" <John;>")
-                .unwrap()?
+                .unwrap()
                 .scenarios
                 .first()
                 .unwrap()
         );
         assert_eq!(
             scenario,
-            *scenario_parser()
+            *scenario_dataset_parser()
                 .parse("\"John\" < John; >")
-                .unwrap()?
+                .unwrap()
                 .scenarios
                 .first()
                 .unwrap()
@@ -897,9 +980,9 @@ mod test {
         };
         assert_eq!(
             scenario,
-            *scenario_parser()
+            *scenario_dataset_parser()
                 .parse("\"john\" <john;{}>")
-                .unwrap()?
+                .unwrap()
                 .scenarios
                 .first()
                 .unwrap()
@@ -927,9 +1010,9 @@ mod test {
 
         assert_eq!(
             scenario,
-            *scenario_parser()
+            *scenario_dataset_parser()
                 .parse("\"john sees mary\" <john,mary,phil;{A: john,P: mary},{A: mary},{P: phil}>")
-                .unwrap()?
+                .unwrap()
                 .scenarios
                 .first()
                 .unwrap()
@@ -961,9 +1044,9 @@ mod test {
 
         assert_eq!(
             scenario,
-            *scenario_parser()
+            *scenario_dataset_parser()
                 .parse("\"blue is blued\" <a (Red),b,c (Blue, Red);{(Green)},{A: a},{P: c (Blue)}>")
-                .unwrap()?
+                .unwrap()
                 .scenarios
                 .first()
                 .unwrap()
