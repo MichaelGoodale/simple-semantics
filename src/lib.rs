@@ -16,7 +16,7 @@ pub type Actor<'a> = &'a str;
 ///They are representated as indices to the relevant [`ThetaRoles`] in a given [`Scenario`].
 pub type Event = u8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 ///The union of [`Actor`] and [`Event`]
 pub enum Entity<'a> {
     ///See [`Actor`]
@@ -36,7 +36,9 @@ impl Display for Entity<'_> {
 }
 
 ///The representation of the theta roles of a given event.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Default, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct ThetaRoles<'a> {
     ///The agent of the event.
     #[serde(borrow)]

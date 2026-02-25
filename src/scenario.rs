@@ -316,6 +316,7 @@ mod utilities;
 use utilities::{CartesianN, SetCounter};
 
 ///Generates all scenarios that can be generated with a given set of primitives
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ScenarioIterator<'a> {
     actors: ActorSetGenerator<'a>,
     current_actors: Vec<Actor<'a>>,
@@ -491,6 +492,7 @@ fn generate_all_events<'a>(
     all_events
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 struct ActorSetGenerator<'a> {
     actors: Vec<(Actor<'a>, SetCounter)>,
     actor_properties: Vec<PropertyLabel<'a>>,

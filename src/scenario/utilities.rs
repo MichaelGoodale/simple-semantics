@@ -1,4 +1,5 @@
 ///Cartesian product of size `self.coord.len()` that goes from `0` to `max_value-1`.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(super) struct CartesianN {
     coord: Vec<usize>,
     done: bool,
