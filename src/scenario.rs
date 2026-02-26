@@ -44,7 +44,10 @@ impl Display for Scenario<'_> {
         for (i, e) in self.thematic_relations.iter().enumerate() {
             if !first {
                 write!(f, ", ")?;
+            } else {
+                write!(f, " ")?;
             }
+            first = false;
 
             write!(f, "{{")?;
 
@@ -80,10 +83,20 @@ impl Display for Scenario<'_> {
             }
 
             write!(f, "}}")?;
-            first = false;
         }
 
-        write!(f, ">")
+        write!(f, ">")?;
+
+        let mut first = true;
+        for q in self.questions() {
+            if !first {
+                write!(f, "; {q}")?;
+            } else {
+                write!(f, " {q}")?;
+            }
+            first = false;
+        }
+        Ok(())
     }
 }
 
@@ -91,7 +104,7 @@ impl<'a> Scenario<'a> {
     ///Parses a scenario from a string.
     ///```
     ///# use simple_semantics::Scenario;
-    ///let s = "<a (Red), b, c (Blue, Red);{(Green)}, {A: a}, {P: c (Blue)}>";
+    ///let s = "<a (Red), b, c (Blue, Red); {(Green)}, {A: a}, {P: c (Blue)}> lambda a x pa_Blue(x); lambda a x pa_Red(x)";
     ///let scenario = Scenario::parse(s).unwrap();
     ///assert_eq!(scenario.to_string(), s);
     ///```
