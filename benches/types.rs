@@ -1,5 +1,5 @@
 use divan::AllocProfiler;
-use rand::SeedableRng;
+use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use simple_semantics::{
     LanguageExpression, ScenarioDataset,
@@ -145,5 +145,28 @@ fn reduction(bencher: divan::Bencher) {
             t = t.merge(x).unwrap();
         }
         t.reduce().unwrap();
+    });
+}
+
+#[divan::bench]
+fn ordering(bencher: divan::Bencher) {
+    let actors = &["1", "2"];
+    let actor_properties = &["1", "2"];
+    let event_properties = &["1", "2"];
+    let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+    let pools = poss.enumerator(&LambdaType::T, 5).collect::<Vec<_>>();
+    let mut rng = ChaCha8Rng::seed_from_u64(32);
+    let comparisons = (0..1000)
+        .map(|_| {
+            (
+                rng.random_range(0..pools.len()),
+                rng.random_range(0..pools.len()),
+            )
+        })
+        .collect::<Vec<_>>();
+    bencher.bench(|| {
+        for (a, b) in comparisons.iter().copied() {
+            let _ord = pools[a].cmp(&pools[b]);
+        }
     });
 }
