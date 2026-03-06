@@ -321,66 +321,20 @@ impl<T: LambdaLanguageOfThought + PartialEq + Eq> PartialOrd for RootedLambdaPoo
     }
 }
 
-struct DualBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
-    a: &'a RootedLambdaPool<'src, T>,
-    queue: Vec<LambdaExprRef>,
-}
-
-impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
-    fn dfs<'a>(&'a self) -> DualBFSIterator<'a, 'src, T> {
-        DualBFSIterator {
-            a: self,
-            queue: vec![self.root],
-        }
-    }
-}
-
-impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for DualBFSIterator<'a, 'src, T> {
-    type Item = &'a LambdaExpr<'src, T>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(x) = self.queue.pop() {
-            let expr = self.a.get(x);
-            match expr {
-                LambdaExpr::Lambda(x, _) => self.queue.push(*x),
-                LambdaExpr::Application {
-                    subformula,
-                    argument,
-                } => {
-                    self.queue.push(*subformula);
-                    self.queue.push(*argument);
-                }
-                LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-                LambdaExpr::LanguageOfThoughtExpr(x) => {
-                    self.queue.extend(x.get_children());
-                }
-            }
-            Some(expr)
-        } else {
-            None
-        }
-    }
-}
-
 impl<T: LambdaLanguageOfThought + PartialEq + Eq> Ord for RootedLambdaPool<'_, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.len().cmp(&other.len()).then_with(|| {
-            let mut dfs = self.dfs();
-            let mut o_dfs = other.dfs();
-            loop {
-                let x = dfs.next();
-                let y = o_dfs.next();
-                match (x, y) {
-                    (None, None) => break Ordering::Equal,
-                    (None, Some(_)) => break Ordering::Less,
-                    (Some(_), None) => break Ordering::Greater,
-                    (Some(a), Some(b)) => match a.cmp_expr(b) {
-                        Ordering::Less => break Ordering::Less,
-                        Ordering::Greater => break Ordering::Greater,
-                        Ordering::Equal => (),
-                    },
+            let mut stack = vec![(self.root, other.root)];
+            while let Some((alpha, beta)) = stack.pop() {
+                let alpha = self.get(alpha);
+                let beta = other.get(beta);
+                match alpha.cmp_expr(beta) {
+                    Ordering::Equal => stack.extend(alpha.get_children().zip(beta.get_children())),
+                    Ordering::Less => return Ordering::Less,
+                    Ordering::Greater => return Ordering::Greater,
                 }
             }
+            Ordering::Equal
         })
     }
 }
