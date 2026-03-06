@@ -321,17 +321,55 @@ impl<T: LambdaLanguageOfThought + PartialEq + Eq> PartialOrd for RootedLambdaPoo
     }
 }
 
+struct DualBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
+    a: &'a RootedLambdaPool<'src, T>,
+    queue: Vec<LambdaExprRef>,
+}
+
+impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
+    fn dfs<'a>(&'a self) -> DualBFSIterator<'a, 'src, T> {
+        DualBFSIterator {
+            a: self,
+            queue: vec![self.root],
+        }
+    }
+}
+
+impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for DualBFSIterator<'a, 'src, T> {
+    type Item = &'a LambdaExpr<'src, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(x) = self.queue.pop() {
+            let expr = self.a.get(x);
+            match expr {
+                LambdaExpr::Lambda(x, _) => self.queue.push(*x),
+                LambdaExpr::Application {
+                    subformula,
+                    argument,
+                } => {
+                    self.queue.push(*subformula);
+                    self.queue.push(*argument);
+                }
+                LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
+                LambdaExpr::LanguageOfThoughtExpr(x) => {
+                    self.queue.extend(x.get_children());
+                }
+            }
+            Some(expr)
+        } else {
+            None
+        }
+    }
+}
+
 impl<T: LambdaLanguageOfThought + PartialEq + Eq> Ord for RootedLambdaPool<'_, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.len().cmp(&other.len()).then_with(|| {
-            let mut bfs = self.pool.bfs_from(self.root).map(|(x, _)| self.pool.get(x));
-            let mut o_bfs = other
-                .pool
-                .bfs_from(other.root)
-                .map(|(x, _)| other.pool.get(x));
+            let mut dfs = self.dfs();
+            let mut o_dfs = other.dfs();
             loop {
-                let x = bfs.next();
-                let y = o_bfs.next();
+                let x = dfs.next();
+                let y = o_dfs.next();
                 match (x, y) {
                     (None, None) => break Ordering::Equal,
                     (None, Some(_)) => break Ordering::Less,
@@ -1263,8 +1301,8 @@ mod test {
             "lambda a x pa_man(a_m)",
             "lambda a x pa_woman(a_m)",
             "some(x, True, True)",
-            "some(x, pa_man(x), True)",
             "some(x, True, pa_man(x))",
+            "some(x, pa_man(x), True)",
             "some(x, pa_man(x), pa_man(x))",
             "lambda a x (lambda a y pa_woman(y))(a_m) & pa_man(x)",
             "lambda a x (lambda a y pa_woman(a_m))(a_m) & pa_man(x)",
