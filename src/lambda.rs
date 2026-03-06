@@ -2,6 +2,7 @@
 //! of thought.
 
 use crate::utils::ArgumentIterator;
+use smallvec::{SmallVec, smallvec};
 use std::{
     cmp::Ordering,
     collections::{HashSet, VecDeque},
@@ -324,12 +325,15 @@ impl<T: LambdaLanguageOfThought + PartialEq + Eq> PartialOrd for RootedLambdaPoo
 impl<T: LambdaLanguageOfThought + PartialEq + Eq> Ord for RootedLambdaPool<'_, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.len().cmp(&other.len()).then_with(|| {
-            let mut stack = vec![(self.root, other.root)];
+            let mut stack: SmallVec<[_; 2]> = smallvec![(self.root, other.root)];
             while let Some((alpha, beta)) = stack.pop() {
                 let alpha = self.get(alpha);
                 let beta = other.get(beta);
                 match alpha.cmp_expr(beta) {
-                    Ordering::Equal => stack.extend(alpha.get_children().zip(beta.get_children())),
+                    Ordering::Equal => alpha
+                        .get_children()
+                        .zip(beta.get_children())
+                        .for_each(|x| stack.push(x)),
                     Ordering::Less => return Ordering::Less,
                     Ordering::Greater => return Ordering::Greater,
                 }
