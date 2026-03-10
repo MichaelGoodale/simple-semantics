@@ -1,6 +1,6 @@
 use crate::{ScenarioParsingError, lambda::RootedLambdaPool};
 use chumsky::{prelude::*, text::inline_whitespace};
-use itertools::Itertools;
+use itertools::{Itertools, MultiProduct};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 
@@ -326,10 +326,10 @@ fn new_scenario<'a>(
 }
 
 mod utilities;
-use utilities::{CartesianN, SetCounter};
+use utilities::SetCounter;
 
 ///Generates all scenarios that can be generated with a given set of primitives
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone)]
 pub struct ScenarioIterator<'a> {
     actors: ActorSetGenerator<'a>,
     current_actors: Vec<Actor<'a>>,
@@ -337,6 +337,7 @@ pub struct ScenarioIterator<'a> {
     current_event_set: Vec<(ThetaRoles<'a>, PropertyLabel<'a>)>,
     event_kinds: Vec<PossibleEvent<'a>>,
     counter: SetCounter,
+    max_number_of_events: Option<usize>,
 }
 
 ///The kinds of possible events
@@ -372,19 +373,24 @@ impl<'a> Scenario<'a> {
     ///Returns a [`ScenarioIterator`] which goes over all possible scenarios with the provided
     ///actors and event descriptions
     ///
-    ///# Panics
-    ///This function will panic if the set of events by event kinds and actors is greater than [`u32::MAX`].
     #[must_use]
     pub fn all_scenarios(
         actors: &[Actor<'a>],
         event_kinds: &[PossibleEvent<'a>],
         actor_properties: &[PropertyLabel<'a>],
+        max_number_of_events: Option<usize>,
+        max_number_of_actors: Option<usize>,
+        max_number_of_properties: Option<usize>,
     ) -> ScenarioIterator<'a> {
-        let mut actors = ActorSetGenerator::new(actors, actor_properties);
+        let mut actors = ActorSetGenerator::new(
+            actors,
+            actor_properties,
+            max_number_of_actors,
+            max_number_of_properties,
+        );
         let (current_actors, current_props) = actors.next().unwrap();
         let current_event_set = generate_all_events(&current_actors, event_kinds);
-        let counter =
-            SetCounter::new(u32::try_from(current_event_set.len()).expect("Too many events!"));
+        let counter = SetCounter::new(current_event_set.len(), max_number_of_events);
 
         ScenarioIterator {
             actors,
@@ -393,6 +399,7 @@ impl<'a> Scenario<'a> {
             current_props,
             event_kinds: event_kinds.to_vec(),
             counter,
+            max_number_of_events,
         }
     }
 }
@@ -407,9 +414,8 @@ impl<'a> Iterator for ScenarioIterator<'a> {
                 self.current_props = new_props;
                 self.current_event_set =
                     generate_all_events(&self.current_actors, &self.event_kinds);
-                self.counter = SetCounter::new(
-                    u32::try_from(self.current_event_set.len()).expect("Too many events!"),
-                );
+                self.counter =
+                    SetCounter::new(self.current_event_set.len(), self.max_number_of_events);
             } else {
                 return None;
             }
@@ -419,7 +425,7 @@ impl<'a> Iterator for ScenarioIterator<'a> {
         let mut thematic_relations = vec![];
         for (i, (theta, label)) in self
             .counter
-            .filter(self.current_event_set.iter().copied())
+            .as_set(self.current_event_set.iter().copied())
             .enumerate()
         {
             properties
@@ -505,36 +511,27 @@ fn generate_all_events<'a>(
     all_events
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone)]
 struct ActorSetGenerator<'a> {
-    actors: Vec<(Actor<'a>, SetCounter)>,
+    actors: Vec<Actor<'a>>,
     actor_properties: Vec<PropertyLabel<'a>>,
-    property_counter: CartesianN,
+    property_counter: MultiProduct<SetCounter>,
+    max_number_of_properties: Option<usize>,
     included: SetCounter,
 }
 
 impl<'a> ActorSetGenerator<'a> {
-    fn new(actors: &[Actor<'a>], actor_properties: &[PropertyLabel<'a>]) -> Self {
+    fn new(
+        actors: &[Actor<'a>],
+        actor_properties: &[PropertyLabel<'a>],
+        max_number_of_actors: Option<usize>,
+        max_number_of_properties: Option<usize>,
+    ) -> Self {
         ActorSetGenerator {
-            property_counter: CartesianN::new(
-                0,
-                2_usize
-                    .pow(u32::try_from(actor_properties.len()).expect("Too many actor properties")),
-            ),
-            included: SetCounter::new(u32::try_from(actors.len()).expect("Too many actors")),
-            actors: actors
-                .iter()
-                .copied()
-                .map(|x| {
-                    (
-                        x,
-                        SetCounter::new(
-                            u32::try_from(actor_properties.len())
-                                .expect("Too many actor properties"),
-                        ),
-                    )
-                })
-                .collect(),
+            property_counter: std::iter::empty::<SetCounter>().multi_cartesian_product(),
+            included: SetCounter::new(actors.len(), max_number_of_actors),
+            actors: actors.to_vec(),
+            max_number_of_properties,
             actor_properties: actor_properties.to_vec(),
         }
     }
@@ -544,39 +541,37 @@ impl<'a> Iterator for ActorSetGenerator<'a> {
     type Item = (Vec<Actor<'a>>, BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let positions = self.property_counter.next().unwrap_or_else(|| {
+        let props = self.property_counter.next().unwrap_or_else(|| {
             self.included.increment();
             let n_actors = self.included.current_size();
-            self.property_counter.reset_with_n_items(n_actors);
-            self.property_counter.next().unwrap();
-            vec![0; n_actors]
+            self.property_counter = (0..n_actors)
+                .map(|_| {
+                    SetCounter::new(self.actor_properties.len(), self.max_number_of_properties)
+                })
+                .multi_cartesian_product();
+            self.property_counter.next().unwrap()
         });
 
         if self.included.done() {
             return None;
         }
 
-        for (c, i) in self
-            .included
-            .filter(self.actors.iter_mut().map(|(_, c)| c))
-            .zip(positions)
-        {
-            c.set_position(i);
-        }
-
         let mut actor_properties: BTreeMap<_, Vec<_>> = BTreeMap::new();
 
         let actors: Vec<Actor<'a>> = self
             .included
-            .filter(self.actors.iter())
+            .included()
+            .as_set(&self.actors)
+            .copied()
+            .zip(props)
             .map(|(x, props)| {
-                for prop in props.filter(self.actor_properties.iter()) {
+                for prop in props.as_set(&self.actor_properties) {
                     actor_properties
                         .entry(*prop)
                         .or_default()
                         .push(Entity::Actor(x));
                 }
-                *x
+                x
             })
             .collect();
 
@@ -593,10 +588,11 @@ mod test {
 
     #[test]
     fn generate_all_actors() {
-        let s = ActorSetGenerator::new(&["John", "Mary"], &["man", "woman"]);
+        let s = ActorSetGenerator::new(&["John", "Mary"], &["man", "woman"], None, None);
 
         let mut set = HashSet::default();
         for p in s {
+            println!("{p:?}");
             assert!(!set.contains(&p));
             set.insert(p);
         }
@@ -626,11 +622,40 @@ mod test {
         ];
 
         let mut scenarios = HashSet::default();
-        for x in Scenario::all_scenarios(&actors, &event_kinds, &["man", "woman"]) {
+        for x in Scenario::all_scenarios(&actors, &event_kinds, &["man", "woman"], None, None, None)
+        {
             assert!(!scenarios.contains(&x));
             scenarios.insert(x);
         }
         assert_eq!(scenarios.len(), 2114);
+
+        let mut scenarios = HashSet::default();
+        let mut at_least_1 = false;
+        let mut at_least_2 = false;
+        for x in Scenario::all_scenarios(
+            &actors,
+            &event_kinds,
+            &["man", "woman"],
+            Some(2),
+            Some(1),
+            None,
+        ) {
+            assert!(!scenarios.contains(&x));
+            assert!(x.actors.len() <= 1);
+            if x.actors.len() == 1 {
+                at_least_1 = true;
+            }
+
+            if x.events().count() == 2 {
+                at_least_2 = true;
+            }
+            assert!(x.events().count() <= 2);
+            scenarios.insert(x);
+        }
+
+        assert!(at_least_1);
+        assert!(at_least_2);
+        assert_eq!(scenarios.len(), 58);
     }
 
     #[test]

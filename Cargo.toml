@@ -21,6 +21,7 @@ weak-table = { version = "0.3.2", features = ["ahash"] }
 anyhow = "1.0.97"
 rand_chacha = "0.10.0"
 divan = "0.1.21"
+num-integer = "0.1.46"
 
 [features]
 default = ["sampling"]
