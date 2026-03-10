@@ -54,7 +54,7 @@ impl Display for Scenario<'_> {
             if let Some(a) = e.agent {
                 write!(f, "A: {a}")?;
                 if e.patient.is_some() {
-                    write!(f, " ")?;
+                    write!(f, ", ")?;
                 }
             }
 
