@@ -90,7 +90,7 @@ impl<'a> Scenario<'a> {
 
     ///Get a slice of all [`Actor`]s in the [`Scenario`]
     #[must_use]
-    pub fn actors(&self) -> &[Actor<'_>] {
+    pub fn actors(&self) -> &[Actor<'a>] {
         &self.actors
     }
 
