@@ -7,7 +7,6 @@ use crate::lambda::{
     types::{LambdaType, TypeError},
 };
 use ahash::HashMap;
-use chumsky::container::Container;
 use rand::{
     Rng, RngExt,
     distr::{Distribution, weighted::WeightedIndex},
@@ -159,7 +158,7 @@ impl EnumerationType for NormalEnumeration {
     }
 
     fn push_yield(&mut self, e: ExprDetails) {
-        self.1.push(e);
+        self.1.push_back(e);
     }
 
     fn include(&mut self, n: usize) -> impl Iterator<Item = bool> + 'static {

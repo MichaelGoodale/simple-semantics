@@ -19,7 +19,7 @@ impl SetCounter {
             k: 0,
             done: false,
             n: n_items,
-            max_t: max_t.map(|x| std::cmp::min(x, n_items)).unwrap_or(n_items),
+            max_t: max_t.map_or(n_items, |x| std::cmp::min(x, n_items)),
         }
     }
 
@@ -95,11 +95,12 @@ struct KCombination {
 }
 
 impl KCombination {
+    #[expect(clippy::many_single_char_names)] //Fine since var names are from Knuth's reference
     fn new(n: usize, t: usize) -> Self {
         assert!(n >= t);
         let s = n - t;
         let mut a = vec![false; n];
-        for x in a[s..].iter_mut() {
+        for x in &mut a[s..] {
             *x = true;
         }
         let w = vec![1; n + 1];

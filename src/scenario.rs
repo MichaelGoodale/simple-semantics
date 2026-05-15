@@ -42,10 +42,10 @@ impl Display for Scenario<'_> {
         let mut first = true;
 
         for (i, e) in self.thematic_relations.iter().enumerate() {
-            if !first {
-                write!(f, ", ")?;
-            } else {
+            if first {
                 write!(f, " ")?;
+            } else {
+                write!(f, ", ")?;
             }
             first = false;
 
@@ -89,10 +89,10 @@ impl Display for Scenario<'_> {
 
         let mut first = true;
         for q in self.questions() {
-            if !first {
-                write!(f, "; {q}")?;
-            } else {
+            if first {
                 write!(f, " {q}")?;
+            } else {
+                write!(f, "; {q}")?;
             }
             first = false;
         }
@@ -253,7 +253,9 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
                 none_of("\n;")
                     .repeated()
                     .to_slice()
-                    .try_map(|x, s| RootedLambdaPool::parse(x).map_err(|e| Rich::custom(s, e)))
+                    .try_map(|x, s| {
+                        RootedLambdaPool::parse(x).map_err(|e| Rich::custom(s, e.to_string()))
+                    })
                     .separated_by(just(';'))
                     .collect::<Vec<_>>(),
             )
@@ -268,26 +270,29 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
     })
 }
 
-#[allow(clippy::too_many_lines)]
-pub fn scenario_dataset_parser<'a>()
--> impl Parser<'a, &'a str, ScenarioDataset<'a>, extra::Err<Rich<'a, char>>> {
-    let string_scenario_pair = none_of("\"")
+pub fn string_scenario_parser<'a>()
+-> impl Parser<'a, &'a str, (Vec<&'a str>, Scenario<'a>), extra::Err<Rich<'a, char>>> {
+    none_of("\"")
         .repeated()
         .to_slice()
         .delimited_by(just('"'), just('"'))
-        .map(|x: &str| x.split(' '))
+        .map(|x: &str| x.split(' ').collect::<Vec<_>>())
         .then_ignore(inline_whitespace().at_least(1))
-        .then(scenario_parser());
+        .then(scenario_parser())
+}
 
-    string_scenario_pair
-        .separated_by(text::newline())
+pub fn scenario_dataset_parser<'a>()
+-> impl Parser<'a, &'a str, ScenarioDataset<'a>, extra::Err<Rich<'a, char>>> {
+    string_scenario_parser()
+        //this handles repeated empty lines by chunking them together
+        .separated_by(text::newline().repeated().at_least(1))
         .at_least(1)
         .collect::<Vec<_>>()
         .map(|v| {
             let mut scenarios = vec![];
             let mut sentences = vec![];
             for (a, b) in v {
-                sentences.push(a.collect());
+                sentences.push(a);
                 scenarios.push(b);
             }
             ScenarioDataset::new(scenarios, sentences).unwrap()
@@ -372,6 +377,9 @@ pub struct PossibleEvent<'a> {
 impl<'a> Scenario<'a> {
     ///Returns a [`ScenarioIterator`] which goes over all possible scenarios with the provided
     ///actors and event descriptions
+    ///
+    ///# Panics
+    ///Will panic if there are `actors` is empty
     ///
     #[must_use]
     pub fn all_scenarios(

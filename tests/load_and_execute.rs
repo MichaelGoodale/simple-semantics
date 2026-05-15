@@ -14,7 +14,10 @@ fn get_resource_path() -> anyhow::Result<PathBuf> {
 fn load_dataset() -> anyhow::Result<()> {
     let path = get_resource_path()?.join("testfile.scenario");
     let file = std::fs::read_to_string(path)?;
+
     let parsed_data = ScenarioDataset::parse(&file)?;
+    let alt_parsed_data = ScenarioDataset::parse_rows(file.split('\n'))?;
+    assert_eq!(parsed_data, alt_parsed_data);
 
     let scenarios = vec![
         Scenario::new(
@@ -70,6 +73,8 @@ fn lambda_stuff() -> anyhow::Result<()> {
     let path = get_resource_path()?.join("men.scenario");
     let file = std::fs::read_to_string(path)?;
     let parsed_data = ScenarioDataset::parse(&file)?;
+    let alt_parsed_data = ScenarioDataset::parse_rows(file.split('\n'))?;
+    assert_eq!(parsed_data, alt_parsed_data);
 
     let executable = simple_semantics::parse_executable(
         "every(x,pa_man, some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",

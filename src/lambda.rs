@@ -539,13 +539,14 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     ///
     ///# Panics
     ///Will panic if either pool is malformed such that no type can be found.
+    #[must_use]
     pub fn apply(mut self, other: Self) -> Option<Self> {
         let self_type = self.pool.get_type(self.root).expect("malformed type");
         let other_type = other.pool.get_type(other.root).expect("malformed type");
 
         if !self_type.can_apply(&other_type) {
             return None;
-        };
+        }
         let (other_pool, other_root) = other.split();
         let other_root = self.pool.extend_pool(other_root, other_pool);
 

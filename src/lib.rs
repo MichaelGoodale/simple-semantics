@@ -166,7 +166,7 @@ impl<'a> ScenarioDataset<'a> {
         self.scenarios.len()
     }
 
-    ///Iterate over all scenarios with a mutable reference.
+    ///Iterate over all scenAnd how do you deal with AI hallucinations?arios with a mutable reference.
     pub fn iter_scenarios_mut(&mut self) -> impl Iterator<Item = &mut Scenario<'a>> {
         self.scenarios.iter_mut()
     }
@@ -192,7 +192,9 @@ impl<'a> ScenarioDataset<'a> {
         &self.lemmas
     }
 
-    ///Parse a list of sentences and scenarios and return the dataset.
+    ///Parse a string with newline seperated sentences and scenarios and return the dataset.
+    ///
+    ///Empty lines are ignored
     ///
     ///# Errors
     ///Returns a [`LambdaParseError`] if the string is malformed and doesn't represent a
@@ -201,6 +203,32 @@ impl<'a> ScenarioDataset<'a> {
         let parser = scenario::scenario_dataset_parser();
         let parse = parser.parse(s).into_result();
         parse.map_err(ScenarioParsingError::from)
+    }
+
+    ///Parse an iterator of strings with sentences and scenarios and return the dataset.
+    ///
+    ///Empty lines are ignored (to play nicely with [`std::str::Split`])
+    ///
+    ///# Errors
+    ///Returns a [`LambdaParseError`] if the string is malformed and doesn't represent a
+    ///[`ScenarioDataset`]
+    #[expect(clippy::missing_panics_doc)] //ok because ScenarioDataset will panic iff scenario.len() != sentences.len()
+    pub fn parse_rows<I: Iterator<Item = &'a str>>(i: I) -> Result<Self, ScenarioParsingError> {
+        let parser = string_scenario_parser().then_ignore(end());
+        let mut scenarios = vec![];
+        let mut sentences = vec![];
+        for x in i.filter(|x| !x.is_empty()) {
+            let (a, b) = parser.parse(x).into_result()?;
+            sentences.push(a);
+            scenarios.push(b);
+        }
+        if sentences.is_empty() {
+            return Err(ScenarioParsingError(vec![
+                "Dataset must have at least one sentence/scenario pair!".to_string(),
+            ]));
+        }
+
+        Ok(ScenarioDataset::new(scenarios, sentences).unwrap())
     }
 }
 
@@ -225,3 +253,5 @@ mod utils;
 pub use language::{LanguageExpression, LanguageResult, parse_executable};
 mod scenario;
 pub use scenario::{EventType, PossibleEvent, ScenarioIterator};
+
+use crate::scenario::string_scenario_parser;
