@@ -106,6 +106,38 @@ impl<'a, T: LambdaLanguageOfThought> RootedLambdaPool<'a, T> {
         Ok(RootedLambdaPool { pool, root })
     }
 
+    ///Reconstruct a [`RootedLambdaPool`] from a **reversed** iterator of beads.
+    ///
+    ///# Errors
+    ///
+    ///Returrns [`BeadError`] if the
+    pub fn from_beads_rev(
+        iter: impl IntoIterator<Item = ExpressionBead<'a, T>>,
+    ) -> Result<RootedLambdaPool<'a, T>, BeadError> {
+        let mut root = None;
+        let mut pool = LambdaPool(
+            iter.into_iter()
+                .filter_map(|x| match x.0 {
+                    ExpressionBeadInner::Expr(lambda_expr) => Some(Ok(lambda_expr)),
+                    ExpressionBeadInner::Root(_) if root.is_some() => {
+                        Some(Err(BeadError::MultipleRoots))
+                    }
+                    ExpressionBeadInner::Root(x) => {
+                        root = Some(x);
+                        None
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        pool.0.reverse();
+        let root = root.ok_or(BeadError::MissingRoot)?;
+        if root.0 as usize >= pool.0.len() {
+            return Err(BeadError::MalformedPool);
+        }
+        pool.get_type(root).map_err(|_| BeadError::MalformedPool)?;
+        Ok(RootedLambdaPool { pool, root })
+    }
+
     ///Reconstruct a [`RootedLambdaPool`] from an iterator of beads.
     ///
     ///# Panics
@@ -133,6 +165,38 @@ impl<'a, T: LambdaLanguageOfThought> RootedLambdaPool<'a, T> {
                 })
                 .collect::<Vec<_>>(),
         );
+        let root = root.unwrap();
+        RootedLambdaPool { pool, root }
+    }
+
+    ///Reconstruct a [`RootedLambdaPool`] from a **reversed** iterator of beads.
+    ///
+    ///# Panics
+    ///Will panic if there is no root bead or multiple root beads.
+    ///
+    ///# Safety
+    ///This version of the function does not check if the corresponding expression is wellformed.
+    ///If the beads are not presented in the correct order, the resulting code may panic or loop
+    ///indefinitely elsewhere.
+    pub unsafe fn from_beads_rev_unchecked(
+        iter: impl IntoIterator<Item = ExpressionBead<'a, T>>,
+    ) -> RootedLambdaPool<'a, T> {
+        let mut root = None;
+        let mut pool = LambdaPool(
+            iter.into_iter()
+                .filter_map(|x| match x.0 {
+                    ExpressionBeadInner::Expr(lambda_expr) => Some(lambda_expr),
+                    ExpressionBeadInner::Root(_) if root.is_some() => {
+                        panic!("RootedLambdaPool can only have one root but the beads have multiple roots!");
+                    }
+                    ExpressionBeadInner::Root(x) => {
+                        root = Some(x);
+                        None
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+        pool.0.reverse();
         let root = root.unwrap();
         RootedLambdaPool { pool, root }
     }
