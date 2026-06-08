@@ -663,7 +663,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                     let (y, y_a) = self.string(LambdaExprRef(y.0), c, false);
                     match bin_op {
                         BinOp::AgentOf | BinOp::PatientOf => {
-                            (format!("{bin_op}({x}, {y})",), AssociativityData::Monop)
+                            (format!("{bin_op}({x}, {y})"), AssociativityData::Monop)
                         }
 
                         BinOp::And | BinOp::Or => (

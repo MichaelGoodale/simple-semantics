@@ -163,8 +163,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone> PossibleExpressions<'src, T> {
     ) -> Vec<PossibleExpr<'a, 'src, T>> {
         let mut possibilities = vec![];
         if let Some(x) = self.expressions.get(lambda_type).map(|x| {
-            x.iter()
-                .flat_map(|(_, v)| v.iter().map(PossibleExpr::new_borrowed))
+            x.values()
+                .flat_map(|v| v.iter().map(PossibleExpr::new_borrowed))
         }) {
             possibilities.extend(x);
         }
@@ -192,8 +192,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> PossibleExpressions<'src,
         let mut possibilities = vec![];
         if !is_subformula {
             if let Some(x) = self.expressions.get(lambda_type).map(|x| {
-                x.iter()
-                    .flat_map(|(_, v)| v.iter().map(PossibleExpr::new_borrowed))
+                x.values()
+                    .flat_map(|v| v.iter().map(PossibleExpr::new_borrowed))
             }) {
                 possibilities.extend(x);
             }

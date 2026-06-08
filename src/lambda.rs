@@ -2,6 +2,7 @@
 //! of thought.
 
 use crate::utils::ArgumentIterator;
+use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::{
     cmp::Ordering,
@@ -91,7 +92,7 @@ pub enum ReductionError {
 }
 
 ///An index to a [`LambdaExpr`] in the lambda pool.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LambdaExprRef(pub u32);
 
 impl LambdaExprRef {
@@ -203,9 +204,10 @@ impl LambdaLanguageOfThought for () {
 }
 
 ///A free variable which can either be named or refered to by a integer.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FreeVar<'a> {
     ///A labeled free variable
+    #[serde(borrow)]
     Named(&'a str),
     ///An anonymous free variable defined by an index.
     Anonymous(usize),
@@ -232,7 +234,7 @@ impl From<usize> for FreeVar<'_> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 ///The core expression type of a lambda term
 pub enum LambdaExpr<'a, T> {
     ///A lambda of a given type.
@@ -240,7 +242,7 @@ pub enum LambdaExpr<'a, T> {
     ///A variable bound by a lambda, labeled by its [De Bruijn index](https://en.wikipedia.org/wiki/De_Bruijn_index).
     BoundVariable(Bvar, LambdaType),
     ///A free variable (may be named or anonymous, see [`FreeVar`]).
-    FreeVariable(FreeVar<'a>, LambdaType),
+    FreeVariable(#[serde(borrow)] FreeVar<'a>, LambdaType),
     ///The application of an argument to a function
     Application {
         ///The body of the function
