@@ -9,12 +9,12 @@ ahash = { version = "0.8.12", features = [
   "std",
 ], default-features = false }
 chumsky = { version = "0.13.0", features = ["pratt"] }
-itertools = "0.14.0"
-rand = { version = "0.10.1", optional = true }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-smallvec = "1.15.1"
-thiserror = "2.0.18"
+itertools = "0.15.0"
+rand = { version = "0.10.2", optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+smallvec = "1.15.2"
+thiserror = "2.0.20"
 
 [dev-dependencies]
 anyhow = "1.0.97"
