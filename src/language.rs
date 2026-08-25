@@ -319,6 +319,12 @@ impl<'a> LanguageExpression<'a> {
     pub fn parse(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
         Ok(RootedLambdaPool::parse(s)?.into_pool()?)
     }
+
+    #[cfg(test)]
+    ///Create a `LanguageExpression` out of a [`LambdaExprRef`] and a [`ExprPool`]
+    pub(crate) fn new(pool: ExprPool<'a>, start: LambdaExprRef) -> Self {
+        LanguageExpression { pool, start }
+    }
 }
 
 struct Execution<'a, 'b> {

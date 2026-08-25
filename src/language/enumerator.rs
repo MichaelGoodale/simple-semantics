@@ -455,7 +455,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + Debug> From<LambdaExpr<'src, T>>
     fn from(value: LambdaExpr<'src, T>) -> Self {
         let children = match &value {
             LambdaExpr::LanguageOfThoughtExpr(e) => {
-                e.get_arguments().map(FinishedOrType::Type).collect()
+                e.argument_types().map(FinishedOrType::Type).collect()
             }
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => vec![],
             LambdaExpr::Lambda(_, t) => {

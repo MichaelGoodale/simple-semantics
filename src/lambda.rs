@@ -110,7 +110,7 @@ pub trait LambdaLanguageOfThought {
     type ConversionError;
 
     ///Given an expression, get an iterator of its children
-    fn get_children(&self) -> impl Iterator<Item = LambdaExprRef>;
+    fn child_refs(&self) -> impl Iterator<Item = LambdaExprRef>;
 
     ///Update the references such that `LambdaExprRef(0)` is remapped to `LambdaExprRef(remap[0])`.
     ///(Used in garbage collection).
@@ -130,10 +130,10 @@ pub trait LambdaLanguageOfThought {
     fn n_children(&self) -> usize;
 
     ///Get the return type of an expression.
-    fn get_type(&self) -> &LambdaType;
+    fn out_type(&self) -> &LambdaType;
 
     ///Get the type of all children in order.
-    fn get_arguments(&self) -> impl Iterator<Item = LambdaType>;
+    fn argument_types(&self) -> impl Iterator<Item = LambdaType>;
 
     ///Checks whether an expression is commutative
     fn commutative(&self) -> bool {
@@ -162,7 +162,7 @@ pub trait LambdaLanguageOfThought {
 impl LambdaLanguageOfThought for () {
     type Pool = ();
     type ConversionError = ();
-    fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
+    fn child_refs(&self) -> impl Iterator<Item = LambdaExprRef> {
         std::iter::empty()
     }
 
@@ -182,7 +182,7 @@ impl LambdaLanguageOfThought for () {
 
     fn change_children(&mut self, _: impl Iterator<Item = LambdaExprRef>) {}
 
-    fn get_type(&self) -> &LambdaType {
+    fn out_type(&self) -> &LambdaType {
         unimplemented!()
     }
 
@@ -190,7 +190,7 @@ impl LambdaLanguageOfThought for () {
         false
     }
 
-    fn get_arguments(&self) -> impl Iterator<Item = LambdaType> {
+    fn argument_types(&self) -> impl Iterator<Item = LambdaType> {
         empty()
     }
 
@@ -731,7 +731,7 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => {
                 ArgumentIterator::C(std::iter::empty())
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => ArgumentIterator::D(x.get_children()),
+            LambdaExpr::LanguageOfThoughtExpr(x) => ArgumentIterator::D(x.child_refs()),
         }
     }
 }
@@ -754,7 +754,7 @@ impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, '_, T> {
                 LambdaExpr::LanguageOfThoughtExpr(x) => {
                     let depth = lambda_depth + usize::from(x.inc_depth());
 
-                    x.get_children()
+                    x.child_refs()
                         .for_each(|x| self.queue.push_back((x, depth)));
                 }
             }
@@ -801,7 +801,7 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
                 LambdaExpr::LanguageOfThoughtExpr(x) => {
                     let depth = lambda_depth + usize::from(x.inc_depth());
 
-                    x.get_children()
+                    x.child_refs()
                         .for_each(|x| self.queue.push_back((x, depth)));
                 }
             }
@@ -836,7 +836,7 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
                 let subformula_type = self.get_type(*subformula)?;
                 Ok(subformula_type.rhs()?.clone())
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.get_type().clone()),
+            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.out_type().clone()),
         }
     }
 
@@ -1193,7 +1193,7 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'_, 
                         found.push(false);
                         lambdas.push(found.len() - 1);
                     }
-                    stack.extend(x.get_children().map(|x| (x, lambdas.clone())));
+                    stack.extend(x.child_refs().map(|x| (x, lambdas.clone())));
                 }
             }
         }

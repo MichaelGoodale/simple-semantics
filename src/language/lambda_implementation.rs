@@ -54,7 +54,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         }
     }
 
-    fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
+    fn child_refs(&self) -> impl Iterator<Item = LambdaExprRef> {
         match self {
             Expr::Quantifier {
                 restrictor,
@@ -111,7 +111,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         }
     }
 
-    fn get_type(&self) -> &LambdaType {
+    fn out_type(&self) -> &LambdaType {
         match self {
             Expr::Quantifier { .. } => LambdaType::t(),
             Expr::Variable(Variable::Actor(_)) | Expr::Actor(_) => LambdaType::a(),
@@ -174,7 +174,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         })
     }
 
-    fn get_arguments(&self) -> impl Iterator<Item = LambdaType> {
+    fn argument_types(&self) -> impl Iterator<Item = LambdaType> {
         match self {
             Expr::Quantifier { .. } => {
                 ArgumentIterator::A([LambdaType::t().clone(), LambdaType::t().clone()].into_iter())

@@ -125,7 +125,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
                     c.add_lambda(t);
                 }
                 self.pool
-                    .extend(e.get_arguments().map(|lambda_type| ExprOrType::Type {
+                    .extend(e.argument_types().map(|lambda_type| ExprOrType::Type {
                         lambda_type,
                         parent: Some(c.position),
                         is_app_subformula: false,

@@ -90,8 +90,8 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
 
         let mut expressions: HashMap<LambdaType, BTreeMap<_, Vec<_>>> = HashMap::default();
         for expr in all_expressions {
-            let output = expr.get_type();
-            let arguments = expr.get_arguments().collect();
+            let output = expr.out_type();
+            let arguments = expr.argument_types().collect();
             let expr = LambdaExpr::LanguageOfThoughtExpr(expr);
             //Annoying match to avoid cloning arguments
             match expressions.entry(output.clone()) {
