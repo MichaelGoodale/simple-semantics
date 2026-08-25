@@ -5,8 +5,8 @@ use std::{
 };
 
 use super::{
-    ActorOrEvent, BinOp, Context, Debug, Expr, ExprRef, LambdaExpr, LambdaExprRef,
-    LambdaLanguageOfThought, MonOp, Quantifier,
+    ActorOrEvent, BinOp, Context, Debug, Expr, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought,
+    MonOp, Quantifier,
 };
 use crate::{Actor, PropertyLabel, lambda::types::LambdaType};
 
@@ -37,7 +37,7 @@ impl<'src> PossibleExpressions<'src, Expr<'src>> {
         actor_properties: &[PropertyLabel<'src>],
         event_properties: &[PropertyLabel<'src>],
     ) -> Self {
-        let bad_ref = ExprRef(0);
+        let bad_ref = LambdaExprRef(0);
         let mut all_expressions: Vec<_> = [
             Expr::Unary(MonOp::Not, bad_ref),
             Expr::Binary(BinOp::And, bad_ref, bad_ref),

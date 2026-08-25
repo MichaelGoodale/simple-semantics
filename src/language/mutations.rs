@@ -1,6 +1,5 @@
 use super::{
-    ActorOrEvent, BinOp, Constant, Display, Expr, ExprRef, MonOp, Quantifier, RootedLambdaPool,
-    thiserror,
+    ActorOrEvent, BinOp, Constant, Display, Expr, MonOp, Quantifier, RootedLambdaPool, thiserror,
 };
 use crate::lambda::{
     LambdaError, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
@@ -1076,8 +1075,8 @@ mod test {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: Quantifier::Universal,
                     var_type: ActorOrEvent::Actor,
-                    restrictor: ExprRef(3),
-                    subformula: ExprRef(4),
+                    restrictor: LambdaExprRef(3),
+                    subformula: LambdaExprRef(4),
                 }),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(Constant::Property(
                     "1",
@@ -1086,8 +1085,8 @@ mod test {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: Quantifier::Existential,
                     var_type: ActorOrEvent::Actor,
-                    restrictor: ExprRef(5),
-                    subformula: ExprRef(6),
+                    restrictor: LambdaExprRef(5),
+                    subformula: LambdaExprRef(6),
                 }),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Constant(Constant::Property(
                     "0",
@@ -1095,7 +1094,7 @@ mod test {
                 ))),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property("3", ActorOrEvent::Event),
-                    ExprRef(7),
+                    LambdaExprRef(7),
                 )),
                 LambdaExpr::BoundVariable(3, LambdaType::E),
             ]),

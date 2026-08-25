@@ -603,7 +603,7 @@ pub fn parse_executable(s: &str) -> Result<LanguageExpression<'_>, LambdaParseEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::language::{ExprRef, LanguageResult};
+    use crate::language::LanguageResult;
     use crate::{Scenario, ThetaRoles};
     use std::collections::BTreeMap;
 
@@ -712,7 +712,7 @@ mod tests {
                     LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                     LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                         MonOp::Property("Red", ActorOrEvent::Event),
-                        ExprRef(0),
+                        LambdaExprRef(0),
                     )),
                     LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::e().clone()),
                 ]),
@@ -763,7 +763,7 @@ mod tests {
                         subformula: LambdaExprRef(0),
                         argument: LambdaExprRef(1),
                     },
-                    LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, ExprRef(2))),
+                    LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, LambdaExprRef(2))),
                 ]),
                 LambdaExprRef(3),
             ),
@@ -784,7 +784,7 @@ mod tests {
                     LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
                     LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                         MonOp::Property("Red", ActorOrEvent::Actor),
-                        ExprRef(4),
+                        LambdaExprRef(4),
                     )),
                     LambdaExpr::Lambda(LambdaExprRef(5), LambdaType::a().clone()),
                     LambdaExpr::Application {
@@ -804,8 +804,8 @@ mod tests {
                     LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
                     LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
                         BinOp::And,
-                        ExprRef(0),
-                        ExprRef(1),
+                        LambdaExprRef(0),
+                        LambdaExprRef(1),
                     )),
                     LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::t().clone()),
                     LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::t().clone()),

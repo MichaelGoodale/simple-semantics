@@ -4,8 +4,8 @@ use std::{fmt::Write, hash::Hash, iter::empty};
 use thiserror::Error;
 
 use super::{
-    ActorOrEvent, BinOp, Constant, Expr, ExprPool, ExprRef, LambdaParseError, LanguageExpression,
-    MonOp, Variable,
+    ActorOrEvent, BinOp, Constant, Expr, ExprPool, LambdaParseError, LanguageExpression, MonOp,
+    Variable,
 };
 use crate::{
     lambda::{
@@ -14,18 +14,6 @@ use crate::{
     },
     language::parser::parse_lot,
 };
-
-impl From<ExprRef> for LambdaExprRef {
-    fn from(value: ExprRef) -> Self {
-        LambdaExprRef(value.0)
-    }
-}
-
-impl From<LambdaExprRef> for ExprRef {
-    fn from(value: LambdaExprRef) -> Self {
-        ExprRef(value.0)
-    }
-}
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaConversionError {
@@ -88,15 +76,15 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
                 subformula,
                 ..
             } => {
-                *restrictor = ExprRef(new_children.next().unwrap().0);
-                *subformula = ExprRef(new_children.next().unwrap().0);
+                *restrictor = LambdaExprRef(new_children.next().unwrap().0);
+                *subformula = LambdaExprRef(new_children.next().unwrap().0);
             }
             Expr::Binary(_, x, y) => {
-                *x = ExprRef(new_children.next().unwrap().0);
-                *y = ExprRef(new_children.next().unwrap().0);
+                *x = LambdaExprRef(new_children.next().unwrap().0);
+                *y = LambdaExprRef(new_children.next().unwrap().0);
             }
             Expr::Unary(_, x) => {
-                *x = ExprRef(new_children.next().unwrap().0);
+                *x = LambdaExprRef(new_children.next().unwrap().0);
             }
             Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => (),
         }
@@ -109,15 +97,15 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
                 subformula,
                 ..
             } => {
-                *restrictor = ExprRef(remap[restrictor.0 as usize]);
-                *subformula = ExprRef(remap[subformula.0 as usize]);
+                *restrictor = LambdaExprRef(remap[restrictor.0 as usize]);
+                *subformula = LambdaExprRef(remap[subformula.0 as usize]);
             }
             Expr::Binary(_, x, y) => {
-                *x = ExprRef(remap[x.0 as usize]);
-                *y = ExprRef(remap[y.0 as usize]);
+                *x = LambdaExprRef(remap[x.0 as usize]);
+                *y = LambdaExprRef(remap[y.0 as usize]);
             }
             Expr::Unary(_, x) => {
-                *x = ExprRef(remap[x.0 as usize]);
+                *x = LambdaExprRef(remap[x.0 as usize]);
             }
             Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => (),
         }
@@ -182,7 +170,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
         Ok(LanguageExpression {
             pool: ExprPool(processed_pool),
-            start: ExprRef(pool.root.0),
+            start: LambdaExprRef(pool.root.0),
         })
     }
 
@@ -472,7 +460,11 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                 LambdaExpr::Lambda(LambdaExprRef(1), self_type.clone()),
                 LambdaExpr::Lambda(LambdaExprRef(2), other_type.clone()),
                 LambdaExpr::Lambda(LambdaExprRef(3), lhs.clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(4), ExprRef(7))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                    BinOp::And,
+                    LambdaExprRef(4),
+                    LambdaExprRef(7),
+                )),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(5),
                     argument: LambdaExprRef(6),
@@ -528,8 +520,8 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                 LambdaExpr::Lambda(LambdaExprRef(4), e.clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
                     BinOp::And,
-                    ExprRef(5),
-                    ExprRef(10),
+                    LambdaExprRef(5),
+                    LambdaExprRef(10),
                 )),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(6),

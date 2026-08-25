@@ -1016,7 +1016,7 @@ where
         Ok(())
     }
 
-    ///Iterates through a pool and de-allocates dangling refs and updates `ExprRefs` to new
+    ///Iterates through a pool and de-allocates dangling refs and updates `LambdaExprRefs` to new
     ///addresses. Basically garbage collection.
     pub(crate) fn cleanup(&mut self, root: LambdaExprRef) -> LambdaExprRef {
         let findable: HashSet<_> = self.bfs_from(root).map(|(x, _)| x.0).collect();
@@ -1228,9 +1228,7 @@ mod test {
     };
 
     use super::*;
-    use crate::language::{
-        ActorOrEvent, BinOp, Expr, ExprPool, ExprRef, LanguageExpression, MonOp,
-    };
+    use crate::language::{ActorOrEvent, BinOp, Expr, ExprPool, LanguageExpression, MonOp};
 
     #[test]
     fn ordering() -> anyhow::Result<()> {
@@ -1327,7 +1325,7 @@ mod test {
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property("32", ActorOrEvent::Actor),
-                ExprRef(3),
+                LambdaExprRef(3),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3")),
@@ -1340,7 +1338,7 @@ mod test {
             LambdaPool(vec![
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property("32", ActorOrEvent::Actor),
-                    ExprRef(1)
+                    LambdaExprRef(1)
                 )),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3"))
             ]),
@@ -1361,7 +1359,7 @@ mod test {
             LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property("36", ActorOrEvent::Actor),
-                ExprRef(7),
+                LambdaExprRef(7),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
         ]);
@@ -1372,7 +1370,7 @@ mod test {
             LambdaPool(vec![
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property("36", ActorOrEvent::Actor),
-                    ExprRef(1)
+                    LambdaExprRef(1)
                 )),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
             ])
@@ -1385,7 +1383,11 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(2), LambdaType::t().clone()),
             LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::t().clone()),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(4), ExprRef(5))), //10
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                BinOp::And,
+                LambdaExprRef(4),
+                LambdaExprRef(5),
+            )), //10
             LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
             LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
             LambdaExpr::Application {
@@ -1396,7 +1398,7 @@ mod test {
             LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property("36", ActorOrEvent::Actor),
-                ExprRef(9),
+                LambdaExprRef(9),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
@@ -1408,10 +1410,14 @@ mod test {
             pool,
             LambdaPool(vec![
                 LambdaExpr::Lambda(LambdaExprRef(1), LambdaType::t().clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                    BinOp::And,
+                    LambdaExprRef(2),
+                    LambdaExprRef(3)
+                )),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property("36", ActorOrEvent::Actor),
-                    ExprRef(4)
+                    LambdaExprRef(4)
                 )),
                 LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
@@ -1432,7 +1438,7 @@ mod test {
             LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property("32", ActorOrEvent::Actor),
-                ExprRef(4),
+                LambdaExprRef(4),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3")),
@@ -1444,7 +1450,11 @@ mod test {
             },
             LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::t().clone()),
             LambdaExpr::Lambda(LambdaExprRef(9), LambdaType::t().clone()),
-            LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(10), ExprRef(11))), //10
+            LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                BinOp::And,
+                LambdaExprRef(10),
+                LambdaExprRef(11),
+            )), //10
             LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
             LambdaExpr::BoundVariable(0, LambdaType::t().clone()),
             LambdaExpr::Application {
@@ -1455,7 +1465,7 @@ mod test {
             LambdaExpr::Lambda(LambdaExprRef(14), LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                 MonOp::Property("36", ActorOrEvent::Actor),
-                ExprRef(15),
+                LambdaExprRef(15),
             )),
             LambdaExpr::BoundVariable(0, LambdaType::a().clone()),
             LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2")),
@@ -1465,15 +1475,19 @@ mod test {
         assert_eq!(
             pool,
             LambdaPool(vec![
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                    BinOp::And,
+                    LambdaExprRef(2),
+                    LambdaExprRef(3)
+                )),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("3")),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property("36", ActorOrEvent::Actor),
-                    ExprRef(4)
+                    LambdaExprRef(4)
                 )),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(
                     MonOp::Property("32", ActorOrEvent::Actor),
-                    ExprRef(1)
+                    LambdaExprRef(1)
                 )),
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Actor("2"))
             ])
@@ -1483,13 +1497,13 @@ mod test {
             RootedLambdaPool::new(pool, root).into_pool()?,
             LanguageExpression::new(
                 ExprPool::from(vec![
-                    Expr::Binary(BinOp::And, ExprRef(2), ExprRef(3)),
+                    Expr::Binary(BinOp::And, LambdaExprRef(2), LambdaExprRef(3)),
                     Expr::Actor("3"),
-                    Expr::Unary(MonOp::Property("36", ActorOrEvent::Actor), ExprRef(4)),
-                    Expr::Unary(MonOp::Property("32", ActorOrEvent::Actor), ExprRef(1)),
+                    Expr::Unary(MonOp::Property("36", ActorOrEvent::Actor), LambdaExprRef(4)),
+                    Expr::Unary(MonOp::Property("32", ActorOrEvent::Actor), LambdaExprRef(1)),
                     Expr::Actor("2")
                 ]),
-                ExprRef(root.0)
+                LambdaExprRef(root.0)
             )
         );
         Ok(())
@@ -1710,7 +1724,11 @@ mod test {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(4),
                 },
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(5))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                    BinOp::And,
+                    LambdaExprRef(2),
+                    LambdaExprRef(5),
+                )),
                 LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::e().clone()),
                 LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::et().clone()),
             ]),
@@ -1743,14 +1761,22 @@ mod test {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(4),
                 },
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(2), ExprRef(5))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                    BinOp::And,
+                    LambdaExprRef(2),
+                    LambdaExprRef(5),
+                )),
                 LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
                 LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(7),
                     argument: LambdaExprRef(8),
                 },
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And, ExprRef(6), ExprRef(9))),
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+                    BinOp::And,
+                    LambdaExprRef(6),
+                    LambdaExprRef(9),
+                )),
                 LambdaExpr::Lambda(LambdaExprRef(10), LambdaType::e().clone()),
                 LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::et().clone()),
                 LambdaExpr::Lambda(LambdaExprRef(12), LambdaType::et().clone()),

@@ -5,8 +5,8 @@ use std::fmt::Display;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
-use crate::lambda::RootedLambdaPool;
 use crate::lambda::types::LambdaType;
+use crate::lambda::{LambdaExprRef, RootedLambdaPool};
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 use itertools::Either;
@@ -193,9 +193,9 @@ pub enum Expr<'a> {
         ///The type of bound variable
         var_type: ActorOrEvent,
         ///An expression defining the restrictor of the quantifier.
-        restrictor: ExprRef,
+        restrictor: LambdaExprRef,
         ///An expression defining the subformula of the quantifier.
-        subformula: ExprRef,
+        subformula: LambdaExprRef,
     },
     ///See [`Variable`]
     Variable(Variable),
@@ -204,16 +204,12 @@ pub enum Expr<'a> {
     ///See [`Event`]. Written `e_N` where `N` is an integer.
     Event(Event),
     ///Any binary function.
-    Binary(BinOp, ExprRef, ExprRef),
+    Binary(BinOp, LambdaExprRef, LambdaExprRef),
     ///Any unary function.
-    Unary(MonOp<'a>, ExprRef),
+    Unary(MonOp<'a>, LambdaExprRef),
     ///All constants.
     Constant(Constant<'a>),
 }
-
-///An index for a specific [`Expr`] in a [`LanguageExpression`]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct ExprRef(pub u32);
 
 ///An arena allocated tree which represents an expression in the language of thought built out of
 ///[`Expr`].
@@ -224,7 +220,7 @@ pub(crate) struct ExprPool<'a>(Vec<Expr<'a>>);
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct LanguageExpression<'a> {
     pool: ExprPool<'a>,
-    start: ExprRef,
+    start: LambdaExprRef,
 }
 
 impl Display for LanguageExpression<'_> {
@@ -322,12 +318,6 @@ impl<'a> LanguageExpression<'a> {
     ///lambda terms or if it is malformed
     pub fn parse(s: &'a str) -> Result<LanguageExpression<'a>, LambdaParseError> {
         Ok(RootedLambdaPool::parse(s)?.into_pool()?)
-    }
-
-    #[allow(dead_code)]
-    ///Create a `LanguageExpression` out of a [`ExprRef`] and a [`ExprPool`]
-    pub(crate) fn new(pool: ExprPool<'a>, start: ExprRef) -> Self {
-        LanguageExpression { pool, start }
     }
 }
 
@@ -573,11 +563,11 @@ impl<'a> From<Vec<Expr<'a>>> for ExprPool<'a> {
 }
 
 impl<'a> ExprPool<'a> {
-    fn get(&self, expr: ExprRef) -> &Expr<'a> {
+    fn get(&self, expr: LambdaExprRef) -> &Expr<'a> {
         &self.0[expr.0 as usize]
     }
 
-    fn get_type(&self, expr: ExprRef) -> LanguageResultType {
+    fn get_type(&self, expr: LambdaExprRef) -> LanguageResultType {
         match self.get(expr) {
             Expr::Variable(Variable::Actor(_)) | Expr::Actor(_) => LanguageResultType::Actor,
             Expr::Variable(Variable::Event(_)) | Expr::Event(_) => LanguageResultType::Event,
@@ -602,8 +592,8 @@ impl<'a> Execution<'a, '_> {
         &mut self,
         quantifier: Quantifier,
         var_type: ActorOrEvent,
-        restrictor: ExprRef,
-        subformula: ExprRef,
+        restrictor: LambdaExprRef,
+        subformula: LambdaExprRef,
         scenario: &Scenario<'a>,
         variables: &mut VariableBuffer<'a>,
     ) -> Result<LanguageResult<'a>, LanguageTypeError> {
@@ -714,7 +704,7 @@ impl<'a> Execution<'a, '_> {
     #[allow(clippy::too_many_lines)]
     fn interp(
         &mut self,
-        expr: ExprRef,
+        expr: LambdaExprRef,
         scenario: &Scenario<'a>,
         variables: &mut VariableBuffer<'a>,
     ) -> Result<LanguageResult<'a>, LanguageTypeError> {
@@ -921,12 +911,12 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Actor("0"),
             Expr::Event(0),
-            Expr::Binary(BinOp::AgentOf, ExprRef(0), ExprRef(1)),
+            Expr::Binary(BinOp::AgentOf, LambdaExprRef(0), LambdaExprRef(1)),
         ]);
 
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(2),
+            start: LambdaExprRef(2),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -936,12 +926,12 @@ mod tests {
         let simple_expr = ExprPool(vec![
             Expr::Actor("0"),
             Expr::Event(0),
-            Expr::Binary(BinOp::PatientOf, ExprRef(0), ExprRef(1)),
+            Expr::Binary(BinOp::PatientOf, LambdaExprRef(0), LambdaExprRef(1)),
         ]);
 
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(2),
+            start: LambdaExprRef(2),
         };
         assert_eq!(
             expr.run(&simple_scenario, None).unwrap(),
@@ -973,25 +963,25 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(2),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Event,
-                restrictor: ExprRef(3),
-                subformula: ExprRef(4),
+                restrictor: LambdaExprRef(3),
+                subformula: LambdaExprRef(4),
             },
             Expr::Constant(Constant::EveryEvent),
-            Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
+            Expr::Binary(BinOp::AgentOf, LambdaExprRef(5), LambdaExprRef(6)),
             Expr::Variable(Variable::Actor(1)),
             Expr::Variable(Variable::Event(0)),
         ]);
 
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1003,24 +993,24 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(2),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Event,
-                restrictor: ExprRef(3),
-                subformula: ExprRef(4),
+                restrictor: LambdaExprRef(3),
+                subformula: LambdaExprRef(4),
             },
             Expr::Constant(Constant::EveryEvent),
-            Expr::Binary(BinOp::PatientOf, ExprRef(5), ExprRef(6)),
+            Expr::Binary(BinOp::PatientOf, LambdaExprRef(5), LambdaExprRef(6)),
             Expr::Variable(Variable::Actor(1)),
             Expr::Variable(Variable::Event(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1050,7 +1040,7 @@ mod tests {
         assert_eq!(
             LanguageExpression {
                 pool: ExprPool(vec![Expr::Constant(Constant::Contradiction)]),
-                start: ExprRef(0)
+                start: LambdaExprRef(0)
             }
             .run(&simple_scenario, None)?,
             LanguageResult::Bool(false)
@@ -1059,7 +1049,7 @@ mod tests {
         assert_eq!(
             LanguageExpression {
                 pool: ExprPool(vec![Expr::Constant(Constant::Tautology)]),
-                start: ExprRef(0)
+                start: LambdaExprRef(0)
             }
             .run(&simple_scenario, None)?,
             LanguageResult::Bool(true)
@@ -1067,12 +1057,12 @@ mod tests {
 
         //\neg \bot
         let simple_expr = ExprPool(vec![
-            Expr::Unary(MonOp::Not, ExprRef(1)),
+            Expr::Unary(MonOp::Not, LambdaExprRef(1)),
             Expr::Constant(Constant::Contradiction),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1081,12 +1071,12 @@ mod tests {
 
         //\neg \top
         let simple_expr = ExprPool(vec![
-            Expr::Unary(MonOp::Not, ExprRef(1)),
+            Expr::Unary(MonOp::Not, LambdaExprRef(1)),
             Expr::Constant(Constant::Tautology),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1095,14 +1085,14 @@ mod tests {
 
         //(\neg \bot) \lor (\bot)
         let simple_expr = ExprPool(vec![
-            Expr::Binary(BinOp::Or, ExprRef(1), ExprRef(3)),
-            Expr::Unary(MonOp::Not, ExprRef(2)),
+            Expr::Binary(BinOp::Or, LambdaExprRef(1), LambdaExprRef(3)),
+            Expr::Unary(MonOp::Not, LambdaExprRef(2)),
             Expr::Constant(Constant::Contradiction),
             Expr::Constant(Constant::Contradiction),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1111,14 +1101,14 @@ mod tests {
 
         //(\neg \bot) \and (\bot)
         let simple_expr = ExprPool(vec![
-            Expr::Binary(BinOp::And, ExprRef(1), ExprRef(3)),
-            Expr::Unary(MonOp::Not, ExprRef(2)),
+            Expr::Binary(BinOp::And, LambdaExprRef(1), LambdaExprRef(3)),
+            Expr::Unary(MonOp::Not, LambdaExprRef(2)),
             Expr::Constant(Constant::Contradiction),
             Expr::Constant(Constant::Contradiction),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1130,26 +1120,26 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(2),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Event,
-                restrictor: ExprRef(3),
-                subformula: ExprRef(4),
+                restrictor: LambdaExprRef(3),
+                subformula: LambdaExprRef(4),
             },
             Expr::Constant(Constant::EveryEvent),
-            Expr::Binary(BinOp::And, ExprRef(5), ExprRef(8)),
-            Expr::Binary(BinOp::PatientOf, ExprRef(6), ExprRef(7)),
+            Expr::Binary(BinOp::And, LambdaExprRef(5), LambdaExprRef(8)),
+            Expr::Binary(BinOp::PatientOf, LambdaExprRef(6), LambdaExprRef(7)),
             Expr::Variable(Variable::Actor(1)),
             Expr::Variable(Variable::Event(0)),
             Expr::Constant(Constant::Tautology),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1184,16 +1174,16 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(2),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
-            Expr::Unary(MonOp::Property("1", ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(MonOp::Property("1", ActorOrEvent::Actor), LambdaExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1204,16 +1194,19 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(2),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(2),
             },
             Expr::Constant(Constant::Everyone),
-            Expr::Unary(MonOp::Property("534", ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Unary(
+                MonOp::Property("534", ActorOrEvent::Actor),
+                LambdaExprRef(3),
+            ),
             Expr::Variable(Variable::Actor(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1243,25 +1236,25 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(2),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(2),
             },
             Expr::Constant(Constant::Property("534", ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Event,
-                restrictor: ExprRef(3),
-                subformula: ExprRef(4),
+                restrictor: LambdaExprRef(3),
+                subformula: LambdaExprRef(4),
             },
             Expr::Constant(Constant::Property("235", ActorOrEvent::Event)),
-            Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
+            Expr::Binary(BinOp::AgentOf, LambdaExprRef(5), LambdaExprRef(6)),
             Expr::Variable(Variable::Actor(1)),
             Expr::Variable(Variable::Event(0)),
         ]);
 
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1272,24 +1265,24 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(2),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(2),
             },
             Expr::Constant(Constant::Property("2", ActorOrEvent::Actor)),
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Event,
-                restrictor: ExprRef(3),
-                subformula: ExprRef(4),
+                restrictor: LambdaExprRef(3),
+                subformula: LambdaExprRef(4),
             },
             Expr::Constant(Constant::Property("235", ActorOrEvent::Event)),
-            Expr::Binary(BinOp::AgentOf, ExprRef(5), ExprRef(6)),
+            Expr::Binary(BinOp::AgentOf, LambdaExprRef(5), LambdaExprRef(6)),
             Expr::Variable(Variable::Actor(1)),
             Expr::Variable(Variable::Event(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1314,28 +1307,28 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(6),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(6),
             },
-            Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
-            Expr::Unary(MonOp::Property("2", ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Binary(BinOp::And, LambdaExprRef(2), LambdaExprRef(4)),
+            Expr::Unary(MonOp::Property("2", ActorOrEvent::Actor), LambdaExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
-            Expr::Unary(MonOp::Property("3", ActorOrEvent::Actor), ExprRef(5)),
+            Expr::Unary(MonOp::Property("3", ActorOrEvent::Actor), LambdaExprRef(5)),
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(7),
-                subformula: ExprRef(8),
+                restrictor: LambdaExprRef(7),
+                subformula: LambdaExprRef(8),
             },
             Expr::Constant(Constant::EveryEvent),
-            Expr::Binary(BinOp::AgentOf, ExprRef(9), ExprRef(10)),
+            Expr::Binary(BinOp::AgentOf, LambdaExprRef(9), LambdaExprRef(10)),
             Expr::Variable(Variable::Actor(1)),
             Expr::Variable(Variable::Event(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
@@ -1346,28 +1339,28 @@ mod tests {
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
                 var_type: ActorOrEvent::Actor,
-                restrictor: ExprRef(1),
-                subformula: ExprRef(6),
+                restrictor: LambdaExprRef(1),
+                subformula: LambdaExprRef(6),
             },
-            Expr::Binary(BinOp::And, ExprRef(2), ExprRef(4)),
-            Expr::Unary(MonOp::Property("2", ActorOrEvent::Actor), ExprRef(3)),
+            Expr::Binary(BinOp::And, LambdaExprRef(2), LambdaExprRef(4)),
+            Expr::Unary(MonOp::Property("2", ActorOrEvent::Actor), LambdaExprRef(3)),
             Expr::Variable(Variable::Actor(0)),
-            Expr::Unary(MonOp::Property("3", ActorOrEvent::Actor), ExprRef(5)),
+            Expr::Unary(MonOp::Property("3", ActorOrEvent::Actor), LambdaExprRef(5)),
             Expr::Variable(Variable::Actor(0)), //5
             Expr::Quantifier {
                 quantifier: Quantifier::Existential,
                 var_type: ActorOrEvent::Event,
-                restrictor: ExprRef(7),
-                subformula: ExprRef(8),
+                restrictor: LambdaExprRef(7),
+                subformula: LambdaExprRef(8),
             },
             Expr::Constant(Constant::EveryEvent),
-            Expr::Binary(BinOp::PatientOf, ExprRef(9), ExprRef(10)),
+            Expr::Binary(BinOp::PatientOf, LambdaExprRef(9), LambdaExprRef(10)),
             Expr::Variable(Variable::Actor(1)),
             Expr::Variable(Variable::Event(0)),
         ]);
         let expr = LanguageExpression {
             pool: simple_expr,
-            start: ExprRef(0),
+            start: LambdaExprRef(0),
         };
         assert_eq!(
             expr.run(&simple_scenario, None)?,
