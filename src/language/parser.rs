@@ -86,7 +86,7 @@ impl<'src> ParseTree<'src> {
                         m.get_argument_type(),
                     )));
                 }
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(*m, x.into()))
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(*m, x))
             }
             ParseTree::Binary(b, x, y) => {
                 let x = x.add_to_pool(pool, variable_names, lambda_depth)?;
@@ -102,7 +102,7 @@ impl<'src> ParseTree<'src> {
                     )));
                 }
 
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x.into(), y.into()))
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(*b, x, y))
             }
             ParseTree::Iota { t, var, body } => {
                 let lambda_type: LambdaType = (*t).into();
@@ -116,7 +116,7 @@ impl<'src> ParseTree<'src> {
                 }
                 variable_names.unbind(var);
 
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Iota(*t), body.into()))
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Iota(*t), body))
             }
             ParseTree::Quantifier {
                 quantifier,
@@ -152,8 +152,8 @@ impl<'src> ParseTree<'src> {
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Quantifier {
                     quantifier: *quantifier,
                     var_type: *var_type,
-                    restrictor: restrictor.into(),
-                    subformula: subformula.into(),
+                    restrictor,
+                    subformula,
                 })
             }
             ParseTree::Application {
