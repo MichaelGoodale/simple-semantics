@@ -112,9 +112,8 @@ pub trait LambdaLanguageOfThought {
     ///Given an expression, get an iterator of its children
     fn child_refs(&self) -> impl Iterator<Item = LambdaExprRef>;
 
-    ///Update the references such that `LambdaExprRef(0)` is remapped to `LambdaExprRef(remap[0])`.
-    ///(Used in garbage collection).
-    fn remap_refs(&mut self, remap: &[u32]);
+    ///Given an expression, get an iterator of its children with mutable references.
+    fn child_refs_mut(&mut self) -> impl Iterator<Item = &mut LambdaExprRef>;
 
     ///Returns true if this is somewhere that can bind variables (e.g. should we increment debruijn
     ///indices
@@ -122,9 +121,6 @@ pub trait LambdaLanguageOfThought {
 
     ///Returns the type of the bound variable at an instruction
     fn var_type(&self) -> Option<&LambdaType>;
-
-    ///Given a list of new references for all children of an expr, change its children.
-    fn change_children(&mut self, new_children: impl Iterator<Item = LambdaExprRef>);
 
     ///Get the number of children of an expression.
     fn n_children(&self) -> usize;
@@ -178,10 +174,6 @@ impl LambdaLanguageOfThought for () {
         true
     }
 
-    fn remap_refs(&mut self, _: &[u32]) {}
-
-    fn change_children(&mut self, _: impl Iterator<Item = LambdaExprRef>) {}
-
     fn out_type(&self) -> &LambdaType {
         unimplemented!()
     }
@@ -200,6 +192,10 @@ impl LambdaLanguageOfThought for () {
 
     fn cmp_expr(&self, _other: &Self) -> std::cmp::Ordering {
         Ordering::Equal
+    }
+
+    fn child_refs_mut(&mut self) -> impl Iterator<Item = &mut LambdaExprRef> {
+        empty()
     }
 }
 
@@ -1062,7 +1058,9 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
                 *subformula = children.next().unwrap();
                 *argument = children.next().unwrap();
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => x.change_children(children),
+            LambdaExpr::LanguageOfThoughtExpr(x) => {
+                x.child_refs_mut().zip(children).for_each(|(x, y)| *x = y)
+            }
         }
     }
 
@@ -1079,7 +1077,9 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
                 *argument = LambdaExprRef(remap[argument.0 as usize]);
             }
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-            LambdaExpr::LanguageOfThoughtExpr(x) => x.remap_refs(remap),
+            LambdaExpr::LanguageOfThoughtExpr(x) => x
+                .child_refs_mut()
+                .for_each(|x| *x = LambdaExprRef(remap[x.0 as usize])),
         }
     }
 }

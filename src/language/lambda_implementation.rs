@@ -1,5 +1,6 @@
 use crate::{lambda::HashLambda, utils::ArgumentIterator};
 use ahash::HashMap;
+use itertools::Either;
 use std::{fmt::Write, hash::Hash, iter::empty};
 use thiserror::Error;
 
@@ -53,62 +54,20 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             _ => None,
         }
     }
-
     fn child_refs(&self) -> impl Iterator<Item = LambdaExprRef> {
         match self {
             Expr::Quantifier {
                 restrictor,
                 subformula,
                 ..
-            } => vec![restrictor, subformula],
-            Expr::Binary(_, x, y) => vec![x, y],
-            Expr::Unary(_, x) => vec![x],
-            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Variable(_) => vec![],
+            } => Either::Left([restrictor, subformula].into_iter()),
+            Expr::Binary(_, x, y) => Either::Left([x, y].into_iter()),
+            Expr::Unary(_, x) => Either::Right(Either::Left(std::iter::once(x))),
+            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Variable(_) => {
+                Either::Right(Either::Right(std::iter::empty()))
+            }
         }
-        .into_iter()
-        .map(|x| LambdaExprRef(x.0))
-    }
-
-    fn change_children(&mut self, mut new_children: impl Iterator<Item = LambdaExprRef>) {
-        match self {
-            Expr::Quantifier {
-                restrictor,
-                subformula,
-                ..
-            } => {
-                *restrictor = LambdaExprRef(new_children.next().unwrap().0);
-                *subformula = LambdaExprRef(new_children.next().unwrap().0);
-            }
-            Expr::Binary(_, x, y) => {
-                *x = LambdaExprRef(new_children.next().unwrap().0);
-                *y = LambdaExprRef(new_children.next().unwrap().0);
-            }
-            Expr::Unary(_, x) => {
-                *x = LambdaExprRef(new_children.next().unwrap().0);
-            }
-            Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => (),
-        }
-    }
-
-    fn remap_refs(&mut self, remap: &[u32]) {
-        match self {
-            Expr::Quantifier {
-                restrictor,
-                subformula,
-                ..
-            } => {
-                *restrictor = LambdaExprRef(remap[restrictor.0 as usize]);
-                *subformula = LambdaExprRef(remap[subformula.0 as usize]);
-            }
-            Expr::Binary(_, x, y) => {
-                *x = LambdaExprRef(remap[x.0 as usize]);
-                *y = LambdaExprRef(remap[y.0 as usize]);
-            }
-            Expr::Unary(_, x) => {
-                *x = LambdaExprRef(remap[x.0 as usize]);
-            }
-            Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => (),
-        }
+        .copied()
     }
 
     fn out_type(&self) -> &LambdaType {
@@ -220,6 +179,21 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
                 (Expr::Constant(x), Expr::Constant(y)) => x.cmp(y),
                 _ => panic!("Any non identical types already filtered"),
             })
+    }
+
+    fn child_refs_mut(&mut self) -> impl Iterator<Item = &mut LambdaExprRef> {
+        match self {
+            Expr::Quantifier {
+                restrictor,
+                subformula,
+                ..
+            } => Either::Left([restrictor, subformula].into_iter()),
+            Expr::Binary(_, x, y) => Either::Left([x, y].into_iter()),
+            Expr::Unary(_, x) => Either::Right(Either::Left(std::iter::once(x))),
+            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Variable(_) => {
+                Either::Right(Either::Right(std::iter::empty()))
+            }
+        }
     }
 }
 

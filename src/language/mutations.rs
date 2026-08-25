@@ -130,7 +130,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone> UnfinishedLambdaPool<'src, T> {
                         parent: Some(c.position),
                         is_app_subformula: false,
                     }));
-                e.change_children((children_start..self.pool.len()).map(LambdaExprRef::new));
+                e.child_refs_mut()
+                    .zip(children_start..self.pool.len())
+                    .for_each(|(x, y)| *x = LambdaExprRef::new(y));
             }
         }
         self.pool[c.position] = ExprOrType::Expr {
