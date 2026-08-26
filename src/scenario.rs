@@ -254,7 +254,8 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
                     .repeated()
                     .to_slice()
                     .try_map(|x, s| {
-                        RootedLambdaPool::parse(x).map_err(|e| Rich::custom(s, e.to_string()))
+                        todo!()
+                        //RootedLambdaPool::parse(x).map_err(|e| Rich::custom(s, e.to_string()))
                     })
                     .separated_by(just(';'))
                     .collect::<Vec<_>>(),

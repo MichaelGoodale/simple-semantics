@@ -20,7 +20,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use super::{ActorOrEvent, BinOp, LanguageExpression, Quantifier};
+use super::{ActorOrEvent, BinOp, Quantifier};
 use thiserror::Error;
 
 ///Error in parsing a lambda expression

@@ -250,7 +250,6 @@ impl Display for ScenarioParsingError {
 pub mod lambda;
 pub mod language;
 mod utils;
-pub use language::{LanguageExpression, LanguageResult, parse_executable};
 pub use utils::ExpressionBead;
 mod scenario;
 pub use scenario::{EventType, PossibleEvent, ScenarioIterator};

@@ -3,8 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use simple_semantics::{Entity, LanguageResult, Scenario, ScenarioDataset, ThetaRoles};
+use simple_semantics::{Entity, Scenario, ScenarioDataset, ThetaRoles, language::Expr};
 
+use simple_semantics::lambda::RootedLambdaPool;
 fn get_resource_path() -> anyhow::Result<PathBuf> {
     let cargo_path = std::env::var("CARGO_MANIFEST_DIR")?;
     Ok(Path::new(&cargo_path).join("tests").join("resources"))
@@ -56,13 +57,13 @@ fn load_dataset() -> anyhow::Result<()> {
 
     assert_eq!(data, parsed_data);
 
-    let executable = simple_semantics::parse_executable("AgentOf(a_John, e_0)")?;
+    let executable = RootedLambdaPool::<Expr>::parse("AgentOf(a_John, e_0)")?;
     assert_eq!(
         parsed_data
             .iter_scenarios()
-            .map(|x| executable.run(x, None).unwrap())
-            .collect::<Vec<_>>(),
-        [true, false, true].map(LanguageResult::Bool).to_vec()
+            .map(|x| { executable.interp(x).unwrap().try_into().unwrap() })
+            .collect::<Vec<bool>>(),
+        [true, false, true].to_vec()
     );
 
     Ok(())
@@ -76,17 +77,15 @@ fn lambda_stuff() -> anyhow::Result<()> {
     let alt_parsed_data = ScenarioDataset::parse_rows(file.split('\n'))?;
     assert_eq!(parsed_data, alt_parsed_data);
 
-    let executable = simple_semantics::parse_executable(
+    let executable = RootedLambdaPool::<Expr>::parse(
         "every(x,pa_man, some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
     )?;
     assert_eq!(
         parsed_data
             .iter_scenarios()
-            .map(|x| executable.run(x, None).unwrap())
-            .collect::<Vec<_>>(),
-        [true, false, true, false]
-            .map(LanguageResult::Bool)
-            .to_vec()
+            .map(|x| executable.interp(x).unwrap().try_into().unwrap())
+            .collect::<Vec<bool>>(),
+        [true, false, true, false].to_vec()
     );
 
     let man = "lambda a x (pa_man(x))";
@@ -98,30 +97,26 @@ fn lambda_stuff() -> anyhow::Result<()> {
 
     let every_man_sleeps = format!("(({every})({man}))({sleeps})");
     println!("{every_man_sleeps}");
-    let executable = simple_semantics::parse_executable(every_man_sleeps.as_str())?;
+    let executable = RootedLambdaPool::<Expr>::parse(every_man_sleeps.as_str())?;
     assert_eq!(
         parsed_data
             .iter_scenarios()
-            .map(|x| executable.run(x, None).unwrap())
-            .collect::<Vec<_>>(),
-        [true, false, true, false]
-            .map(LanguageResult::Bool)
-            .to_vec()
+            .map(|x| executable.interp(x).unwrap().try_into().unwrap())
+            .collect::<Vec<bool>>(),
+        [true, false, true, false].to_vec()
     );
 
     let not_every_woman_sleeps = format!("({not})((({every})({woman}))({sleeps}))");
     let statement = format!("(({and})({every_man_sleeps}))({not_every_woman_sleeps})");
     println!("{statement}");
-    let executable = simple_semantics::parse_executable(statement.as_str())?;
+    let executable = RootedLambdaPool::<Expr>::parse(statement.as_str())?;
     println!("{executable}");
     assert_eq!(
         parsed_data
             .iter_scenarios()
-            .map(|x| executable.run(x, None).unwrap())
-            .collect::<Vec<_>>(),
-        [true, false, false, false]
-            .map(LanguageResult::Bool)
-            .to_vec()
+            .map(|x| executable.interp(x).unwrap().try_into().unwrap())
+            .collect::<Vec<bool>>(),
+        [true, false, false, false].to_vec()
     );
 
     Ok(())

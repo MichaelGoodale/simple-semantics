@@ -5,33 +5,6 @@ use crate::lambda::{
     LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
 };
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum ArgumentIterator<A, B, C, D> {
-    A(A),
-    B(B),
-    C(C),
-    D(D),
-}
-
-impl<A, B, C, D, Item> Iterator for ArgumentIterator<A, B, C, D>
-where
-    A: Iterator<Item = Item>,
-    B: Iterator<Item = Item>,
-    C: Iterator<Item = Item>,
-    D: Iterator<Item = Item>,
-{
-    type Item = Item;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            ArgumentIterator::A(a) => a.next(),
-            ArgumentIterator::B(b) => b.next(),
-            ArgumentIterator::C(c) => c.next(),
-            ArgumentIterator::D(d) => d.next(),
-        }
-    }
-}
-
 ///A representation of an expression in a [`RootedLambdaPool`]. This is used for fancy
 ///datastructures that involve breaking down a [`RootedLambdaPool`] such as
 ///[tries](https://en.wikipedia.org/wiki/Trie).
@@ -253,7 +226,7 @@ mod test {
     #[test]
     fn bead_round_trip_into() -> Result<(), anyhow::Error> {
         for expr_str in TEST_EXPR {
-            let original = RootedLambdaPool::parse(expr_str)?;
+            let original = RootedLambdaPool::<Expr>::parse(expr_str)?;
             let clone = original.clone();
             assert_eq!(clone, RootedLambdaPool::from_beads(original.into_beads())?);
         }
@@ -263,7 +236,7 @@ mod test {
     #[test]
     fn bead_round_trip_as_beads() -> Result<(), anyhow::Error> {
         for expr_str in TEST_EXPR {
-            let original = RootedLambdaPool::parse(expr_str)?;
+            let original = RootedLambdaPool::<Expr>::parse(expr_str)?;
             assert_eq!(original, RootedLambdaPool::from_beads(original.as_beads())?);
         }
         Ok(())
@@ -272,7 +245,7 @@ mod test {
     #[test]
     fn bead_round_trip_unchecked() -> Result<(), anyhow::Error> {
         for expr_str in TEST_EXPR {
-            let original = RootedLambdaPool::parse(expr_str)?;
+            let original = RootedLambdaPool::<Expr>::parse(expr_str)?;
             let safe = RootedLambdaPool::from_beads(original.as_beads())?;
             let unchecked = unsafe { RootedLambdaPool::from_beads_unchecked(original.as_beads()) };
             assert_eq!(safe, unchecked);
@@ -283,7 +256,7 @@ mod test {
     #[test]
     fn bead_missing_root_error() -> Result<(), anyhow::Error> {
         for expr_str in TEST_EXPR {
-            let original = RootedLambdaPool::parse(expr_str)?;
+            let original = RootedLambdaPool::<Expr>::parse(expr_str)?;
             let beads: Vec<_> = original
                 .into_beads()
                 .filter(|b| matches!(b.0, ExpressionBeadInner::Expr(_)))
@@ -299,7 +272,7 @@ mod test {
     #[test]
     fn bead_multiple_roots_error() -> Result<(), anyhow::Error> {
         for expr_str in TEST_EXPR {
-            let original = RootedLambdaPool::parse(expr_str)?;
+            let original = RootedLambdaPool::<Expr>::parse(expr_str)?;
             let mut beads: Vec<_> = original.into_beads().collect();
             let root_clone = beads
                 .iter()
@@ -318,7 +291,7 @@ mod test {
     #[test]
     fn bead_malformed_pool_error() -> Result<(), anyhow::Error> {
         for expr_str in TEST_EXPR {
-            let original = RootedLambdaPool::parse(expr_str)?;
+            let original = RootedLambdaPool::<Expr>::parse(expr_str)?;
             let mut beads: Vec<_> = original.into_beads().collect();
             beads.retain(|b| matches!(b.0, ExpressionBeadInner::Root(_)));
             let result = RootedLambdaPool::from_beads(beads);
@@ -341,7 +314,7 @@ mod test {
     #[test]
     fn bead_root_position_invariance() -> Result<(), anyhow::Error> {
         for expr_str in TEST_EXPR {
-            let original = RootedLambdaPool::parse(expr_str)?;
+            let original = RootedLambdaPool::<Expr>::parse(expr_str)?;
             let (root_beads, expr_beads): (Vec<_>, Vec<_>) = original
                 .as_beads()
                 .partition(|b| matches!(b.0, ExpressionBeadInner::Root(_)));
@@ -367,7 +340,7 @@ mod test {
     #[test]
     #[should_panic(expected = "RootedLambdaPool can only have one root")]
     fn bead_unchecked_panics_on_multiple_roots() {
-        let original = RootedLambdaPool::parse(TEST_EXPR[0]).unwrap();
+        let original = RootedLambdaPool::<Expr>::parse(TEST_EXPR[0]).unwrap();
         let mut beads: Vec<_> = original.into_beads().collect();
         let root_clone = beads
             .iter()

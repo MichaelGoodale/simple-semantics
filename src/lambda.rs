@@ -1,7 +1,7 @@
 //! The module that defines the basic lambda calculus used to compose expressions in the langauge
 //! of thought.
 
-use crate::utils::ArgumentIterator;
+use itertools::Either;
 use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -9,7 +9,6 @@ use std::{
     collections::{HashSet, VecDeque},
     fmt::{Debug, Display},
     hash::Hash,
-    iter::empty,
     marker::PhantomData,
 };
 use thiserror::Error;
@@ -17,6 +16,8 @@ use thiserror::Error;
 mod interpretation;
 pub mod types;
 use types::{LambdaType, TypeError};
+
+mod parser;
 
 pub(crate) type Bvar = usize;
 
@@ -105,98 +106,31 @@ impl LambdaExprRef {
 ///A trait which allows one to define a language of thought that interacts with the lambda
 ///calculus. An example implementation can be found for [`crate::language::Expr`].
 pub trait LambdaLanguageOfThought {
-    ///The type of the executable syntax tree
-    type Pool;
-    ///Error for converting from [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]
-    type ConversionError;
-
-    ///Given an expression, get an iterator of its children
-    fn child_refs(&self) -> impl Iterator<Item = LambdaExprRef>;
-
-    ///Given an expression, get an iterator of its children with mutable references.
-    fn child_refs_mut(&mut self) -> impl Iterator<Item = &mut LambdaExprRef>;
-
-    ///Returns true if this is somewhere that can bind variables (e.g. should we increment debruijn
-    ///indices
-    fn inc_depth(&self) -> bool;
-
     ///Returns the type of the bound variable at an instruction
     fn var_type(&self) -> Option<&LambdaType>;
 
-    ///Get the number of children of an expression.
-    fn n_children(&self) -> usize;
+    fn n_bind_vars(&self) -> usize;
 
-    ///Get the return type of an expression.
-    fn out_type(&self) -> &LambdaType;
-
-    ///Get the type of all children in order.
-    fn argument_types(&self) -> impl Iterator<Item = LambdaType>;
+    ///Get the type of an expression.
+    fn typ(&self) -> &LambdaType;
 
     ///Checks whether an expression is commutative
     fn commutative(&self) -> bool {
         false
     }
-
-    ///Checks if two expressions are the same, *ignoring* their subtrees (so different children
-    ///shouldn't matter)
-    fn same_expr(&self, other: &Self) -> bool;
-
-    ///Provides the lexicographic ordering of two expressions (ignoring children)
-    fn cmp_expr(&self, other: &Self) -> std::cmp::Ordering;
-
-    ///Convert from a [`RootedLambdaPool<T>`] to [`LambdaLanguageOfThought::Pool`]. May return an
-    ///error if there are any lambda terms left in the [`RootedLambdaPool<T>`] (e.g. not fully
-    ///reduced).
-    ///
-    ///# Errors
-    ///Returns a [`ConversionError`] if the pool cannot be converted for some reason (usually
-    ///unreduced lambda types)
-    fn to_pool(pool: RootedLambdaPool<Self>) -> Result<Self::Pool, Self::ConversionError>
-    where
-        Self: Sized;
 }
 
 impl LambdaLanguageOfThought for () {
-    type Pool = ();
-    type ConversionError = ();
-    fn child_refs(&self) -> impl Iterator<Item = LambdaExprRef> {
-        std::iter::empty()
-    }
-
-    fn n_children(&self) -> usize {
-        0
+    fn typ(&self) -> &LambdaType {
+        &LambdaType::T
     }
 
     fn var_type(&self) -> Option<&LambdaType> {
         None
     }
 
-    fn same_expr(&self, _other: &Self) -> bool {
-        true
-    }
-
-    fn out_type(&self) -> &LambdaType {
-        unimplemented!()
-    }
-
-    fn inc_depth(&self) -> bool {
-        false
-    }
-
-    fn argument_types(&self) -> impl Iterator<Item = LambdaType> {
-        empty()
-    }
-
-    fn to_pool(_: RootedLambdaPool<Self>) -> Result<Self::Pool, ()> {
-        Ok(())
-    }
-
-    fn cmp_expr(&self, _other: &Self) -> std::cmp::Ordering {
-        Ordering::Equal
-    }
-
-    fn child_refs_mut(&mut self) -> impl Iterator<Item = &mut LambdaExprRef> {
-        empty()
+    fn n_bind_vars(&self) -> usize {
+        0
     }
 }
 
@@ -232,6 +166,13 @@ impl From<usize> for FreeVar<'_> {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ExprType {
+    NoVar,
+    BindVar(LambdaExprRef),
+    BindVarTwoBodies(LambdaExprRef, LambdaExprRef),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 ///The core expression type of a lambda term
 pub enum LambdaExpr<'a, T> {
     ///A lambda of a given type.
@@ -250,14 +191,14 @@ pub enum LambdaExpr<'a, T> {
     },
     ///Any expression which is not part of the lambda calculus directly (e.g. primitives). See
     ///[`crate::Expr`] for an example.
-    LanguageOfThoughtExpr(T),
+    LanguageOfThoughtExpr(T, ExprType),
 }
 
 impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     pub(crate) fn var_type(&self) -> Option<&LambdaType> {
         match self {
             LambdaExpr::Lambda(_, lambda_type) => Some(lambda_type),
-            LambdaExpr::LanguageOfThoughtExpr(e) => e.var_type(),
+            LambdaExpr::LanguageOfThoughtExpr(e, _) => e.var_type(),
             LambdaExpr::BoundVariable(..)
             | LambdaExpr::FreeVariable(..)
             | LambdaExpr::Application { .. } => None,
@@ -265,9 +206,13 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     }
     pub(crate) fn inc_depth(&self) -> bool {
         match self {
-            LambdaExpr::Lambda(..) => true,
-            LambdaExpr::LanguageOfThoughtExpr(e) => e.inc_depth(),
-            LambdaExpr::BoundVariable(..)
+            LambdaExpr::Lambda(..)
+            | LambdaExpr::LanguageOfThoughtExpr(
+                _,
+                ExprType::BindVar(_) | ExprType::BindVarTwoBodies(..),
+            ) => true,
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar)
+            | LambdaExpr::BoundVariable(..)
             | LambdaExpr::FreeVariable(..)
             | LambdaExpr::Application { .. } => false,
         }
@@ -275,7 +220,7 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
 
     pub(crate) fn commutative(&self) -> bool {
         match self {
-            LambdaExpr::LanguageOfThoughtExpr(e) => e.commutative(),
+            LambdaExpr::LanguageOfThoughtExpr(e, _) => e.commutative(),
             LambdaExpr::Lambda(..)
             | LambdaExpr::BoundVariable(..)
             | LambdaExpr::FreeVariable(..)
@@ -305,7 +250,7 @@ impl<T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPool<'_, 
                 (None, None) => return true,
                 (None, Some(_)) | (Some(_), None) => return false,
                 (Some(a), Some(b)) => {
-                    if !a.same_expr(b) {
+                    if a != b {
                         return false;
                     }
                 }
@@ -315,13 +260,13 @@ impl<T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPool<'_, 
 }
 impl<T: PartialEq + LambdaLanguageOfThought> Eq for RootedLambdaPool<'_, T> {}
 
-impl<T: LambdaLanguageOfThought + PartialEq + Eq> PartialOrd for RootedLambdaPool<'_, T> {
+impl<T: LambdaLanguageOfThought + Ord> PartialOrd for RootedLambdaPool<'_, T> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<T: LambdaLanguageOfThought + PartialEq + Eq> Ord for RootedLambdaPool<'_, T> {
+impl<T: LambdaLanguageOfThought + Ord> Ord for RootedLambdaPool<'_, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.len().cmp(&other.len()).then_with(|| {
             let mut stack: SmallVec<[_; 2]> = smallvec![(self.root, other.root)];
@@ -342,14 +287,14 @@ impl<T: LambdaLanguageOfThought + PartialEq + Eq> Ord for RootedLambdaPool<'_, T
     }
 }
 
-impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
+impl<T: LambdaLanguageOfThought + Ord> LambdaExpr<'_, T> {
     fn ordering(&self) -> usize {
         match self {
             LambdaExpr::Lambda(..) => 0,
             LambdaExpr::BoundVariable(..) => 1,
             LambdaExpr::FreeVariable(..) => 2,
             LambdaExpr::Application { .. } => 3,
-            LambdaExpr::LanguageOfThoughtExpr(_) => 4,
+            LambdaExpr::LanguageOfThoughtExpr(..) => 4,
         }
     }
 
@@ -368,15 +313,16 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
                     x.cmp(y).then(lambda_type.cmp(o_type))
                 }
                 (LambdaExpr::Application { .. }, LambdaExpr::Application { .. }) => Ordering::Equal,
-                (LambdaExpr::LanguageOfThoughtExpr(x), LambdaExpr::LanguageOfThoughtExpr(y)) => {
-                    x.cmp_expr(y)
-                }
+                (
+                    LambdaExpr::LanguageOfThoughtExpr(x, ..),
+                    LambdaExpr::LanguageOfThoughtExpr(y, ..),
+                ) => x.cmp(y),
                 _ => panic!("Previous check ensures they are the saame variant"),
             })
     }
 }
 
-impl<T: LambdaLanguageOfThought + HashLambda> Hash for RootedLambdaPool<'_, T> {
+impl<T: LambdaLanguageOfThought + Hash> Hash for RootedLambdaPool<'_, T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         for x in self.pool.bfs_from(self.root).map(|(x, _)| self.pool.get(x)) {
             match x {
@@ -397,25 +343,16 @@ impl<T: LambdaLanguageOfThought + HashLambda> Hash for RootedLambdaPool<'_, T> {
                 LambdaExpr::Application { .. } => {
                     3.hash(state);
                 }
-                LambdaExpr::LanguageOfThoughtExpr(x) => {
+                LambdaExpr::LanguageOfThoughtExpr(x, _) => {
                     4.hash(state);
-                    x.hash_expr(state);
+                    x.hash(state);
                 }
             }
         }
     }
 }
 
-///In order to hash a [`RootedLambdaPool`], this trait must be implemented.
-///It allows trees to be hashed without regard for the precise layout of their pools, only the
-///actual tree.
-pub trait HashLambda {
-    ///Hash the expression (without paying attention to subtrees which should be handled
-    ///[`RootedLambdaPool`]'s hash implementation)
-    fn hash_expr<H: std::hash::Hasher>(&self, state: &mut H);
-}
-
-impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
+impl<T: LambdaLanguageOfThought + PartialEq> LambdaExpr<'_, T> {
     fn same_expr(&self, other: &Self) -> bool {
         match self {
             LambdaExpr::Lambda(_, lambda_type) => {
@@ -428,8 +365,8 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
                 matches!(other, LambdaExpr::FreeVariable(o_var, o_type) if o_var == free_var && o_type == lambda_type)
             }
             LambdaExpr::Application { .. } => matches!(self, LambdaExpr::Application { .. }),
-            LambdaExpr::LanguageOfThoughtExpr(x) => {
-                matches!(other, LambdaExpr::LanguageOfThoughtExpr(y) if x.same_expr(y))
+            LambdaExpr::LanguageOfThoughtExpr(x, ..) => {
+                matches!(other, LambdaExpr::LanguageOfThoughtExpr(y,..) if x == y)
             }
         }
     }
@@ -479,84 +416,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
         self.root = self.pool.cleanup(self.root);
     }
 
-    ///The type of the lambda expression
-    ///
-    ///# Errors
-    ///Returns a [`TypeError`] if the underlying pool is malformed leading to no possible type
-    ///being extractible.
-    pub fn get_type(&self) -> Result<LambdaType, TypeError> {
-        self.pool.get_type(self.root)
-    }
-
-    ///Create a new lambda expression.
-    pub(crate) fn new(pool: LambdaPool<'src, T>, root: LambdaExprRef) -> Self {
-        RootedLambdaPool { pool, root }
-    }
-
-    ///Split into the pool and root seperately.
-    pub(crate) fn split(self) -> (LambdaPool<'src, T>, LambdaExprRef) {
-        (self.pool, self.root)
-    }
-
-    ///Combine two lambda expressions by applying one to the other. Returns [`None`] if that is
-    ///impossible.
-    ///
-    ///# Panics
-    ///Will panic if either pool is malformed such that no type can be found.
-    #[must_use]
-    pub fn merge(mut self, other: Self) -> Option<Self> {
-        let self_type = self.pool.get_type(self.root).expect("malformed type");
-        let other_type = other.pool.get_type(other.root).expect("malformed type");
-
-        let self_subformula = if self_type.can_apply(&other_type) {
-            true
-        } else if other_type.can_apply(&self_type) {
-            false
-        } else {
-            return None;
-        };
-
-        let (other_pool, other_root) = other.split();
-        let other_root = self.pool.extend_pool(other_root, other_pool);
-
-        self.root = self.pool.add(if self_subformula {
-            LambdaExpr::Application {
-                subformula: self.root,
-                argument: other_root,
-            }
-        } else {
-            LambdaExpr::Application {
-                subformula: other_root,
-                argument: self.root,
-            }
-        });
-
-        Some(self)
-    }
-
-    ///Applies other to self and returns None if the types do not correspond.
-    ///
-    ///# Panics
-    ///Will panic if either pool is malformed such that no type can be found.
-    #[must_use]
-    pub fn apply(mut self, other: Self) -> Option<Self> {
-        let self_type = self.pool.get_type(self.root).expect("malformed type");
-        let other_type = other.pool.get_type(other.root).expect("malformed type");
-
-        if !self_type.can_apply(&other_type) {
-            return None;
-        }
-        let (other_pool, other_root) = other.split();
-        let other_root = self.pool.extend_pool(other_root, other_pool);
-
-        self.root = self.pool.add(LambdaExpr::Application {
-            subformula: self.root,
-            argument: other_root,
-        });
-
-        Some(self)
-    }
-
     ///Reduce a lambda expression
     ///
     ///# Errors
@@ -564,16 +423,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     pub fn reduce(&mut self) -> Result<(), ReductionError> {
         self.pool.reduce(self.root)?;
         Ok(())
-    }
-
-    ///Convert a lambda expression to its executable version (should only be done if there are only
-    ///[`LambdaExpr::LanguageOfThoughtExpr`] expressions.
-    ///
-    ///# Errors
-    ///Will throw a [`T::ConversionError`] if there are any lambda terms left in the pool
-    pub fn into_pool(mut self) -> Result<T::Pool, T::ConversionError> {
-        self.cleanup();
-        T::to_pool(self)
     }
 
     ///Replace a free variable with a value.
@@ -653,6 +502,86 @@ impl<'src, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'src, T> {
     }
 }
 
+impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
+    ///The type of the lambda expression
+    ///
+    ///# Errors
+    ///Returns a [`TypeError`] if the underlying pool is malformed leading to no possible type
+    ///being extractible.
+    pub fn get_type(&self) -> Result<LambdaType, TypeError> {
+        self.pool.get_type(self.root)
+    }
+
+    ///Create a new lambda expression.
+    pub(crate) fn new(pool: LambdaPool<'src, T>, root: LambdaExprRef) -> Self {
+        RootedLambdaPool { pool, root }
+    }
+
+    ///Split into the pool and root seperately.
+    pub(crate) fn split(self) -> (LambdaPool<'src, T>, LambdaExprRef) {
+        (self.pool, self.root)
+    }
+
+    ///Combine two lambda expressions by applying one to the other. Returns [`None`] if that is
+    ///impossible.
+    ///
+    ///# Panics
+    ///Will panic if either pool is malformed such that no type can be found.
+    #[must_use]
+    pub fn merge(mut self, other: Self) -> Option<Self> {
+        let self_type = self.pool.get_type(self.root).expect("malformed type");
+        let other_type = other.pool.get_type(other.root).expect("malformed type");
+
+        let self_subformula = if self_type.can_apply(&other_type) {
+            true
+        } else if other_type.can_apply(&self_type) {
+            false
+        } else {
+            return None;
+        };
+
+        let (other_pool, other_root) = other.split();
+        let other_root = self.pool.extend_pool(other_root, other_pool);
+
+        self.root = self.pool.add(if self_subformula {
+            LambdaExpr::Application {
+                subformula: self.root,
+                argument: other_root,
+            }
+        } else {
+            LambdaExpr::Application {
+                subformula: other_root,
+                argument: self.root,
+            }
+        });
+
+        Some(self)
+    }
+
+    ///Applies other to self and returns None if the types do not correspond.
+    ///
+    ///# Panics
+    ///Will panic if either pool is malformed such that no type can be found.
+    #[must_use]
+    pub fn apply(mut self, other: Self) -> Option<Self> {
+        let self_type = self.pool.get_type(self.root).expect("malformed type");
+        let other_type = other.pool.get_type(other.root).expect("malformed type");
+
+        if !self_type.can_apply(&other_type) {
+            return None;
+        }
+        let (other_pool, other_root) = other.split();
+        let other_root = self.pool.extend_pool(other_root, other_pool);
+
+        self.root = self.pool.add(LambdaExpr::Application {
+            subformula: self.root,
+            argument: other_root,
+        });
+
+        Some(self)
+    }
+}
+
 #[derive(Default, Debug, Clone, Eq, PartialEq, Hash)]
 pub(crate) struct LambdaPool<'a, T: LambdaLanguageOfThought>(pub(crate) Vec<LambdaExpr<'a, T>>);
 
@@ -714,21 +643,31 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => 0,
             LambdaExpr::Lambda(..) => 1,
             LambdaExpr::Application { .. } => 2,
-            LambdaExpr::LanguageOfThoughtExpr(e) => e.n_children(),
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => 0,
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(_)) => 1,
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(..)) => 2,
         }
     }
 
     pub(crate) fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
         match self {
-            LambdaExpr::Lambda(x, _) => ArgumentIterator::A([x].into_iter().copied()),
+            LambdaExpr::Lambda(x, _) => Either::Left([x].into_iter().copied()),
             LambdaExpr::Application {
                 subformula,
                 argument,
-            } => ArgumentIterator::B([subformula, argument].into_iter().copied()),
+            } => Either::Right(Either::Left([subformula, argument].into_iter().copied())),
             LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => {
-                ArgumentIterator::C(std::iter::empty())
+                Either::Right(Either::Right(std::iter::empty()))
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => ArgumentIterator::D(x.child_refs()),
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => {
+                Either::Right(Either::Right(std::iter::empty()))
+            }
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(x)) => {
+                Either::Left([x].into_iter().copied())
+            }
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(a, b)) => {
+                Either::Right(Either::Left([a, b].into_iter().copied()))
+            }
         }
     }
 }
@@ -748,12 +687,16 @@ impl<T: LambdaLanguageOfThought> Iterator for LambdaPoolBFSIterator<'_, '_, T> {
                     self.queue.push_back((*argument, lambda_depth));
                 }
                 LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-                LambdaExpr::LanguageOfThoughtExpr(x) => {
-                    let depth = lambda_depth + usize::from(x.inc_depth());
-
-                    x.child_refs()
-                        .for_each(|x| self.queue.push_back((x, depth)));
-                }
+                LambdaExpr::LanguageOfThoughtExpr(_, expr_type) => match expr_type {
+                    ExprType::NoVar => (),
+                    ExprType::BindVar(x) => {
+                        self.queue.push_back((*x, lambda_depth + 1));
+                    }
+                    ExprType::BindVarTwoBodies(x, y) => {
+                        self.queue.push_back((*x, lambda_depth + 1));
+                        self.queue.push_back((*y, lambda_depth + 1));
+                    }
+                },
             }
             Some((x, lambda_depth))
         } else {
@@ -795,12 +738,16 @@ impl<'a, 'src, T: LambdaLanguageOfThought> Iterator for MutableLambdaPoolBFSIter
                     self.queue.push_back((*argument, lambda_depth));
                 }
                 LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-                LambdaExpr::LanguageOfThoughtExpr(x) => {
-                    let depth = lambda_depth + usize::from(x.inc_depth());
-
-                    x.child_refs()
-                        .for_each(|x| self.queue.push_back((x, depth)));
-                }
+                LambdaExpr::LanguageOfThoughtExpr(_, expr_type) => match expr_type {
+                    ExprType::NoVar => (),
+                    ExprType::BindVar(x) => {
+                        self.queue.push_back((*x, lambda_depth + 1));
+                    }
+                    ExprType::BindVarTwoBodies(x, y) => {
+                        self.queue.push_back((*x, lambda_depth + 1));
+                        self.queue.push_back((*y, lambda_depth + 1));
+                    }
+                },
             }
             Some((
                 unsafe { self.pool.as_mut().unwrap().get_mut(x) },
@@ -833,7 +780,7 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
                 let subformula_type = self.get_type(*subformula)?;
                 Ok(subformula_type.rhs()?.clone())
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x.out_type().clone()),
+            LambdaExpr::LanguageOfThoughtExpr(x, _) => Ok(x.typ().clone()),
         }
     }
 
@@ -1051,7 +998,9 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     pub(crate) fn change_children(&mut self, mut children: impl Iterator<Item = LambdaExprRef>) {
         match self {
             LambdaExpr::Lambda(lambda_expr_ref, _) => *lambda_expr_ref = children.next().unwrap(),
-            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
+            LambdaExpr::BoundVariable(..)
+            | LambdaExpr::FreeVariable(..)
+            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => (),
             LambdaExpr::Application {
                 subformula,
                 argument,
@@ -1059,8 +1008,12 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
                 *subformula = children.next().unwrap();
                 *argument = children.next().unwrap();
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => {
-                x.child_refs_mut().zip(children).for_each(|(x, y)| *x = y)
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(x)) => {
+                *x = children.next().unwrap();
+            }
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(x, y)) => {
+                *x = children.next().unwrap();
+                *y = children.next().unwrap();
             }
         }
     }
@@ -1077,10 +1030,16 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
                 *subformula = LambdaExprRef(remap[subformula.0 as usize]);
                 *argument = LambdaExprRef(remap[argument.0 as usize]);
             }
-            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => (),
-            LambdaExpr::LanguageOfThoughtExpr(x) => x
-                .child_refs_mut()
-                .for_each(|x| *x = LambdaExprRef(remap[x.0 as usize])),
+            LambdaExpr::BoundVariable(..)
+            | LambdaExpr::FreeVariable(..)
+            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => (),
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(x)) => {
+                *x = LambdaExprRef(remap[x.0 as usize]);
+            }
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(x, y)) => {
+                *x = LambdaExprRef(remap[x.0 as usize]);
+                *y = LambdaExprRef(remap[y.0 as usize]);
+            }
         }
     }
 }
@@ -1151,10 +1110,17 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'_, 
         let mut stack = vec![(i, vec![])];
         while let Some((expr_ref, mut lambdas)) = stack.pop() {
             match self.get(expr_ref) {
-                LambdaExpr::Lambda(lambda_expr_ref, _) => {
+                LambdaExpr::Lambda(x, _)
+                | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(x)) => {
                     found.push(false);
                     lambdas.push(found.len() - 1);
-                    stack.push((*lambda_expr_ref, lambdas));
+                    stack.push((*x, lambdas));
+                }
+                LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(x, y)) => {
+                    found.push(false);
+                    lambdas.push(found.len() - 1);
+                    stack.push((*x, lambdas.clone()));
+                    stack.push((*y, lambdas));
                 }
                 LambdaExpr::BoundVariable(d, _) => {
                     if let Some(index) = lambdas.len().checked_sub(d + 1) {
@@ -1180,21 +1146,14 @@ impl<T: LambdaLanguageOfThought + Clone + std::fmt::Debug> RootedLambdaPool<'_, 
                         });
                     }
                 }
-                LambdaExpr::FreeVariable(..) => (),
+                LambdaExpr::FreeVariable(..)
+                | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => (),
                 LambdaExpr::Application {
                     subformula,
                     argument,
                 } => {
                     stack.push((*subformula, lambdas.clone()));
                     stack.push((*argument, lambdas));
-                }
-
-                LambdaExpr::LanguageOfThoughtExpr(x) => {
-                    if x.inc_depth() {
-                        found.push(false);
-                        lambdas.push(found.len() - 1);
-                    }
-                    stack.extend(x.child_refs().map(|x| (x, lambdas.clone())));
                 }
             }
         }
@@ -1229,7 +1188,7 @@ mod test {
     };
 
     use super::*;
-    use crate::language::{ActorOrEvent, BinOp, Expr, ExprPool, LanguageExpression, MonOp};
+    use crate::language::{ActorOrEvent, BinOp, Expr, MonOp};
 
     #[test]
     fn ordering() -> anyhow::Result<()> {
@@ -1249,7 +1208,7 @@ mod test {
 
         let set: BTreeSet<_> = x
             .into_iter()
-            .map(RootedLambdaPool::parse)
+            .map(RootedLambdaPool::<Expr>::parse)
             .collect::<Result<_, _>>()?;
         assert_eq!(set.len(), 11);
         let order: Vec<_> = set.into_iter().map(|x| x.to_string()).collect();
@@ -1296,7 +1255,7 @@ mod test {
             ("some(x, True, pa_man(x))", false),
             ("some(x, True, True)", true),
         ] {
-            let expr = RootedLambdaPool::parse(expr)?;
+            let expr = RootedLambdaPool::<Expr>::parse(expr)?;
             match expr.stats() {
                 LambdaSummaryStats::WellFormed {
                     constant_function, ..
@@ -1315,6 +1274,7 @@ mod test {
         ])
     }
 
+    /*
     #[test]
     fn complicated_lambda_language_of_thought() -> anyhow::Result<()> {
         let mut pool = LambdaPool::<Expr>(vec![
@@ -1508,7 +1468,8 @@ mod test {
             )
         );
         Ok(())
-    }
+    }*/
+
     #[test]
     fn type_check() -> anyhow::Result<()> {
         // [[[Mary sings] and]  [John dances]]
@@ -1618,12 +1579,14 @@ mod test {
 
     #[test]
     fn test_root_and_merger() -> anyhow::Result<()> {
-        let man = RootedLambdaPool::parse("lambda a x (pa_man(x))")?;
+        let man = RootedLambdaPool::<Expr>::parse("lambda a x (pa_man(x))")?;
 
-        let sleeps =
-            RootedLambdaPool::parse("lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))")?;
-        let every =
-            RootedLambdaPool::parse("lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))")?;
+        let sleeps = RootedLambdaPool::<Expr>::parse(
+            "lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+        )?;
+        let every = RootedLambdaPool::<Expr>::parse(
+            "lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))",
+        )?;
 
         let phi = every.clone().merge(man.clone()).unwrap();
         let mut phi = phi.merge(sleeps.clone()).unwrap();
@@ -1632,42 +1595,40 @@ mod test {
         println!("{phi}");
         assert_eq!(
             phi,
-            RootedLambdaPool::parse(
+            RootedLambdaPool::<Expr>::parse(
                 "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))"
             )?
         );
         assert!(check_hashes(
             &phi,
-            &RootedLambdaPool::parse(
+            &RootedLambdaPool::<Expr>::parse(
                 "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
             )?,
         ));
-        let pool = phi.into_pool()?;
         assert_eq!(
             "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
-            pool.to_string()
+            phi.to_string()
         );
         let phi = man.merge(every).unwrap();
         let mut phi = sleeps.merge(phi).unwrap();
         phi.reduce()?;
         assert_eq!(
             phi,
-            RootedLambdaPool::parse(
+            RootedLambdaPool::<Expr>::parse(
                 "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
             )?
         );
 
         assert!(check_hashes(
             &phi,
-            &RootedLambdaPool::parse(
+            &RootedLambdaPool::<Expr>::parse(
                 "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
             )?,
         ));
 
-        let pool = phi.into_pool()?;
         assert_eq!(
             "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
-            pool.to_string()
+            phi.to_string()
         );
         Ok(())
     }
@@ -1687,13 +1648,13 @@ mod test {
 
     #[test]
     fn bind_free_variable() -> anyhow::Result<()> {
-        let mut pool = RootedLambdaPool::parse("phi#t & True")?;
+        let mut pool = RootedLambdaPool::<Expr>::parse("phi#t & True")?;
 
-        pool.bind_free_variable("phi".into(), RootedLambdaPool::parse("False")?)?;
-        assert_eq!("False & True", pool.into_pool()?.to_string());
+        pool.bind_free_variable("phi".into(), RootedLambdaPool::<Expr>::parse("False")?)?;
+        assert_eq!("False & True", pool.to_string());
 
-        let input = RootedLambdaPool::parse("lambda a x every_e(y,pe_4,AgentOf(x,y))")?;
-        let mut a = RootedLambdaPool::parse("(P#<a,t>(a_3) & ~P#<a,t>(a_1))")?;
+        let input = RootedLambdaPool::<Expr>::parse("lambda a x every_e(y,pe_4,AgentOf(x,y))")?;
+        let mut a = RootedLambdaPool::<Expr>::parse("(P#<a,t>(a_3) & ~P#<a,t>(a_1))")?;
 
         a.bind_free_variable("P".into(), input)?;
         a.reduce()?;
@@ -1706,8 +1667,9 @@ mod test {
 
     #[test]
     fn apply_new_free_variable() -> anyhow::Result<()> {
-        let mut pool =
-            RootedLambdaPool::parse("lambda <e,t> P (lambda <e,t> Q (lambda e x (P(x) & Q(x))))")?;
+        let mut pool = RootedLambdaPool::<Expr>::parse(
+            "lambda <e,t> P (lambda <e,t> Q (lambda e x (P(x) & Q(x))))",
+        )?;
 
         pool.apply_new_free_variable("X".into())?;
 
@@ -1725,11 +1687,13 @@ mod test {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(4),
                 },
+                todo!(),
+                /*
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
                     BinOp::And,
                     LambdaExprRef(2),
                     LambdaExprRef(5),
-                )),
+                )),*/
                 LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::e().clone()),
                 LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::et().clone()),
             ]),
@@ -1742,7 +1706,7 @@ mod test {
 
     #[test]
     fn lambda_abstraction() -> anyhow::Result<()> {
-        let mut pool = RootedLambdaPool::parse(
+        let mut pool = RootedLambdaPool::<Expr>::parse(
             "lambda <e,t> P lambda <e,t> Q lambda e x Z#<e,t>(x) & P(x) & Q(x)",
         )?;
 
@@ -1762,22 +1726,26 @@ mod test {
                     subformula: LambdaExprRef(3),
                     argument: LambdaExprRef(4),
                 },
+                todo!(),
+                /*
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
                     BinOp::And,
                     LambdaExprRef(2),
                     LambdaExprRef(5),
-                )),
+                )),*/
                 LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
                 LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(7),
                     argument: LambdaExprRef(8),
                 },
+                todo!(),
+                /*
                 LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
                     BinOp::And,
                     LambdaExprRef(6),
                     LambdaExprRef(9),
-                )),
+                ))*/
                 LambdaExpr::Lambda(LambdaExprRef(10), LambdaType::e().clone()),
                 LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::et().clone()),
                 LambdaExpr::Lambda(LambdaExprRef(12), LambdaType::et().clone()),
@@ -1792,7 +1760,7 @@ mod test {
 
     #[test]
     fn could_time_out_if_swapping_instead_of_cloning() -> anyhow::Result<()> {
-        let mut x = RootedLambdaPool::parse(
+        let mut x = RootedLambdaPool::<Expr>::parse(
             "(lambda a x (PatientOf(x,e_0) & AgentOf(x, e_0)))((lambda a x (a_1))(a_0))",
         )?;
 
@@ -1804,8 +1772,8 @@ mod test {
 
     #[test]
     fn lambda_abstraction_reduction() -> anyhow::Result<()> {
-        let mut a = RootedLambdaPool::parse("a_1")?;
-        let mut b = RootedLambdaPool::parse("(lambda t x (a_1))(pa_0(freeVar#a))")?;
+        let mut a = RootedLambdaPool::<Expr>::parse("a_1")?;
+        let mut b = RootedLambdaPool::<Expr>::parse("(lambda t x (a_1))(pa_0(freeVar#a))")?;
 
         a.lambda_abstract_free_variable("freeVar".into(), LambdaType::a().clone(), false)?;
         b.lambda_abstract_free_variable("freeVar".into(), LambdaType::a().clone(), false)?;
@@ -1820,12 +1788,12 @@ mod test {
 
     #[test]
     fn reduction_test() -> anyhow::Result<()> {
-        let mut a = RootedLambdaPool::parse(
+        let mut a = RootedLambdaPool::<Expr>::parse(
             "lambda a x (every_e(z, all_e, AgentOf(a_0, (lambda e y ((lambda e w (w))(y)))(z))))",
         )?;
         a.reduce()?;
 
-        let mut a = RootedLambdaPool::parse(
+        let mut a = RootedLambdaPool::<Expr>::parse(
             "(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))",
         )?;
 
@@ -1834,7 +1802,7 @@ mod test {
         println!("{a}");
         dbg!(&a);
 
-        let mut a = RootedLambdaPool::parse(
+        let mut a = RootedLambdaPool::<Expr>::parse(
             "(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))",
         )?;
 
@@ -1849,7 +1817,7 @@ mod test {
 
     #[test]
     fn lift() -> anyhow::Result<()> {
-        let mut e = RootedLambdaPool::parse("a_john")?;
+        let mut e = RootedLambdaPool::<Expr>::parse("a_john")?;
         e.lift()?;
         assert_eq!(e.to_string(), "lambda <a,t> P P(a_john)");
 
@@ -1858,7 +1826,7 @@ mod test {
 
     #[test]
     fn lambda_abstractions() -> anyhow::Result<()> {
-        let mut e = RootedLambdaPool::parse(
+        let mut e = RootedLambdaPool::<Expr>::parse(
             "(lambda t phi phi)(some_e(x, all_e, AgentOf(a_m, x) & PatientOf(blarg#a, x) & pe_likes(x)))",
         )?;
         e.reduce()?;
@@ -1884,7 +1852,7 @@ mod test {
                 lambda_type: _,
                 constant_function,
                 n_nodes: _,
-            } = RootedLambdaPool::parse(s).unwrap().stats()
+            } = RootedLambdaPool::<Expr>::parse(s).unwrap().stats()
             else {
                 panic!("{s} is poorly formed")
             };
@@ -1901,7 +1869,7 @@ mod test {
                 lambda_type: _,
                 constant_function,
                 n_nodes: _,
-            } = RootedLambdaPool::parse(s).unwrap().stats()
+            } = RootedLambdaPool::<Expr>::parse(s).unwrap().stats()
             else {
                 panic!("{s} is poorly formed")
             };

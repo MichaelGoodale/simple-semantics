@@ -1,12 +1,8 @@
 #![expect(dead_code)]
-use itertools::Either;
 
 use crate::{
     Actor, Entity, Event, Scenario,
-    lambda::{
-        FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-        types::LambdaType,
-    },
+    lambda::{FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
     language::{
         ActorOrEvent, BinOp, Constant,
         Expr::{self},
@@ -98,8 +94,23 @@ impl<'src> InnerValue<'src> {
     }
 }
 
+use thiserror::Error;
+#[derive(Debug, Error)]
+#[error("Not the desired type!")]
+pub struct ValueConversionError;
+
 #[derive(Debug, Clone)]
-struct Value<'a>(Vec<InnerValue<'a>>);
+pub struct Value<'a>(Vec<InnerValue<'a>>);
+
+impl TryFrom<Value<'_>> for bool {
+    type Error = ValueConversionError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        value
+            .into_base_value()
+            .and_then(|x| x.as_bool())
+            .ok_or(ValueConversionError)
+    }
+}
 
 impl<'src> Value<'src> {
     fn value_at<'a>(&'a self, id: ValueId) -> ValueRef<'a, 'src> {
@@ -139,8 +150,6 @@ impl<'src> Expr<'src> {
             Expr::Quantifier {
                 quantifier,
                 var_type,
-                restrictor,
-                subformula,
             } => todo!(),
             Expr::Variable(variable) => todo!(),
             Expr::Actor(a) => BaseValue::Actor(a),
@@ -155,19 +164,19 @@ impl<'src> Expr<'src> {
                     _ => panic!("impossible bc of prior check!"),
                 })
             }
-            Expr::Binary(BinOp::And, ..) => BaseValue::Bool(arguments.iter().all(|x| {
+            Expr::Binary(BinOp::And) => BaseValue::Bool(arguments.iter().all(|x| {
                 x.to_base_value()
                     .unwrap()
                     .as_bool()
                     .expect("Type inference error!")
             })),
-            Expr::Binary(BinOp::Or, ..) => BaseValue::Bool(arguments.iter().any(|x| {
+            Expr::Binary(BinOp::Or) => BaseValue::Bool(arguments.iter().any(|x| {
                 x.to_base_value()
                     .unwrap()
                     .as_bool()
                     .expect("Type inference error!")
             })),
-            Expr::Unary(MonOp::Not, ..) => BaseValue::Bool(
+            Expr::Unary(MonOp::Not) => BaseValue::Bool(
                 !arguments
                     .first()
                     .unwrap()
@@ -176,7 +185,7 @@ impl<'src> Expr<'src> {
                     .as_bool()
                     .unwrap(),
             ),
-            Expr::Unary(MonOp::Property(p, a_or_e), _) => {
+            Expr::Unary(MonOp::Property(p, a_or_e)) => {
                 let p = scenario.properties.get(p)?;
                 let arg = arguments.first().unwrap();
 
@@ -210,7 +219,7 @@ impl<'src> Expr<'src> {
                 }
             }
 
-            Expr::Unary(MonOp::Iota(a_o_e), _) => todo!(),
+            Expr::Unary(MonOp::Iota(a_o_e)) => todo!(),
             Expr::Constant(Constant::Everyone) => BaseValue::ActorSet(scenario.actors.clone()),
             Expr::Constant(Constant::EveryEvent) => {
                 BaseValue::EventSet(scenario.events().collect())
@@ -250,7 +259,7 @@ impl<'src> Expr<'src> {
 }
 
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
-    fn interp(&self, scenario: &Scenario<'src>) -> Option<Value<'src>> {
+    pub fn interp(&self, scenario: &Scenario<'src>) -> Option<Value<'src>> {
         let mut stack = vec![ValueBuilder::Search(self.root)];
         let mut node_to_value_id: Vec<Option<ValueId>> = vec![None; self.pool.0.len()];
         let mut value = Value(vec![]);
@@ -289,7 +298,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                             subformula,
                             argument,
                         } => todo!(),
-                        LambdaExpr::LanguageOfThoughtExpr(x) => {
+                        LambdaExpr::LanguageOfThoughtExpr(x, y) => {
                             let children = node
                                 .get_children()
                                 .map(|x| node_to_value_id[x.0 as usize].map(|x| value.value_at(x)))

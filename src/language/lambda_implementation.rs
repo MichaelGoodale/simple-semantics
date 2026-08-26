@@ -1,20 +1,8 @@
-use crate::{lambda::HashLambda, utils::ArgumentIterator};
 use ahash::HashMap;
-use itertools::Either;
-use std::{fmt::Write, hash::Hash, iter::empty};
 use thiserror::Error;
 
-use super::{
-    ActorOrEvent, BinOp, Constant, Expr, ExprPool, LambdaParseError, LanguageExpression, MonOp,
-    Variable,
-};
-use crate::{
-    lambda::{
-        LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, ReductionError,
-        RootedLambdaPool, types::LambdaType,
-    },
-    language::parser::parse_lot,
-};
+use super::{ActorOrEvent, BinOp, Expr, MonOp};
+use crate::lambda::{LambdaLanguageOfThought, ReductionError, RootedLambdaPool, types::LambdaType};
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaConversionError {
@@ -25,27 +13,9 @@ pub enum LambdaConversionError {
 }
 
 impl<'a> LambdaLanguageOfThought for Expr<'a> {
-    type Pool = LanguageExpression<'a>;
-    type ConversionError = LambdaConversionError;
-
-    fn n_children(&self) -> usize {
-        match self {
-            Expr::Quantifier { .. } | Expr::Binary(..) => 2,
-            Expr::Unary(..) => 1,
-            Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => 0,
-        }
-    }
-
-    fn inc_depth(&self) -> bool {
-        matches!(
-            self,
-            Expr::Quantifier { .. } | Expr::Unary(MonOp::Iota(_), _)
-        )
-    }
-
     fn var_type(&self) -> Option<&LambdaType> {
         match self {
-            Expr::Quantifier { var_type, .. } | Expr::Unary(MonOp::Iota(var_type), _) => {
+            Expr::Quantifier { var_type, .. } | Expr::Unary(MonOp::Iota(var_type)) => {
                 match var_type {
                     ActorOrEvent::Actor => Some(LambdaType::a()),
                     ActorOrEvent::Event => Some(LambdaType::e()),
@@ -54,207 +24,29 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             _ => None,
         }
     }
-    fn child_refs(&self) -> impl Iterator<Item = LambdaExprRef> {
-        match self {
-            Expr::Quantifier {
-                restrictor,
-                subformula,
-                ..
-            } => Either::Left([restrictor, subformula].into_iter()),
-            Expr::Binary(_, x, y) => Either::Left([x, y].into_iter()),
-            Expr::Unary(_, x) => Either::Right(Either::Left(std::iter::once(x))),
-            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Variable(_) => {
-                Either::Right(Either::Right(std::iter::empty()))
-            }
-        }
-        .copied()
-    }
-
-    fn out_type(&self) -> &LambdaType {
-        match self {
-            Expr::Quantifier { .. } => LambdaType::t(),
-            Expr::Variable(Variable::Actor(_)) | Expr::Actor(_) => LambdaType::a(),
-            Expr::Variable(Variable::Event(_)) | Expr::Event(_) => LambdaType::e(),
-            Expr::Binary(bin, ..) => match bin {
-                BinOp::AgentOf | BinOp::PatientOf | BinOp::And | BinOp::Or => LambdaType::t(),
-            },
-            Expr::Unary(mon_op, _) => match mon_op {
-                MonOp::Property(_, _) | MonOp::Not => LambdaType::t(),
-                MonOp::Iota(ActorOrEvent::Actor) => LambdaType::a(),
-                MonOp::Iota(ActorOrEvent::Event) => LambdaType::e(),
-            },
-            Expr::Constant(constant) => match constant {
-                Constant::Everyone | Constant::Property(_, ActorOrEvent::Actor) => LambdaType::at(),
-                Constant::EveryEvent | Constant::Property(_, ActorOrEvent::Event) => {
-                    LambdaType::et()
-                }
-                Constant::Contradiction | Constant::Tautology => LambdaType::t(),
-            },
-        }
-    }
-
-    fn same_expr(&self, other: &Self) -> bool {
-        match self {
-            Expr::Quantifier {
-                quantifier: q1,
-                var_type: v1,
-                ..
-            } => {
-                matches!(other, Expr::Quantifier{ quantifier: q2, var_type: v2, .. } if q1==q2 && v1==v2)
-            }
-            Expr::Variable(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Constant(_) => {
-                self == other
-            }
-            Expr::Binary(b1, ..) => matches!(other, Expr::Binary(b2, ..) if b1==b2),
-            Expr::Unary(m1, _) => matches!(other, Expr::Unary(m2,_) if m1==m2),
-        }
-    }
-
-    fn to_pool(pool: RootedLambdaPool<Self>) -> Result<Self::Pool, Self::ConversionError> {
-        let processed_pool = pool
-            .pool
-            .0
-            .into_iter()
-            .map(|x| match x {
-                LambdaExpr::LanguageOfThoughtExpr(x) => Ok(x),
-                LambdaExpr::BoundVariable(x, LambdaType::A) => {
-                    Ok(Expr::Variable(Variable::Actor(u32::try_from(x).unwrap())))
-                }
-                LambdaExpr::BoundVariable(x, LambdaType::E) => {
-                    Ok(Expr::Variable(Variable::Event(u32::try_from(x).unwrap())))
-                }
-                _ => Err(LambdaConversionError::StillHasLambdaTerms),
-            })
-            .collect::<Result<Vec<_>, LambdaConversionError>>()?;
-
-        Ok(LanguageExpression {
-            pool: ExprPool(processed_pool),
-            start: LambdaExprRef(pool.root.0),
-        })
-    }
-
-    fn argument_types(&self) -> impl Iterator<Item = LambdaType> {
-        match self {
-            Expr::Quantifier { .. } => {
-                ArgumentIterator::A([LambdaType::t().clone(), LambdaType::t().clone()].into_iter())
-            }
-            Expr::Binary(b, _, _) => {
-                ArgumentIterator::B(b.get_argument_type().into_iter().cloned())
-            }
-            Expr::Unary(mon_op, _) => {
-                ArgumentIterator::C([mon_op.get_argument_type().clone()].into_iter())
-            }
-            Expr::Variable(Variable::Event(_) | Variable::Actor(_))
-            | Expr::Actor(_)
-            | Expr::Event(_)
-            | Expr::Constant(_) => ArgumentIterator::D(empty()),
-        }
-    }
 
     fn commutative(&self) -> bool {
         matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
     }
 
-    fn cmp_expr(&self, other: &Self) -> std::cmp::Ordering {
-        self.ordering()
-            .cmp(&other.ordering())
-            .then_with(|| match (self, other) {
-                (
-                    Expr::Quantifier {
-                        quantifier,
-                        var_type,
-                        ..
-                    },
-                    Expr::Quantifier {
-                        quantifier: o_q,
-                        var_type: o_type,
-                        ..
-                    },
-                ) => var_type.cmp(o_type).then(quantifier.cmp(o_q)),
-                (Expr::Variable(x), Expr::Variable(y)) => x.cmp(y),
-                (Expr::Actor(x), Expr::Actor(y)) => x.cmp(y),
-                (Expr::Event(x), Expr::Event(y)) => x.cmp(y),
-                (Expr::Binary(x, ..), Expr::Binary(y, ..)) => x.cmp(y),
-                (Expr::Unary(x, _), Expr::Unary(y, _)) => x.cmp(y),
-                (Expr::Constant(x), Expr::Constant(y)) => x.cmp(y),
-                _ => panic!("Any non identical types already filtered"),
-            })
-    }
-
-    fn child_refs_mut(&mut self) -> impl Iterator<Item = &mut LambdaExprRef> {
+    fn n_bind_vars(&self) -> usize {
         match self {
-            Expr::Quantifier {
-                restrictor,
-                subformula,
-                ..
-            } => Either::Left([restrictor, subformula].into_iter()),
-            Expr::Binary(_, x, y) => Either::Left([x, y].into_iter()),
-            Expr::Unary(_, x) => Either::Right(Either::Left(std::iter::once(x))),
-            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) | Expr::Variable(_) => {
-                Either::Right(Either::Right(std::iter::empty()))
-            }
+            Expr::Quantifier { .. } => 2,
+            Expr::Unary(MonOp::Iota(_), ..) => 1,
+            _ => 0,
         }
     }
-}
 
-impl Expr<'_> {
-    fn ordering(&self) -> usize {
-        match self {
-            Expr::Quantifier { .. } => 0,
-            Expr::Variable(_) => 1,
-            Expr::Actor(_) => 2,
-            Expr::Event(_) => 3,
-            Expr::Binary(..) => 4,
-            Expr::Unary(..) => 5,
-            Expr::Constant(_) => 6,
-        }
-    }
-}
-
-impl HashLambda for Expr<'_> {
-    fn hash_expr<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            Expr::Quantifier {
-                quantifier,
-                var_type,
-                ..
-            } => {
-                0.hash(state);
-                quantifier.hash(state);
-                var_type.hash(state);
-            }
-            Expr::Variable(variable) => {
-                1.hash(state);
-                variable.hash(state);
-            }
-            Expr::Actor(a) => {
-                2.hash(state);
-                a.hash(state);
-            }
-            Expr::Event(b) => {
-                3.hash(state);
-                b.hash(state);
-            }
-            Expr::Binary(bin_op, ..) => {
-                4.hash(state);
-                bin_op.hash(state);
-            }
-            Expr::Unary(mon_op, _) => {
-                5.hash(state);
-                mon_op.hash(state);
-            }
-            Expr::Constant(constant) => {
-                6.hash(state);
-                constant.hash(state);
-            }
-        }
+    fn typ(&self) -> &LambdaType {
+        todo!()
     }
 }
 
 impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (string, _) = self.string(self.root(), VarContext::default(), false);
-        write!(f, "{string}")
+        todo!();
+        //let (string, _) = self.string(self.root(), VarContext::default(), false);
+        //write!(f, "{string}")
     }
 }
 
@@ -330,22 +122,6 @@ impl VarContext {
             *self.get_map(Some(t)).get(&(self.depth - bvar - 1)).unwrap(),
             Some(t),
         )
-    }
-}
-
-impl<'a> From<LanguageExpression<'a>> for RootedLambdaPool<'a, Expr<'a>> {
-    fn from(value: LanguageExpression<'a>) -> Self {
-        RootedLambdaPool {
-            pool: LambdaPool::from(
-                value
-                    .pool
-                    .0
-                    .iter()
-                    .map(|x| LambdaExpr::LanguageOfThoughtExpr(*x))
-                    .collect(),
-            ),
-            root: crate::lambda::LambdaExprRef(value.start.0),
-        }
     }
 }
 
@@ -428,7 +204,8 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
             return Err(ConjoiningError::DoesntReturnT(self_type));
         }
         let lhs = lhs.clone();
-
+        let combinator: RootedLambdaPool<'a, Expr<'a>> = todo!();
+        /*
         let combinator = RootedLambdaPool {
             pool: LambdaPool(vec![
                 LambdaExpr::Lambda(LambdaExprRef(1), self_type.clone()),
@@ -453,7 +230,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
                 LambdaExpr::BoundVariable(0, lhs),
             ]),
             root: LambdaExprRef(0),
-        };
+        };*/
 
         let mut conjoined = combinator.merge(self).unwrap().merge(other).unwrap();
         conjoined.reduce()?;
@@ -486,51 +263,55 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
         let e = e.clone();
         let event = event.clone();
 
-        let combinator = RootedLambdaPool {
-            pool: LambdaPool(vec![
-                LambdaExpr::Lambda(LambdaExprRef(1), a_type.clone()),
-                LambdaExpr::Lambda(LambdaExprRef(2), b_type.clone()),
-                LambdaExpr::Lambda(LambdaExprRef(3), event.clone()),
-                LambdaExpr::Lambda(LambdaExprRef(4), e.clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
-                    BinOp::And,
-                    LambdaExprRef(5),
-                    LambdaExprRef(10),
-                )),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(6),
-                    argument: LambdaExprRef(9),
-                },
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(7),
-                    argument: LambdaExprRef(8),
-                },
-                LambdaExpr::BoundVariable(3, a_type),
-                LambdaExpr::BoundVariable(1, event),
-                LambdaExpr::BoundVariable(0, e.clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(11),
-                    argument: LambdaExprRef(12),
-                },
-                LambdaExpr::BoundVariable(2, b_type),
-                LambdaExpr::BoundVariable(0, e),
-            ]),
-            root: LambdaExprRef(0),
-        };
+        let combinator: RootedLambdaPool<'a, Expr<'a>> = todo!();
+        //let combinator = RootedLambdaPool {
+        //    pool: LambdaPool(vec![
+        //        LambdaExpr::Lambda(LambdaExprRef(1), a_type.clone()),
+        //        LambdaExpr::Lambda(LambdaExprRef(2), b_type.clone()),
+        //        LambdaExpr::Lambda(LambdaExprRef(3), event.clone()),
+        //        LambdaExpr::Lambda(LambdaExprRef(4), e.clone()),
+        //        LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
+        //            BinOp::And,
+        //            LambdaExprRef(5),
+        //            LambdaExprRef(10),
+        //        )),
+        //        LambdaExpr::Application {
+        //            subformula: LambdaExprRef(6),
+        //            argument: LambdaExprRef(9),
+        //        },
+        //        LambdaExpr::Application {
+        //            subformula: LambdaExprRef(7),
+        //            argument: LambdaExprRef(8),
+        //        },
+        //        LambdaExpr::BoundVariable(3, a_type),
+        //        LambdaExpr::BoundVariable(1, event),
+        //        LambdaExpr::BoundVariable(0, e.clone()),
+        //        LambdaExpr::Application {
+        //            subformula: LambdaExprRef(11),
+        //            argument: LambdaExprRef(12),
+        //        },
+        //        LambdaExpr::BoundVariable(2, b_type),
+        //        LambdaExpr::BoundVariable(0, e),
+        //    ]),
+        //    root: LambdaExprRef(0),
+        //};
 
         let mut conjoined = combinator.merge(a).unwrap().merge(b).unwrap();
         conjoined.reduce()?;
         Ok(conjoined)
     }
 
+    /*
     ///Create a [`RootedLambdaPool<Expr>`] from a string.
     ///
     ///# Errors
     ///Returns a [`LambdaParseError`] if the input string is malformed and not a LOT expression.
     pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
-        parse_lot(s)
-    }
+        todo!()
+        //parse_lot(s)
+    }*/
 
+    /*
     #[allow(clippy::too_many_lines)]
     fn string(
         &self,
@@ -676,6 +457,7 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
             },
         }
     }
+    */
 }
 
 pub(super) fn add_parenthesis_for_bin_op(x: BinOp, data: AssociativityData) -> bool {
@@ -692,10 +474,10 @@ pub(super) fn add_parenthesis_for_bin_op(x: BinOp, data: AssociativityData) -> b
 
 #[cfg(test)]
 mod test {
-    use super::to_var;
+    use super::*;
 
     use crate::lambda::{FreeVar, types::LambdaType};
-    use crate::{Entity, Scenario, ThetaRoles, lambda::RootedLambdaPool, parse_executable};
+    use crate::{Entity, Scenario, ThetaRoles, lambda::RootedLambdaPool};
 
     #[test]
     fn fancy_printing() -> anyhow::Result<()> {
@@ -708,7 +490,7 @@ mod test {
             "every_e(x, all_e, PatientOf(a_Mary, x))",
         ] {
             println!("{statement}");
-            let expression = parse_executable(statement)?;
+            let expression = RootedLambdaPool::<Expr>::parse(statement)?;
             assert_eq!(expression.to_string(), statement);
         }
         for s in [
@@ -722,7 +504,7 @@ mod test {
             "lambda e x lambda a y loves#<e,<a,t>>(x, y)",
         ] {
             println!("{s}");
-            let p = RootedLambdaPool::parse(s)?;
+            let p = RootedLambdaPool::<Expr>::parse(s)?;
             assert_eq!(p.to_string(), s);
         }
 
@@ -731,27 +513,25 @@ mod test {
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {
-        let john = RootedLambdaPool::parse("a_John")?;
-        let likes = RootedLambdaPool::parse(
+        let john = RootedLambdaPool::<Expr>::parse("a_John")?;
+        let likes = RootedLambdaPool::<Expr>::parse(
             "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(x, e) & PatientOf(y, e) & pe_likes(e)))))",
         )?;
 
-        let mary = RootedLambdaPool::parse("a_Mary")?;
+        let mary = RootedLambdaPool::<Expr>::parse("a_Mary")?;
         let phi = mary.clone().merge(likes.clone()).unwrap();
         let mut phi = phi.merge(john.clone()).unwrap();
         phi.reduce()?;
-        let pool = phi.into_pool()?;
         assert_eq!(
             "some_e(x, all_e, AgentOf(a_Mary, x) & PatientOf(a_John, x) & pe_likes(x))",
-            pool.to_string()
+            phi.to_string()
         );
         let phi = likes.merge(mary).unwrap();
         let mut phi = john.merge(phi).unwrap();
         phi.reduce()?;
-        let pool = phi.into_pool()?;
         assert_eq!(
             "some_e(x, all_e, AgentOf(a_Mary, x) & PatientOf(a_John, x) & pe_likes(x))",
-            pool.to_string()
+            phi.to_string()
         );
         Ok(())
     }
@@ -769,21 +549,21 @@ mod test {
 
     #[test]
     fn printing() -> anyhow::Result<()> {
-        let pool = RootedLambdaPool::parse(
+        let pool = RootedLambdaPool::<Expr>::parse(
             "some_e(x0, all_e, AgentOf(a_1, x0) & PatientOf(a_0, x0) & pe_0(x0))",
         )?;
         assert_eq!(
             pool.to_string(),
             "some_e(x, all_e, AgentOf(a_1, x) & PatientOf(a_0, x) & pe_0(x))"
         );
-        let likes = RootedLambdaPool::parse(
+        let likes = RootedLambdaPool::<Expr>::parse(
             "lambda e x lambda e y (some(e, all_a, AgentOf(e, x) & PatientOf(e, y) & pe_likes(y)))",
         )?;
 
         let s =
             "lambda e x lambda e y some(z, all_a, AgentOf(z, x) & PatientOf(z, y) & pe_likes(y))";
         assert_eq!(likes.to_string(), s,);
-        let likes2 = RootedLambdaPool::parse(s)?;
+        let likes2 = RootedLambdaPool::<Expr>::parse(s)?;
         assert_eq!(likes, likes2);
 
         Ok(())
@@ -791,7 +571,23 @@ mod test {
 
     #[test]
     fn fancy_quantification_reduction() -> anyhow::Result<()> {
-        let pool = RootedLambdaPool::parse("every_e(x0,pe_0(x0) & pe_1(x0), pe_2(x0))")?;
+        let pool = RootedLambdaPool::<Expr>::parse("every_e(x0,pe_0(x0) & pe_1(x0), pe_2(x0))")?;
+        let scenario = Scenario::new(
+            vec![],
+            vec![ThetaRoles::default(); 5],
+            [
+                ("0", vec![Entity::Event(1), Entity::Event(2)]),
+                ("1", vec![Entity::Event(0), Entity::Event(1)]),
+                ("2", vec![Entity::Event(1)]),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        assert!(pool.interp(&scenario).unwrap().try_into()?);
+
+        let pool = RootedLambdaPool::<Expr>::parse("every_e(x0, pe_0(x0) & pe_1(x0), pe_2(x0))")?;
+
         let scenario = Scenario::new(
             vec![],
             vec![ThetaRoles::default(); 5],
@@ -805,40 +601,24 @@ mod test {
         );
 
         dbg!(&pool);
-        assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
+        assert!(pool.interp(&scenario).unwrap().try_into()?);
 
-        let pool = RootedLambdaPool::parse("every_e(x0, pe_0(x0) & pe_1(x0), pe_2(x0))")?;
-
-        let scenario = Scenario::new(
-            vec![],
-            vec![ThetaRoles::default(); 5],
-            [
-                ("0", vec![Entity::Event(1), Entity::Event(2)]),
-                ("1", vec![Entity::Event(0), Entity::Event(1)]),
-                ("2", vec![Entity::Event(1)]),
-            ]
-            .into_iter()
-            .collect(),
-        );
-
-        dbg!(&pool);
-        assert!(pool.into_pool()?.run(&scenario, None)?.try_into()?);
-
-        let pool =
-            RootedLambdaPool::parse("every_e(x, pe_laughs, every(y, pe_sleeps(x), pa_woman(y)))")?;
-        println!("{}", pool.into_pool()?);
+        let pool = RootedLambdaPool::<Expr>::parse(
+            "every_e(x, pe_laughs, every(y, pe_sleeps(x), pa_woman(y)))",
+        )?;
+        println!("{}", pool);
         Ok(())
     }
 
     #[test]
     fn conjoining_check() -> anyhow::Result<()> {
-        let tall = RootedLambdaPool::parse("lambda a x pa_tall(x)")?;
-        let man = RootedLambdaPool::parse("lambda a x pa_man(x)")?;
+        let tall = RootedLambdaPool::<Expr>::parse("lambda a x pa_tall(x)")?;
+        let man = RootedLambdaPool::<Expr>::parse("lambda a x pa_man(x)")?;
 
         let mut tall_man = tall.conjoin(man)?;
         tall_man.reduce()?;
-        let weird = RootedLambdaPool::parse("weird#<a,t>")?;
-        let man = RootedLambdaPool::parse("lambda a x pa_man(x)")?;
+        let weird = RootedLambdaPool::<Expr>::parse("weird#<a,t>")?;
+        let man = RootedLambdaPool::<Expr>::parse("lambda a x pa_man(x)")?;
         let weird_man = weird.conjoin(man)?;
         assert_eq!(format!("{tall_man}"), "lambda a x pa_tall(x) & pa_man(x)");
         assert_eq!(
@@ -846,8 +626,8 @@ mod test {
             "lambda a x weird#<a,t>(x) & pa_man(x)"
         );
 
-        let voice = RootedLambdaPool::parse("lambda a x lambda e y AgentOf(x, y)")?;
-        let run = RootedLambdaPool::parse("lambda e x pe_run(x)")?;
+        let voice = RootedLambdaPool::<Expr>::parse("lambda a x lambda e y AgentOf(x, y)")?;
+        let run = RootedLambdaPool::<Expr>::parse("lambda e x pe_run(x)")?;
 
         let mut agent_run = voice.raised_conjoin(run)?;
         agent_run.reduce()?;
@@ -855,8 +635,8 @@ mod test {
             format!("{agent_run}"),
             "lambda a x lambda e y AgentOf(x, y) & pe_run(y)"
         );
-        let voice = RootedLambdaPool::parse("lambda a x lambda e y AgentOf(x, y)")?;
-        let run = RootedLambdaPool::parse("lambda e x pe_run(x)")?;
+        let voice = RootedLambdaPool::<Expr>::parse("lambda a x lambda e y AgentOf(x, y)")?;
+        let run = RootedLambdaPool::<Expr>::parse("lambda e x pe_run(x)")?;
 
         let mut agent_run = run.raised_conjoin(voice)?;
         agent_run.reduce()?;
@@ -869,9 +649,9 @@ mod test {
 
     #[test]
     fn alpha_check() -> anyhow::Result<()> {
-        let everyone = RootedLambdaPool::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
-        let someone = RootedLambdaPool::parse("lambda <a,t> P (some(x, all_a, P(x)))")?;
-        let mut likes = RootedLambdaPool::parse(
+        let everyone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
+        let someone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (some(x, all_a, P(x)))")?;
+        let mut likes = RootedLambdaPool::<Expr>::parse(
             "lambda a x (lambda a y (some_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e))))",
         )?;
 
@@ -888,14 +668,14 @@ mod test {
 
         assert_eq!(
             sentence,
-            RootedLambdaPool::parse(
+            RootedLambdaPool::<Expr>::parse(
                 "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
             )?
         );
 
-        let everyone = RootedLambdaPool::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
-        let someone = RootedLambdaPool::parse("lambda <a,t> P (some(x, all_a, P(x)))")?;
-        let mut likes = RootedLambdaPool::parse(
+        let everyone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
+        let someone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (some(x, all_a, P(x)))")?;
+        let mut likes = RootedLambdaPool::<Expr>::parse(
             "lambda a x (lambda a y ( some_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e)) | some(w, all_a, every_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e)))))",
         )?;
 
@@ -906,7 +686,7 @@ mod test {
         sentence.reduce()?;
         assert_eq!(
             sentence,
-            RootedLambdaPool::parse(
+            RootedLambdaPool::<Expr>::parse(
                 "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z)) | some(z, all_a, every_e(a, all_e, AgentOf(y, a) & pe_likes(a) & PatientOf(x, a)))))"
             )?
         );

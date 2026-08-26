@@ -2,10 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     lambda::{FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
-    language::{
-        ActorOrEvent, BinOp, Expr, MonOp,
-        lambda_implementation::{AssociativityData, add_parenthesis_for_bin_op},
-    },
+    language::{Expr, lambda_implementation::AssociativityData},
 };
 
 use crate::language::lambda_implementation::VarContext;
@@ -117,12 +114,13 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                 }
                 AssociativityData::App
             }
-            LambdaExpr::LanguageOfThoughtExpr(x) => match x {
+            LambdaExpr::LanguageOfThoughtExpr(..) => todo!(),
+            /*
+            LambdaExpr::LanguageOfThoughtExpr(x, _) => match x {
                 Expr::Quantifier {
                     quantifier,
                     var_type,
-                    restrictor,
-                    subformula,
+                    ..
                 } => {
                     let (c, var_string) = c.inc_depth_q(*var_type);
 
@@ -249,7 +247,7 @@ impl RootedLambdaPool<'_, Expr<'_>> {
                     v.push(Token::Const(s));
                     AssociativityData::Monop
                 }
-            },
+            },*/
         }
     }
 }
