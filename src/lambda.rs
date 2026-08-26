@@ -14,6 +14,7 @@ use std::{
 };
 use thiserror::Error;
 
+mod interpretation;
 pub mod types;
 use types::{LambdaType, TypeError};
 
