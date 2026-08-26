@@ -58,9 +58,13 @@ impl<'a, T: Display> From<Vec<Rich<'a, T>>> for LambdaParseError {
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
+impl<'src, T> RootedLambdaPool<'src, T>
+where
+    T: ParseLot + LambdaLanguageOfThought + Clone + PartialEq,
+    T::Token: Display + Clone + PartialEq,
+{
     pub fn parse(s: &'src str) -> Result<RootedLambdaPool<'src, T>, LambdaParseError> {
-        todo!()
+        parse_lot(s)
     }
 }
 
@@ -198,19 +202,35 @@ where
         .to_slice()
 }
 
-type ChumskyErr<'tokens, 'src> = extra::Err<Rich<'tokens, Token<'src>, Span>>;
+type ChumskyErr<'tokens, 'src, T> = extra::Err<Rich<'tokens, Token<'src, T>, Span>>;
+
+pub trait ParseLot {
+    type Token;
+}
+
+impl ParseLot for () {
+    type Token = &'static str;
+}
+
+impl ParseLot for Expr<'_> {
+    type Token = &'static str;
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-enum Token<'src> {
+enum Token<'src, T: ParseLot> {
     OpenDelim,
     ArgSep,
     CloseDelim,
     Lambda(LambdaType, &'src str),
     Variable(&'src str),
     FreeVariable(&'src str, LambdaType),
-    LanguageOfThoughtToken,
+    LanguageOfThoughtToken(T::Token),
 }
-impl Display for Token<'_> {
+impl<T> Display for Token<'_, T>
+where
+    T: ParseLot,
+    T::Token: Display,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::OpenDelim => write!(f, "("),
@@ -219,7 +239,7 @@ impl Display for Token<'_> {
             Token::Lambda(lambda_type, t) => write!(f, "lambda {lambda_type} {t}"),
             Token::Variable(v) => write!(f, "{v}"),
             Token::FreeVariable(v, lambda_type) => write!(f, "{v}#{lambda_type}"),
-            Token::LanguageOfThoughtToken => todo!(),
+            Token::LanguageOfThoughtToken(t) => write!(f, "{t}"),
         }
     }
 }
@@ -227,13 +247,15 @@ impl Display for Token<'_> {
 pub type Span = SimpleSpan;
 pub type Spanned<T> = (T, Span);
 
-fn lexer<'src, E>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, E>
+fn lexer<'src, T, E>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src, T>>>, E>
 where
     E: ParserExtra<'src, &'src str> + 'src,
     E::Error: LabelError<'src, &'src str, TextExpected<&'src str>>
         + LabelError<'src, &'src str, MaybeRef<'src, char>>
         + LabelError<'src, &'src str, &'static str>
         + LabelError<'src, &'src str, TextExpected<()>>,
+    T: ParseLot + Clone,
+    T::Token: Clone,
 {
     choice((
         just(',').to(Token::ArgSep),
@@ -263,10 +285,11 @@ where
 }
 
 fn language_parser<'tokens, 'src: 'tokens, I, T>()
--> impl Parser<'tokens, I, ParseTree<'src, T>, extra::Err<Rich<'tokens, Token<'src>, Span>>> + Clone
+-> impl Parser<'tokens, I, ParseTree<'src, T>, extra::Err<Rich<'tokens, Token<'src, T>, Span>>> + Clone
 where
-    I: ValueInput<'tokens, Token = Token<'src>, Span = SimpleSpan> + Clone,
-    T: 'tokens,
+    I: ValueInput<'tokens, Token = Token<'src, T>, Span = SimpleSpan> + Clone,
+    T: 'tokens + ParseLot + Clone + PartialEq,
+    T::Token: Clone + PartialEq,
 {
     let var = select! {
         Token::Variable(a) => ParseTree::Variable(a),
@@ -321,8 +344,12 @@ where
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
-pub fn parse_lot(s: &str) -> Result<RootedLambdaPool<'_, Expr<'_>>, LambdaParseError> {
-    let tokens = lexer::<extra::Err<Rich<char>>>()
+pub fn parse_lot<T>(s: &str) -> Result<RootedLambdaPool<'_, T>, LambdaParseError>
+where
+    T: ParseLot + LambdaLanguageOfThought + Clone + PartialEq,
+    T::Token: Display + Clone + PartialEq,
+{
+    let tokens = lexer::<T, extra::Err<Rich<char>>>()
         .then_ignore(end())
         .parse(s)
         .into_result()?;
@@ -340,8 +367,6 @@ pub fn parse_lot(s: &str) -> Result<RootedLambdaPool<'_, Expr<'_>>, LambdaParseE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Scenario, ThetaRoles};
-    use std::collections::BTreeMap;
 
     fn check_lambdas(
         statement: &str,
@@ -407,7 +432,7 @@ mod tests {
             "pe_cool(iota_e(x, pe_man(x)))",
             "pa_cool(iota(x, (lambda a x pa_man(x))(x)))",
         ] {
-            RootedLambdaPool::<()>::parse(statement)?;
+            RootedLambdaPool::<Expr>::parse(statement)?;
         }
 
         for statement in [
@@ -415,7 +440,7 @@ mod tests {
             "(wow#<a,<e,t>>(nice#a))(cool#a)",
             "every(x,lambda a y pa_John(y), pa_Blue(y))",
         ] {
-            let p = RootedLambdaPool::<()>::parse(statement);
+            let p = RootedLambdaPool::<Expr>::parse(statement);
             assert!(p.is_err());
         }
         Ok(())
