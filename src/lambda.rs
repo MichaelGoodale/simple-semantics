@@ -380,6 +380,11 @@ impl<T: LambdaLanguageOfThought + PartialEq> LambdaExpr<'_, T> {
 }
 
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
+    ///Check if the expression is fully reduced or not.
+    pub fn is_reduced(&self) -> bool {
+        self.pool.get_next_app(self.root).is_none()
+    }
+
     ///Creates an anonymous free variable with [`index`] of type [`t`]
     #[must_use]
     pub fn new_free_variable(index: usize, t: LambdaType) -> RootedLambdaPool<'src, T> {

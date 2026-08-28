@@ -1,8 +1,13 @@
 #![expect(dead_code)]
 
+use std::borrow::Cow;
+
 use crate::{
     Actor, Entity, Event, Scenario,
-    lambda::{FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
+    lambda::{
+        ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
+        parser::ExprToken, types::LambdaType,
+    },
     language::{
         ActorOrEvent, BinOp, Constant,
         Expr::{self},
@@ -13,6 +18,12 @@ use crate::{
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 struct ValueId(u32);
 
+impl From<ValueId> for usize {
+    fn from(value: ValueId) -> Self {
+        value.0 as usize
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 enum BaseValue<'a> {
     Bool(bool),
@@ -22,16 +33,34 @@ enum BaseValue<'a> {
     ActorSet(Vec<Actor<'a>>),
     ///A set of events (represented as a vector).
     EventSet(Vec<Event>),
+    //A mapping from truth to truth.
+    TruthTable(bool, bool),
 }
 
 impl<'src> BaseValue<'src> {
-    fn typ(&self) -> LambdaType {
+    fn has_literal(typ: &LambdaType) -> bool {
+        !typ.is_function() || typ.is_one_place_function()
+    }
+
+    fn typ(&self) -> &LambdaType {
         match self {
-            BaseValue::Bool(_) => LambdaType::T,
-            BaseValue::Actor(_) => LambdaType::A,
-            BaseValue::Event(_) => LambdaType::E,
-            BaseValue::ActorSet(_) => LambdaType::at().clone(),
-            BaseValue::EventSet(_) => LambdaType::et().clone(),
+            BaseValue::Bool(_) => &LambdaType::T,
+            BaseValue::Actor(_) => &LambdaType::A,
+            BaseValue::Event(_) => &LambdaType::E,
+            BaseValue::ActorSet(_) => LambdaType::at(),
+            BaseValue::EventSet(_) => LambdaType::et(),
+            BaseValue::TruthTable(_, _) => LambdaType::tt(),
+        }
+    }
+
+    fn apply(&self, other: &BaseValue<'src>) -> BaseValue<'src> {
+        match (self, other) {
+            (BaseValue::ActorSet(items), BaseValue::Actor(a)) => BaseValue::Bool(items.contains(a)),
+            (BaseValue::EventSet(items), BaseValue::Event(e)) => BaseValue::Bool(items.contains(e)),
+            (BaseValue::TruthTable(t, f), BaseValue::Bool(b)) => {
+                BaseValue::Bool(if *b { *t } else { *f })
+            }
+            _ => panic!("Type error that shouldn't occur!"),
         }
     }
 
@@ -66,17 +95,18 @@ impl<'src> BaseValue<'src> {
     }
 }
 
-#[derive(Debug, Clone)]
-enum InnerValue<'a> {
+#[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
+enum InnerValue<'a, T> {
     Base(BaseValue<'a>),
     Function(ValueId),
+    Expr(T),
     Neutral(ValueId),
     Var(u32),
     FreeVar(FreeVar<'a>),
     App(ValueId, ValueId),
 }
 
-impl<'src> InnerValue<'src> {
+impl<'src, T> InnerValue<'src, T> {
     fn to_base_value(&self) -> Option<&BaseValue<'src>> {
         if let InnerValue::Base(b) = self {
             Some(b)
@@ -99,12 +129,12 @@ use thiserror::Error;
 #[error("Not the desired type!")]
 pub struct ValueConversionError;
 
-#[derive(Debug, Clone)]
-pub struct Value<'a>(Vec<InnerValue<'a>>);
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Value<'a, T>(Vec<InnerValue<'a, T>>);
 
-impl TryFrom<Value<'_>> for bool {
+impl<T> TryFrom<Value<'_, T>> for bool {
     type Error = ValueConversionError;
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
+    fn try_from(value: Value<T>) -> Result<Self, Self::Error> {
         value
             .into_base_value()
             .and_then(|x| x.as_bool())
@@ -112,8 +142,8 @@ impl TryFrom<Value<'_>> for bool {
     }
 }
 
-impl<'src> Value<'src> {
-    fn value_at<'a>(&'a self, id: ValueId) -> ValueRef<'a, 'src> {
+impl<'src, T> Value<'src, T> {
+    fn value_at<'a>(&'a self, id: ValueId) -> ValueRef<'a, 'src, T> {
         ValueRef(id, self)
     }
 
@@ -129,9 +159,10 @@ enum ValueBuilder {
     Build(LambdaExprRef),
 }
 
-struct ValueRef<'a, 'src>(ValueId, &'a Value<'src>);
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct ValueRef<'a, 'src, T>(ValueId, &'a Value<'src, T>);
 
-impl<'a, 'src> ValueRef<'a, 'src> {
+impl<'a, 'src, T> ValueRef<'a, 'src, T> {
     fn is_neutral(&self) -> bool {
         matches!(self.1.0[self.0.0 as usize], InnerValue::Neutral(_))
     }
@@ -143,14 +174,15 @@ impl<'a, 'src> ValueRef<'a, 'src> {
 impl<'src> Expr<'src> {
     fn eval(
         &self,
-        arguments: &[ValueRef<'_, 'src>],
+        arguments: &[ValueRef<'_, 'src, Expr<'src>>],
         scenario: &Scenario<'src>,
-    ) -> Option<Vec<InnerValue<'src>>> {
+    ) -> Option<InnerValue<'src, Expr<'src>>> {
         let x = match self {
             Expr::Quantifier {
                 quantifier,
                 var_type,
             } => todo!(),
+            Expr::Unary(MonOp::Iota(a_o_e)) => todo!(),
             Expr::Variable(variable) => todo!(),
             Expr::Actor(a) => BaseValue::Actor(a),
             Expr::Event(e) => BaseValue::Event(*e),
@@ -185,7 +217,6 @@ impl<'src> Expr<'src> {
                     .as_bool()
                     .unwrap(),
             ),
-            Expr::Unary(MonOp::Iota(a_o_e)) => todo!(),
             Expr::Constant(Constant::Everyone) => BaseValue::ActorSet(scenario.actors.clone()),
             Expr::Constant(Constant::EveryEvent) => {
                 BaseValue::EventSet(scenario.events().collect())
@@ -220,26 +251,33 @@ impl<'src> Expr<'src> {
                 }
             }
         };
-        Some(vec![InnerValue::Base(x)])
+        Some(InnerValue::Base(x))
     }
 }
 
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
-    pub fn interp(&self, scenario: &Scenario<'src>) -> Option<Value<'src>> {
-        let mut stack = vec![ValueBuilder::Search(self.root)];
-        let mut node_to_value_id: Vec<Option<ValueId>> = vec![None; self.pool.0.len()];
-        let mut value = Value(vec![]);
+    pub fn interp(&self, scenario: &Scenario<'src>) -> Option<Value<'src, Expr<'src>>> {
+        let expression: Cow<Self> = if !self.is_reduced() {
+            let mut x = self.clone();
+            x.reduce().expect("Can't reduce :(");
+            Cow::Owned(x)
+        } else {
+            Cow::Borrowed(self)
+        };
+
+        let mut stack = vec![ValueBuilder::Search(expression.root)];
+        let mut node_to_value_id: Vec<Option<ValueId>> = vec![None; expression.pool.0.len()];
+        let mut value: Value<'src, Expr<'src>> = Value(vec![]);
 
         while let Some(x) = stack.pop() {
             match x {
                 ValueBuilder::Search(nx) => {
-                    let node = self.get(nx);
                     stack.push(ValueBuilder::Build(nx));
-                    stack.extend(self.get(nx).get_children().map(ValueBuilder::Search));
+                    stack.extend(expression.get(nx).get_children().map(ValueBuilder::Search));
                 }
 
                 ValueBuilder::Build(nx) => {
-                    let node = self.get(nx);
+                    let node = expression.get(nx);
                     match node {
                         LambdaExpr::Lambda(arg, _) => {
                             let arg_val = node_to_value_id[arg.0 as usize].unwrap();
@@ -263,27 +301,59 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                         LambdaExpr::Application {
                             subformula,
                             argument,
-                        } => todo!(),
-                        LambdaExpr::LanguageOfThoughtExpr(x, y) => {
-                            let children = node
-                                .get_children()
-                                .map(|x| node_to_value_id[x.0 as usize].map(|x| value.value_at(x)))
-                                .collect::<Option<Vec<_>>>()
-                                .unwrap();
+                        } => {
+                            let sub_id = node_to_value_id[subformula.0 as usize].unwrap();
+                            let arg_id = node_to_value_id[argument.0 as usize].unwrap();
+                            let sub = &value.0[usize::from(sub_id)];
+                            let arg = &value.0[usize::from(arg_id)];
 
-                            if children.iter().all(|x| !x.is_neutral()) {
-                                debug_assert_eq!(
-                                    children.len(),
-                                    node.n_children(),
-                                    "Inconsistent children length!"
-                                );
-                                let v = x.eval(&children, scenario)?;
-                                value.0.extend(v);
+                            let v = match (sub, arg) {
+                                (InnerValue::Base(alpha), InnerValue::Base(beta)) => {
+                                    InnerValue::Base(alpha.apply(beta))
+                                }
+                                (InnerValue::App(f, x_id), _) => {
+                                    let mut arguments =
+                                        vec![value.value_at(arg_id), value.value_at(*x_id)];
+                                    let mut f = *f;
+                                    while let InnerValue::App(new_f, new_arg) =
+                                        value.0[usize::from(f)]
+                                    {
+                                        arguments.push(value.value_at(new_arg));
+                                        f = new_f;
+                                    }
+                                    arguments.reverse();
+                                    match &value.0[usize::from(f)] {
+                                        InnerValue::Expr(e) => e.eval(&arguments, scenario)?,
+                                        InnerValue::App(..) => {
+                                            panic!("Impossible because of previous loop")
+                                        }
+                                        _ => todo!(),
+                                    }
+                                }
+                                (InnerValue::Expr(e), x) => InnerValue::App(sub_id, arg_id),
+                                //TODO: Figure out how to make it so that functions indicate when
+                                //they can be evaluated (e.g. this will screw up if `e` takes only
+                                //one argument!.
+                                (InnerValue::Base(e), x) => InnerValue::App(sub_id, arg_id),
+                                _ => todo!("Don't know how to combine {sub:?} and {arg:?}"),
+                            };
+                            value.0.push(v);
+                            node_to_value_id[nx.0 as usize] =
+                                Some(ValueId((value.0.len() - 1) as u32));
+                        }
+                        LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => {
+                            if BaseValue::has_literal(x.typ()) {
+                                value.0.push(x.eval(&[], scenario)?);
                                 node_to_value_id[nx.0 as usize] =
                                     Some(ValueId((value.0.len() - 1) as u32));
                             } else {
-                                todo!()
+                                value.0.push(InnerValue::Expr(*x));
+                                node_to_value_id[nx.0 as usize] =
+                                    Some(ValueId((value.0.len() - 1) as u32));
                             }
+                        }
+                        LambdaExpr::LanguageOfThoughtExpr(x, _) => {
+                            todo!("figure out quantification")
                         }
                     }
                 }
@@ -305,6 +375,7 @@ mod test {
 
         let data = [
             ("a_john", BaseValue::Actor("john")),
+            ("pa_kind(a_john)", BaseValue::Bool(false)),
             ("True | True", BaseValue::Bool(true)),
             ("True | False", BaseValue::Bool(true)),
             ("False | True", BaseValue::Bool(true)),
@@ -313,17 +384,19 @@ mod test {
             ("True & False", BaseValue::Bool(false)),
             ("False & True", BaseValue::Bool(false)),
             ("False & False", BaseValue::Bool(false)),
+            ("~False", BaseValue::Bool(true)),
+            ("~True", BaseValue::Bool(false)),
+            ("~(False & False)", BaseValue::Bool(true)),
             ("AgentOf(a_john, e_0) | False", BaseValue::Bool(true)),
         ];
 
         for (phi, val) in data {
             let phi = RootedLambdaPool::parse(phi)?;
-            assert_eq!(
-                phi.interp(&scenario).unwrap().into_base_value().unwrap(),
-                val
-            );
+            let calculated_value = phi.interp(&scenario).unwrap();
+            println!("{phi:?} {calculated_value:?}");
+            assert_eq!(calculated_value.into_base_value().unwrap(), val);
         }
-        let mut phi = RootedLambdaPool::parse("lambda a x pa_kind(x)")?;
+        let phi = RootedLambdaPool::parse("lambda a x pa_kind(x)")?;
         println!("{phi}");
         let v = phi.interp(&scenario).unwrap();
         println!("{v:?}");

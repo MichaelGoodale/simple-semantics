@@ -70,7 +70,7 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
 impl<'a> std::fmt::Display for RootedLambdaPool<'a, Expr<'a>> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!();
+        write!(f, "temp display")
         //let (string, _) = self.string(self.root(), VarContext::default(), false);
         //write!(f, "{string}")
     }
