@@ -289,6 +289,7 @@ pub trait ParseLot<'src> {
 
     fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>>;
     fn is_infix(token: &Self::Token) -> bool;
+    fn is_prefix(token: &Self::Token) -> bool; 
     fn bind_var_type(token: &Self::Token) -> PrimitiveVarType;
     fn into_expr(token: Self::Token) -> Self;
 }
@@ -301,6 +302,10 @@ impl<'src> ParseLot<'src> for () {
     }
 
     fn is_infix(token: &Self::Token) -> bool {
+        false
+    }
+
+    fn is_prefix(token: &Self::Token) -> bool {
         false
     }
 
@@ -395,6 +400,10 @@ impl<'src> ParseLot<'src> for Expr<'src> {
 
     fn is_infix(token: &Self::Token) -> bool {
         matches!(token, ExprToken::BinOp(BinOp::And | BinOp::Or))
+    }
+
+    fn is_prefix(token: &Self::Token) -> bool {
+        matches!(token, ExprToken::MonOp(MonOp::Not))
     }
 
     fn into_expr(token: Self::Token) -> Self {
@@ -558,6 +567,10 @@ where
                     .with_span(lambda_span)
                 },
             ),
+            prefix(2, select! {Token::LanguageOfThought(x) = e if T::is_prefix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span())}, |op: Spanned<ParseTree<_>>, x: Spanned<ParseTree<_>>, _| {
+                let span= op.span.union(x.span);
+                 ParseTree::Application { subformula: Box::new(op), argument: Box::new(x) }.with_span(span)
+            }),
             infix(left(1), select! {Token::LanguageOfThought(x) = e if T::is_infix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span())} , |l: Spanned<ParseTree<_>>, op: Spanned<ParseTree<_>>, r, _| {
                 let op_l = op.span.union(l.span);
                 let op_span = op_l.union(r.span);
