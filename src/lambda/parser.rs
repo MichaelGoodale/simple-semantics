@@ -12,7 +12,7 @@ use ariadne::{Color, Label, Report, Source};
 use chumsky::{
     extra::ParserExtra,
     input::ValueInput,
-    pratt::prefix,
+    pratt::{infix, left, prefix},
     prelude::*,
     span::{SimpleSpan, Spanned},
     text::inline_whitespace,
@@ -288,7 +288,7 @@ pub trait ParseLot<'src> {
     type Token;
 
     fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>>;
-
+    fn is_infix(token: &Self::Token) -> bool;
     fn bind_var_type(token: &Self::Token) -> PrimitiveVarType;
     fn into_expr(token: Self::Token) -> Self;
 }
@@ -298,6 +298,10 @@ impl<'src> ParseLot<'src> for () {
 
     fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>> {
         just("1").to("1")
+    }
+
+    fn is_infix(token: &Self::Token) -> bool {
+        false
     }
 
     fn bind_var_type(token: &Self::Token) -> PrimitiveVarType {
@@ -387,6 +391,10 @@ impl<'src> ParseLot<'src> for Expr<'src> {
                 .then(keyword())
                 .map(|(t, s)| ExprToken::Constant(Constant::Property(s, t))),
         ))
+    }
+
+    fn is_infix(token: &Self::Token) -> bool {
+        matches!(token, ExprToken::BinOp(BinOp::And | BinOp::Or))
     }
 
     fn into_expr(token: Self::Token) -> Self {
@@ -490,7 +498,7 @@ where
     .labelled("variable");
 
     let lot_prim = select! {
-        Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::NoVar => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span()),
+        Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::NoVar && !T::is_infix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span()),
     }
     .labelled("LOT primitive");
 
@@ -537,18 +545,29 @@ where
             lot_prim,
             expr.delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
         ));
-        atom.pratt((prefix(
-            0,
-            select! {Token::Lambda(t, var) = e => (t, var, e.span())},
-            |(lambda_type, var, lambda_span), r, _| {
-                ParseTree::Lambda {
-                    body: Box::new(r),
-                    var,
-                    lambda_type,
-                }
-                .with_span(lambda_span)
-            },
-        ),))
+        atom.pratt((
+            prefix(
+                0,
+                select! {Token::Lambda(t, var) = e => (t, var, e.span())},
+                |(lambda_type, var, lambda_span), r, _| {
+                    ParseTree::Lambda {
+                        body: Box::new(r),
+                        var,
+                        lambda_type,
+                    }
+                    .with_span(lambda_span)
+                },
+            ),
+            infix(left(1), select! {Token::LanguageOfThought(x) = e if T::is_infix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span())} , |l: Spanned<ParseTree<_>>, op: Spanned<ParseTree<_>>, r, _| {
+                let op_l = op.span.union(l.span);
+                let op_span = op_l.union(r.span);
+                
+
+                ParseTree::Application { subformula: Box::new(ParseTree::Application { subformula: Box::new(op), argument: Box::new(l) }.with_span(op_l)),
+                    argument: Box::new(r)}.with_span(op_span)
+
+            }),
+        ))
     })
 }
 

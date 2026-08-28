@@ -260,13 +260,13 @@ impl LambdaType {
         &VAL
     }
 
-    ///Get the `<<t,t>, t>` function type
+    ///Get the `<t, <t,t>>` function type
     #[must_use]
     pub fn ttt() -> &'static Self {
         static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
             LambdaType::compose(
-                LambdaType::compose(LambdaType::T, LambdaType::T),
                 LambdaType::T,
+                LambdaType::compose(LambdaType::T, LambdaType::T),
             )
         });
         &VAL
