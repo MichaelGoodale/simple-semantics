@@ -185,40 +185,6 @@ impl<'src> Expr<'src> {
                     .as_bool()
                     .unwrap(),
             ),
-            Expr::Unary(MonOp::Property(p, a_or_e)) => {
-                let p = scenario.properties.get(p)?;
-                let arg = arguments.first().unwrap();
-
-                if let Some(arg) = arg.to_base_value() {
-                    let e = arg.as_entity().unwrap();
-                    BaseValue::Bool(p.contains(&e))
-                } else {
-                    let e = arg.0;
-                    let p = match a_or_e {
-                        ActorOrEvent::Actor => BaseValue::ActorSet(
-                            p.iter()
-                                .filter_map(|x| match x {
-                                    Entity::Actor(a) => Some(*a),
-                                    Entity::Event(_) => None,
-                                })
-                                .collect(),
-                        ),
-                        ActorOrEvent::Event => BaseValue::EventSet(
-                            p.iter()
-                                .filter_map(|x| match x {
-                                    Entity::Actor(_) => None,
-                                    Entity::Event(e) => Some(*e),
-                                })
-                                .collect(),
-                        ),
-                    };
-
-                    let value_len = ValueId(arguments[0].1.0.len() as u32);
-
-                    return Some(vec![InnerValue::Base(p), InnerValue::App(value_len, e)]);
-                }
-            }
-
             Expr::Unary(MonOp::Iota(a_o_e)) => todo!(),
             Expr::Constant(Constant::Everyone) => BaseValue::ActorSet(scenario.actors.clone()),
             Expr::Constant(Constant::EveryEvent) => {

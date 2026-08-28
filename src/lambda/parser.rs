@@ -1,131 +1,206 @@
 use crate::{
+    Actor, Event,
     lambda::{
         Bvar, ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
+        PrimitiveVarType::{self},
         ReductionError, RootedLambdaPool,
         types::{LambdaType, TypeError, core_type_parser},
     },
-    language::Expr,
+    language::{ActorOrEvent, BinOp, Constant, Expr, MonOp, Quantifier},
 };
+use ariadne::{Color, Label, Report, Source};
 use chumsky::{
     extra::ParserExtra,
     input::ValueInput,
-    label::LabelError,
     pratt::prefix,
     prelude::*,
-    text::{TextExpected, inline_whitespace},
-    util::MaybeRef,
+    span::{SimpleSpan, Spanned},
+    text::inline_whitespace,
 };
 use std::{
     collections::{HashMap, VecDeque},
     fmt::{Debug, Display},
+    ops::Range,
 };
 
 use thiserror::Error;
 
 ///Error in parsing a lambda expression
-#[derive(Debug, Error, Clone)]
-pub enum LambdaParseError {
-    ///Core error in parsing
-    #[error("ParseError({0})")]
-    ParseError(String),
+#[derive(Error, Debug, Clone)]
+pub struct LambdaParseError(Vec<OwnedParseError>, String);
 
-    ///A free variable was left untyped
-    #[error("You must provide a type for unbound free variable {0} like so \"{0}#<e,t>\"")]
-    UnTypedFreeVariable(String),
-
-    ///When the expression was reduced, it lead to an error.
-    #[error("Reduction Error: {0}")]
-    ReductionError(#[from] ReductionError),
-
-    ///There is a type error in  apply function types
-    #[error("{0}")]
-    TypeError(String),
-
-    ///Type error in lower part
-    #[error("Type error: {0}")]
-    InnerTypeError(#[from] TypeError),
+#[derive(Debug, Clone)]
+enum OwnedParseError {
+    ParseError {
+        message: String,
+        reason: String,
+        span: Range<usize>,
+        contexts: Vec<(String, Range<usize>)>,
+    },
+    ApplicationError {
+        span: Range<usize>,
+        alpha: Range<usize>,
+        beta: Range<usize>,
+        alpha_type: LambdaType,
+        beta_type: LambdaType,
+    },
+    UnTypedFreeVariable {},
 }
 
-impl<'a, T: Display> From<Vec<Rich<'a, T>>> for LambdaParseError {
-    fn from(value: Vec<Rich<'a, T>>) -> Self {
-        LambdaParseError::ParseError(
-            value
-                .into_iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
+impl From<Rich<'_, String>> for OwnedParseError {
+    fn from(e: Rich<String>) -> OwnedParseError {
+        OwnedParseError::ParseError {
+            message: e.to_string(),
+            reason: e.reason().to_string(),
+            span: e.span().into_range(),
+            contexts: e
+                .contexts()
+                .map(|(label, span)| (label.to_string(), span.into_range()))
+                .collect::<Vec<_>>(),
+        }
+    }
+}
+
+impl Display for LambdaParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buf = Vec::new();
+        for e in &self.0 {
+            match e {
+                OwnedParseError::ParseError {
+                    message,
+                    reason,
+                    span,
+                    contexts,
+                } => Report::build(ariadne::ReportKind::Error, span.clone())
+                    .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+                    .with_message(message)
+                    .with_label(
+                        Label::new(span.clone())
+                            .with_message(reason)
+                            .with_color(Color::Red),
+                    )
+                    .with_labels(contexts.iter().map(|(label, span)| {
+                        Label::new(span.clone())
+                            .with_message(format!("while parsing this {label}"))
+                            .with_color(Color::Yellow)
+                    }))
+                    .finish(),
+                OwnedParseError::ApplicationError {
+                    span,
+                    alpha,
+                    beta,
+                    alpha_type,
+                    beta_type,
+                } => Report::build(ariadne::ReportKind::Error, span.clone())
+                    .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+                    .with_message(format!("Can't apply {beta_type} to {alpha_type}"))
+                    .with_label(
+                        Label::new(alpha.clone())
+                            .with_message(format!("Function has type {alpha_type}"))
+                            .with_color(Color::Red),
+                    )
+                    .with_label(
+                        Label::new(beta.clone())
+                            .with_message(format!("Argument has type {beta_type}"))
+                            .with_color(Color::Red),
+                    )
+                    .finish(),
+                OwnedParseError::UnTypedFreeVariable {} => todo!(),
+            }
+            .write(Source::from(&self.1), &mut buf)
+            .map_err(|_| std::fmt::Error)?;
+        }
+        let s = std::str::from_utf8(&buf).map_err(|_| std::fmt::Error)?;
+        f.write_str(s)?;
+
+        Ok(())
     }
 }
 
 impl<'src, T> RootedLambdaPool<'src, T>
 where
-    T: ParseLot + LambdaLanguageOfThought + Clone + PartialEq,
-    T::Token: Display + Clone + PartialEq,
+    T: ParseLot<'src> + LambdaLanguageOfThought + Clone + PartialEq + Debug,
+    T::Token: Display + Clone + PartialEq + Debug,
 {
     pub fn parse(s: &'src str) -> Result<RootedLambdaPool<'src, T>, LambdaParseError> {
         parse_lot(s)
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought> ParseTree<'src, T> {
-    fn add_to_pool(
-        self,
-        pool: &mut LambdaPool<'src, T>,
-        variable_names: &mut VariableContext<'src>,
-        lambda_depth: usize,
-    ) -> Result<LambdaExprRef, LambdaParseError> {
-        let expr: LambdaExpr<'src, T> = match self {
-            ParseTree::Application {
+fn add_to_pool<'src, T: LambdaLanguageOfThought>(
+    ast: Spanned<ParseTree<'src, T>>,
+    pool: &mut LambdaPool<'src, T>,
+    variable_names: &mut VariableContext<'src>,
+    errors: &mut Vec<OwnedParseError>,
+    lambda_depth: usize,
+) -> LambdaExprRef {
+    let expr: LambdaExpr<'src, T> = match ast.inner {
+        ParseTree::Application {
+            subformula,
+            argument,
+        } => {
+            let sub_span = subformula.span.into_range();
+            let arg_span = argument.span.into_range();
+            let subformula = add_to_pool(*subformula, pool, variable_names, errors, lambda_depth);
+            let argument = add_to_pool(*argument, pool, variable_names, errors, lambda_depth);
+
+            let f = pool.get_type(subformula).expect("wee");
+            let arg = pool.get_type(argument).expect("woo");
+
+            if !f.can_apply(&arg) {
+                errors.push(OwnedParseError::ApplicationError {
+                    span: ast.span.into_range(),
+                    alpha: sub_span,
+                    beta: arg_span,
+                    alpha_type: f,
+                    beta_type: arg,
+                })
+                /*
+                return Err(LambdaParseError::FailedApplication(
+                    "Can't apply subformula to argument".to_string(),
+                ));*/
+            }
+
+            LambdaExpr::Application {
                 subformula,
                 argument,
-            } => {
-                let subformula = subformula.add_to_pool(pool, variable_names, lambda_depth)?;
-                let argument = argument.add_to_pool(pool, variable_names, lambda_depth)?;
-
-                let f = pool.get_type(subformula)?;
-                let arg = pool.get_type(argument)?;
-
-                if !f.can_apply(&arg) {
-                    return Err(LambdaParseError::TypeError(
-                        "Can't apply subformula to argument".to_string(),
-                    ));
-                }
-
-                LambdaExpr::Application {
-                    subformula,
-                    argument,
-                }
             }
-            ParseTree::Lambda {
-                body,
-                var,
-                lambda_type,
-            } => {
-                variable_names.bind_var(var, lambda_depth + 1, lambda_type.clone());
-                let body = body.add_to_pool(pool, variable_names, lambda_depth + 1)?;
-                variable_names.unbind(var);
-                LambdaExpr::Lambda(body, lambda_type.clone())
-            }
-            ParseTree::Variable(var) => variable_names.to_expr(var, None, lambda_depth)?,
-            ParseTree::FreeVariable(var, lambda_type) => {
-                variable_names.to_expr(var, Some(lambda_type.clone()), lambda_depth)?
-            }
-            ParseTree::LanguageOfThoughtExpr(e) => {
-                LambdaExpr::LanguageOfThoughtExpr(e, ExprType::NoVar)
-            }
-            ParseTree::LanguageOfThoughtExprBindOne(..)
-            | ParseTree::LanguageOfThoughtExprBindTwo(..) => todo!(),
-        };
-        Ok(pool.add(expr))
-    }
+        }
+        ParseTree::Lambda {
+            body,
+            var,
+            lambda_type,
+        } => {
+            variable_names.bind_var(var, lambda_depth + 1, lambda_type.clone());
+            let body = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1);
+            variable_names.unbind(var);
+            LambdaExpr::Lambda(body, lambda_type.clone())
+        }
+        ParseTree::Variable(var) => variable_names.to_expr(var, None, lambda_depth).unwrap(),
+        ParseTree::FreeVariable(var, lambda_type) => variable_names
+            .to_expr(var, Some(lambda_type.clone()), lambda_depth)
+            .unwrap(),
+        ParseTree::LanguageOfThoughtExpr(e) => {
+            LambdaExpr::LanguageOfThoughtExpr(e, ExprType::NoVar)
+        }
+        ParseTree::LanguageOfThoughtExprBindOne(..)
+        | ParseTree::LanguageOfThoughtExprBindTwo(..) => todo!(),
+    };
+    pool.add(expr)
+}
 
-    fn into_pool(self) -> Result<RootedLambdaPool<'src, T>, LambdaParseError> {
-        let mut pool = LambdaPool::new();
+fn into_pool<'src, T: LambdaLanguageOfThought>(
+    ast: Spanned<ParseTree<'src, T>>,
+) -> Result<RootedLambdaPool<'src, T>, Vec<OwnedParseError>> {
+    let mut pool = LambdaPool::new();
 
-        let mut var_labels = VariableContext::default();
-        let root = self.add_to_pool(&mut pool, &mut var_labels, 0)?;
+    let mut var_labels = VariableContext::default();
+    let mut errors = vec![];
+    let root = add_to_pool(ast, &mut pool, &mut var_labels, &mut errors, 0);
+    if errors.is_empty() {
         Ok(RootedLambdaPool::new(pool, root))
+    } else {
+        Err(errors)
     }
 }
 
@@ -138,7 +213,7 @@ impl<'src> VariableContext<'src> {
         variable: &'src str,
         lambda_type: Option<LambdaType>,
         lambda_depth: usize,
-    ) -> Result<LambdaExpr<'src, T>, LambdaParseError> {
+    ) -> Result<LambdaExpr<'src, T>, OwnedParseError> {
         Ok(match self.0.get(variable) {
             Some(vars) if !vars.is_empty() => {
                 let (og_depth, lambda_type) = vars
@@ -156,7 +231,8 @@ impl<'src> VariableContext<'src> {
                     LambdaExpr::FreeVariable(free_var, lambda_type)
                 }
                 None => {
-                    return Err(LambdaParseError::UnTypedFreeVariable(variable.to_string()));
+                    //TODO: I don't think this should actually ever occur, but should check
+                    return Err(OwnedParseError::UnTypedFreeVariable {});
                 }
             },
         })
@@ -177,58 +253,179 @@ impl<'src> VariableContext<'src> {
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum ParseTree<'src, T> {
     Lambda {
-        body: Box<ParseTree<'src, T>>,
+        body: Box<Spanned<ParseTree<'src, T>>>,
         lambda_type: LambdaType,
         var: &'src str,
     },
     Variable(&'src str),
     FreeVariable(&'src str, LambdaType),
     Application {
-        subformula: Box<ParseTree<'src, T>>,
-        argument: Box<ParseTree<'src, T>>,
+        subformula: Box<Spanned<ParseTree<'src, T>>>,
+        argument: Box<Spanned<ParseTree<'src, T>>>,
     },
     LanguageOfThoughtExpr(T),
-    LanguageOfThoughtExprBindOne(T, Box<ParseTree<'src, T>>),
-    LanguageOfThoughtExprBindTwo(T, Box<ParseTree<'src, T>>, Box<ParseTree<'src, T>>),
+    LanguageOfThoughtExprBindOne(T, Box<Spanned<ParseTree<'src, T>>>),
+    LanguageOfThoughtExprBindTwo(
+        T,
+        Box<Spanned<ParseTree<'src, T>>>,
+        Box<Spanned<ParseTree<'src, T>>>,
+    ),
 }
 
 fn keyword<'src, E>() -> impl Parser<'src, &'src str, &'src str, E> + Copy
 where
     E: ParserExtra<'src, &'src str>,
 {
-    one_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+    one_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
         .repeated()
         .at_least(1)
         .to_slice()
 }
 
-type ChumskyErr<'tokens, 'src, T> = extra::Err<Rich<'tokens, Token<'src, T>, Span>>;
+type ChumskyErr<'tokens, 'src, T> = extra::Err<Rich<'tokens, Token<'src, T>>>;
 
-pub trait ParseLot {
+pub trait ParseLot<'src> {
     type Token;
+
+    fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>>;
+
+    fn bind_var_type(token: &Self::Token) -> PrimitiveVarType;
+    fn into_expr(token: Self::Token) -> Self;
 }
 
-impl ParseLot for () {
+impl<'src> ParseLot<'src> for () {
     type Token = &'static str;
-}
 
-impl ParseLot for Expr<'_> {
-    type Token = &'static str;
+    fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>> {
+        just("1").to("1")
+    }
+
+    fn bind_var_type(token: &Self::Token) -> PrimitiveVarType {
+        PrimitiveVarType::NoVar
+    }
+
+    fn into_expr(token: Self::Token) -> Self {
+        todo!()
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-enum Token<'src, T: ParseLot> {
+pub enum ExprToken<'src> {
+    Constant(Constant<'src>),
+    BinOp(BinOp),
+    MonOp(MonOp),
+    Actor(Actor<'src>),
+    Event(Event),
+    Iota(ActorOrEvent),
+    Quantifier(Quantifier, ActorOrEvent),
+}
+
+impl Display for ExprToken<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExprToken::Actor(a) => write!(f, "a_{a}"),
+            ExprToken::Event(n) => write!(f, "e_{n}"),
+            ExprToken::BinOp(bin_op) => write!(f, "{bin_op}"),
+            ExprToken::Quantifier(quantifier, actor_or_event) => write!(
+                f,
+                "{quantifier}{}",
+                match actor_or_event {
+                    ActorOrEvent::Actor => "",
+                    ActorOrEvent::Event => "_e",
+                }
+            ),
+            ExprToken::Iota(ActorOrEvent::Event) => write!(f, "iota_e"),
+            ExprToken::Iota(ActorOrEvent::Actor) => write!(f, "iota"),
+            ExprToken::Constant(constant) => write!(f, "{constant}"),
+            ExprToken::MonOp(mon_op) => write!(f, "{mon_op}"),
+        }
+    }
+}
+
+impl<'src> ParseLot<'src> for Expr<'src> {
+    type Token = ExprToken<'src>;
+
+    fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>> {
+        choice((
+            just("True").to(ExprToken::Constant(Constant::Tautology)),
+            just("False").to(ExprToken::Constant(Constant::Contradiction)),
+            just("all_a").to(ExprToken::Constant(Constant::Everyone)),
+            just("all_e").to(ExprToken::Constant(Constant::EveryEvent)),
+            just('&').to(ExprToken::BinOp(BinOp::And)),
+            just('|').to(ExprToken::BinOp(BinOp::Or)),
+            just('~').to(ExprToken::MonOp(MonOp::Not)),
+            just("AgentOf").to(ExprToken::BinOp(BinOp::AgentOf)),
+            just("PatientOf").to(ExprToken::BinOp(BinOp::PatientOf)),
+            just("iota_e").to(ExprToken::Iota(ActorOrEvent::Event)),
+            just("iota").to(ExprToken::Iota(ActorOrEvent::Actor)),
+            choice((
+                just("every").to(Quantifier::Universal),
+                just("some").to(Quantifier::Existential),
+            ))
+            .then(just("_e").or_not())
+            .map(|(q, t)| {
+                ExprToken::Quantifier(
+                    q,
+                    if t.is_some() {
+                        ActorOrEvent::Event
+                    } else {
+                        ActorOrEvent::Actor
+                    },
+                )
+            }),
+            just("a_").ignore_then(keyword()).map(ExprToken::Actor),
+            just("e_")
+                .ignore_then(text::int(10))
+                .map(|s: &str| ExprToken::Event(s.parse().unwrap())),
+            just("p")
+                .ignore_then(
+                    just("a")
+                        .to(ActorOrEvent::Actor)
+                        .or(just("e").to(ActorOrEvent::Event)),
+                )
+                .then_ignore(just("_"))
+                .then(keyword())
+                .map(|(t, s)| ExprToken::Constant(Constant::Property(s, t))),
+        ))
+    }
+
+    fn into_expr(token: Self::Token) -> Self {
+        match token {
+            ExprToken::Constant(constant) => Expr::Constant(constant),
+            ExprToken::BinOp(bin_op) => Expr::Binary(bin_op),
+            ExprToken::MonOp(mon_op) => Expr::Unary(mon_op),
+            ExprToken::Actor(a) => Expr::Actor(a),
+            ExprToken::Event(e) => Expr::Event(e),
+            ExprToken::Iota(actor_or_event) => Expr::Unary(MonOp::Iota(actor_or_event)),
+            ExprToken::Quantifier(quantifier, actor_or_event) => Expr::Quantifier {
+                quantifier,
+                var_type: actor_or_event,
+            },
+        }
+    }
+
+    fn bind_var_type(token: &Self::Token) -> PrimitiveVarType {
+        match token {
+            ExprToken::Iota(_) => PrimitiveVarType::BindVar,
+            ExprToken::Quantifier(..) => PrimitiveVarType::BindVarTwoBodies,
+            _ => PrimitiveVarType::NoVar,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum Token<'src, T: ParseLot<'src>> {
     OpenDelim,
     ArgSep,
     CloseDelim,
     Lambda(LambdaType, &'src str),
     Variable(&'src str),
     FreeVariable(&'src str, LambdaType),
-    LanguageOfThoughtToken(T::Token),
+    LanguageOfThought(T::Token),
 }
-impl<T> Display for Token<'_, T>
+impl<'src, T> Display for Token<'src, T>
 where
-    T: ParseLot,
+    T: ParseLot<'src>,
     T::Token: Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -239,28 +436,22 @@ where
             Token::Lambda(lambda_type, t) => write!(f, "lambda {lambda_type} {t}"),
             Token::Variable(v) => write!(f, "{v}"),
             Token::FreeVariable(v, lambda_type) => write!(f, "{v}#{lambda_type}"),
-            Token::LanguageOfThoughtToken(t) => write!(f, "{t}"),
+            Token::LanguageOfThought(t) => write!(f, "{t}"),
         }
     }
 }
 
-pub type Span = SimpleSpan;
-pub type Spanned<T> = (T, Span);
-
-fn lexer<'src, T, E>() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src, T>>>, E>
+fn lexer<'src, T>()
+-> impl Parser<'src, &'src str, Vec<Spanned<Token<'src, T>>>, extra::Err<Rich<'src, char>>>
 where
-    E: ParserExtra<'src, &'src str> + 'src,
-    E::Error: LabelError<'src, &'src str, TextExpected<&'src str>>
-        + LabelError<'src, &'src str, MaybeRef<'src, char>>
-        + LabelError<'src, &'src str, &'static str>
-        + LabelError<'src, &'src str, TextExpected<()>>,
-    T: ParseLot + Clone,
+    T: ParseLot<'src> + Clone,
     T::Token: Clone,
 {
     choice((
         just(',').to(Token::ArgSep),
         just('(').to(Token::OpenDelim),
         just(')').to(Token::CloseDelim),
+        T::tokenizer().map(Token::LanguageOfThought),
         just("lambda")
             .then(inline_whitespace().at_least(1))
             .ignore_then(core_type_parser())
@@ -278,28 +469,35 @@ where
                 }
             }),
     ))
-    .map_with(|t, e| (t, e.span()))
+    .spanned()
     .padded()
     .repeated()
     .collect()
 }
 
 fn language_parser<'tokens, 'src: 'tokens, I, T>()
--> impl Parser<'tokens, I, ParseTree<'src, T>, extra::Err<Rich<'tokens, Token<'src, T>, Span>>> + Clone
+-> impl Parser<'tokens, I, Spanned<ParseTree<'src, T>>, extra::Err<Rich<'tokens, Token<'src, T>>>>
++ Clone
 where
     I: ValueInput<'tokens, Token = Token<'src, T>, Span = SimpleSpan> + Clone,
-    T: 'tokens + ParseLot + Clone + PartialEq,
+    T: 'tokens + ParseLot<'src> + Clone + PartialEq,
     T::Token: Clone + PartialEq,
 {
     let var = select! {
-        Token::Variable(a) => ParseTree::Variable(a),
-        Token::FreeVariable(a, t) => ParseTree::FreeVariable(a, t)
+        Token::Variable(a) = e => ParseTree::Variable(a).with_span(e.span()),
+        Token::FreeVariable(a, t) = e => ParseTree::FreeVariable(a, t).with_span(e.span())
     }
     .labelled("variable");
 
-    recursive(|expr| {
+    let lot_prim = select! {
+        Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::NoVar => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span()),
+    }
+    .labelled("LOT primitive");
+
+    recursive(|expr: Recursive<_>| {
         let application = choice((
             var,
+            lot_prim,
             expr.clone()
                 .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
         ))
@@ -312,15 +510,22 @@ where
         )
         .then_ignore(just(Token::CloseDelim))
         .map(|(t, mut args)| {
-            let mut tree = ParseTree::Application {
+            let arg: Spanned<ParseTree<'src, T>> =
+                args.pop_front().expect("previous primitive has at least 1");
+            let t_span = t.span.union(arg.span);
+            let mut tree: chumsky::span::Spanned<ParseTree<T>> = ParseTree::Application {
                 subformula: Box::new(t),
-                argument: Box::new(args.pop_front().expect("previous primitive has at least 1")),
-            };
+                argument: Box::new(arg),
+            }
+            .with_span(t_span);
+
             while let Some(x) = args.pop_front() {
+                let t_span = tree.span.union(x.span);
                 tree = ParseTree::Application {
                     subformula: Box::new(tree),
                     argument: Box::new(x),
-                };
+                }
+                .with_span(t_span);
             }
 
             tree
@@ -329,39 +534,70 @@ where
         let atom = choice((
             application,
             var,
+            lot_prim,
             expr.delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
         ));
         atom.pratt((prefix(
             0,
-            select! {Token::Lambda(t, var) => (t, var)},
-            |(lambda_type, var), r, _| ParseTree::Lambda {
-                body: Box::new(r),
-                var,
-                lambda_type,
+            select! {Token::Lambda(t, var) = e => (t, var, e.span())},
+            |(lambda_type, var, lambda_span), r, _| {
+                ParseTree::Lambda {
+                    body: Box::new(r),
+                    var,
+                    lambda_type,
+                }
+                .with_span(lambda_span)
             },
         ),))
     })
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
-pub fn parse_lot<T>(s: &str) -> Result<RootedLambdaPool<'_, T>, LambdaParseError>
+pub fn parse_lot<'src, T>(s: &'src str) -> Result<RootedLambdaPool<'src, T>, LambdaParseError>
 where
-    T: ParseLot + LambdaLanguageOfThought + Clone + PartialEq,
-    T::Token: Display + Clone + PartialEq,
+    T: ParseLot<'src> + LambdaLanguageOfThought + Clone + PartialEq + Debug,
+    T::Token: Display + Clone + PartialEq + Debug,
 {
-    let tokens = lexer::<T, extra::Err<Rich<char>>>()
+    let (tokens, token_errs) = lexer::<T>()
         .then_ignore(end())
         .parse(s)
-        .into_result()?;
+        .into_output_errors();
 
-    language_parser()
-        .parse(
-            tokens
-                .as_slice()
-                .map((s.len()..s.len()).into(), |(t, s)| (t, s)),
-        )
-        .into_result()?
-        .into_pool()
+    let (parse_errs, semantic_errors) = if let Some(tokens) = &tokens {
+        let e = tokens
+            .iter()
+            .map(|x| x.span)
+            .reduce(|x, acc| acc.union(x))
+            .unwrap();
+        let (ast, parse_errs) = language_parser()
+            .parse(tokens.as_slice().split_spanned(e))
+            .into_output_errors();
+
+        if let Some(ast) = ast {
+            match into_pool(ast) {
+                Ok(x) => return Ok(x),
+                Err(e) => (parse_errs, e),
+            }
+        } else {
+            (parse_errs, Vec::new())
+        }
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    Err(LambdaParseError(
+        token_errs
+            .into_iter()
+            .map(|e| e.map_token(|c| c.to_string()).into())
+            .chain(
+                parse_errs
+                    .into_iter()
+                    .map(|e| e.map_token(|tok| tok.to_string()).into()),
+            )
+            .chain(semantic_errors)
+            .collect(),
+        s.to_string(),
+    ))
 }
 
 #[cfg(test)]

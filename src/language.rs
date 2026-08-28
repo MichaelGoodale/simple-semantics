@@ -46,32 +46,26 @@ impl BinOp {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 ///All unary operations
-pub enum MonOp<'a> {
+pub enum MonOp {
     ///Logical not
     Not,
-    ///Returns whether an actor or event is a member of a predicate defined by the label.
-    Property(PropertyLabel<'a>, ActorOrEvent),
 
     ///Takes an actor or event predicate and returns the one present example that has it.
     Iota(ActorOrEvent),
 }
 
-impl MonOp<'_> {
+impl MonOp {
     fn get_argument_type(&self) -> &LambdaType {
         match self {
-            MonOp::Property(_, ActorOrEvent::Actor) => LambdaType::a(),
-            MonOp::Property(_, ActorOrEvent::Event) => LambdaType::e(),
             MonOp::Iota(ActorOrEvent::Actor | ActorOrEvent::Event) | MonOp::Not => LambdaType::t(),
         }
     }
 }
 
-impl Display for MonOp<'_> {
+impl Display for MonOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MonOp::Not => write!(f, "~"),
-            MonOp::Property(x, ActorOrEvent::Actor) => write!(f, "pa_{x}"),
-            MonOp::Property(x, ActorOrEvent::Event) => write!(f, "pe_{x}"),
             MonOp::Iota(ActorOrEvent::Actor) => write!(f, "iota"),
             MonOp::Iota(ActorOrEvent::Event) => write!(f, "iota_e"),
         }
@@ -195,7 +189,7 @@ pub enum Expr<'a> {
     ///Any binary function.
     Binary(BinOp),
     ///Any unary function.
-    Unary(MonOp<'a>),
+    Unary(MonOp),
     ///All constants.
     Constant(Constant<'a>),
 }

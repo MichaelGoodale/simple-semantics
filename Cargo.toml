@@ -8,6 +8,7 @@ ahash = { version = "0.8.12", features = [
   "compile-time-rng",
   "std",
 ], default-features = false }
+ariadne = "0.6.0"
 chumsky = { version = "0.13.0", features = ["pratt"] }
 itertools = "0.15.0"
 rand = { version = "0.10.2", optional = true }

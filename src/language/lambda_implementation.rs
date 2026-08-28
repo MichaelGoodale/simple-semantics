@@ -2,7 +2,15 @@ use ahash::HashMap;
 use thiserror::Error;
 
 use super::{ActorOrEvent, BinOp, Expr, MonOp};
-use crate::lambda::{LambdaLanguageOfThought, ReductionError, RootedLambdaPool, types::LambdaType};
+use crate::{
+    lambda::{
+        LambdaLanguageOfThought,
+        PrimitiveVarType::{self},
+        ReductionError, RootedLambdaPool,
+        types::LambdaType,
+    },
+    language::Constant,
+};
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum LambdaConversionError {
@@ -29,16 +37,34 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
     }
 
-    fn n_bind_vars(&self) -> usize {
+    fn bind_vars(&self) -> PrimitiveVarType {
         match self {
-            Expr::Quantifier { .. } => 2,
-            Expr::Unary(MonOp::Iota(_), ..) => 1,
-            _ => 0,
+            Expr::Quantifier { .. } => PrimitiveVarType::BindVarTwoBodies,
+            Expr::Unary(MonOp::Iota(_), ..) => PrimitiveVarType::BindVar,
+            _ => PrimitiveVarType::NoVar,
         }
     }
 
     fn typ(&self) -> &LambdaType {
-        todo!()
+        match self {
+            Expr::Quantifier { .. } | Expr::Unary(MonOp::Iota(_)) => {
+                unimplemented!("Not sure what to do for quantifiers yet")
+            }
+            Expr::Variable(variable) => unimplemented!("To be removed!"),
+            Expr::Actor(_) => &LambdaType::A,
+            Expr::Event(_) => &LambdaType::E,
+            Expr::Binary(bin_op) => match bin_op {
+                BinOp::AgentOf | BinOp::PatientOf => LambdaType::aet(),
+                BinOp::And | BinOp::Or => LambdaType::ttt(),
+            },
+            Expr::Unary(MonOp::Not) => LambdaType::tt(),
+            Expr::Constant(Constant::Everyone) => LambdaType::at(),
+            Expr::Constant(Constant::EveryEvent) => LambdaType::et(),
+            Expr::Constant(Constant::Tautology) => &LambdaType::T,
+            Expr::Constant(Constant::Contradiction) => &LambdaType::T,
+            Expr::Constant(Constant::Property(_, ActorOrEvent::Actor)) => LambdaType::at(),
+            Expr::Constant(Constant::Property(_, ActorOrEvent::Event)) => LambdaType::et(),
+        }
     }
 }
 

@@ -109,7 +109,7 @@ pub trait LambdaLanguageOfThought {
     ///Returns the type of the bound variable at an instruction
     fn var_type(&self) -> Option<&LambdaType>;
 
-    fn n_bind_vars(&self) -> usize;
+    fn bind_vars(&self) -> PrimitiveVarType;
 
     ///Get the type of an expression.
     fn typ(&self) -> &LambdaType;
@@ -129,8 +129,8 @@ impl LambdaLanguageOfThought for () {
         None
     }
 
-    fn n_bind_vars(&self) -> usize {
-        0
+    fn bind_vars(&self) -> PrimitiveVarType {
+        PrimitiveVarType::NoVar
     }
 }
 
@@ -163,6 +163,13 @@ impl From<usize> for FreeVar<'_> {
     fn from(value: usize) -> Self {
         FreeVar::Anonymous(value)
     }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub enum PrimitiveVarType {
+    NoVar,
+    BindVar,
+    BindVarTwoBodies,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1852,7 +1859,7 @@ mod test {
                 lambda_type: _,
                 constant_function,
                 n_nodes: _,
-            } = RootedLambdaPool::<Expr>::parse(s).unwrap().stats()
+            } = RootedLambdaPool::<Expr>::parse(s)?.stats()
             else {
                 panic!("{s} is poorly formed")
             };
@@ -1869,7 +1876,7 @@ mod test {
                 lambda_type: _,
                 constant_function,
                 n_nodes: _,
-            } = RootedLambdaPool::<Expr>::parse(s).unwrap().stats()
+            } = RootedLambdaPool::<Expr>::parse(s)?.stats()
             else {
                 panic!("{s} is poorly formed")
             };
