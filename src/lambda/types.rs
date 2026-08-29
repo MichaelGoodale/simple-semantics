@@ -252,6 +252,60 @@ impl LambdaType {
         &VAL
     }
 
+    ///Get the `<<a,t>, t>` function type
+    #[must_use]
+    pub fn att() -> &'static Self {
+        static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
+            LambdaType::compose(
+                LambdaType::compose(LambdaType::a().clone(), LambdaType::t().clone()),
+                LambdaType::t().clone(),
+            )
+        });
+        &VAL
+    }
+
+    ///Get the `<<a,t>, a>` function type
+    #[must_use]
+    pub fn ata() -> &'static Self {
+        static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
+            LambdaType::compose(
+                LambdaType::compose(LambdaType::a().clone(), LambdaType::t().clone()),
+                LambdaType::a().clone(),
+            )
+        });
+        &VAL
+    }
+
+    ///Get the `<<e,t>, e>` function type
+    #[must_use]
+    pub fn ete() -> &'static Self {
+        static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
+            LambdaType::compose(
+                LambdaType::compose(LambdaType::e().clone(), LambdaType::t().clone()),
+                LambdaType::e().clone(),
+            )
+        });
+        &VAL
+    }
+
+    ///Get the `<<e,t>, <<e,t>, t>>` function type
+    #[must_use]
+    pub fn gq_e() -> &'static Self {
+        static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
+            LambdaType::compose(LambdaType::et().clone(), LambdaType::ett().clone())
+        });
+        &VAL
+    }
+
+    ///Get the `<<a,t>, <<a,t>, t>>` function type
+    #[must_use]
+    pub fn gq_a() -> &'static Self {
+        static VAL: LazyLock<LambdaType> = LazyLock::new(|| {
+            LambdaType::compose(LambdaType::at().clone(), LambdaType::att().clone())
+        });
+        &VAL
+    }
+
     ///Get the `<t, t>` function type
     #[must_use]
     pub fn tt() -> &'static Self {

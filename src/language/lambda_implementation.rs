@@ -47,9 +47,16 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
 
     fn typ(&self) -> &LambdaType {
         match self {
-            Expr::Quantifier { .. } | Expr::Unary(MonOp::Iota(_)) => {
-                unimplemented!("Not sure what to do for quantifiers yet")
-            }
+            Expr::Quantifier {
+                var_type: ActorOrEvent::Actor,
+                ..
+            } => LambdaType::gq_a(),
+            Expr::Quantifier {
+                var_type: ActorOrEvent::Event,
+                ..
+            } => LambdaType::gq_e(),
+            Expr::Unary(MonOp::Iota(ActorOrEvent::Actor)) => LambdaType::ata(),
+            Expr::Unary(MonOp::Iota(ActorOrEvent::Event)) => LambdaType::ete(),
             Expr::Variable(variable) => unimplemented!("To be removed!"),
             Expr::Actor(_) => &LambdaType::A,
             Expr::Event(_) => &LambdaType::E,

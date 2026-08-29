@@ -792,7 +792,21 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
                 let subformula_type = self.get_type(*subformula)?;
                 Ok(subformula_type.rhs()?.clone())
             }
-            LambdaExpr::LanguageOfThoughtExpr(x, _) => Ok(x.typ().clone()),
+            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => Ok(x.typ().clone()),
+            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVar(_)) => {
+                let (_, y) = x
+                    .typ()
+                    .split()
+                    .expect("Implementation Error: If binding a variable body, the expression must be a function");
+                Ok(y.clone())
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVarTwoBodies(..)) => {
+                let (_, y) = x
+                    .typ()
+                    .split().and_then(|(_, x)| x.split())
+                    .expect("Implementation Error: If binding a variable body, the expression must be a two-place function");
+                Ok(y.clone())
+            }
         }
     }
 

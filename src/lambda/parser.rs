@@ -3,8 +3,11 @@ use crate::{
     lambda::{
         Bvar, ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
         PrimitiveVarType::{self},
-        ReductionError, RootedLambdaPool,
-        types::{LambdaType, TypeError, core_type_parser},
+        RootedLambdaPool,
+        types::{
+            LambdaType::{self, A},
+            core_type_parser,
+        },
     },
     language::{ActorOrEvent, BinOp, Constant, Expr, MonOp, Quantifier},
 };
@@ -29,6 +32,12 @@ use thiserror::Error;
 #[derive(Error, Debug, Clone)]
 pub struct LambdaParseError(Vec<OwnedParseError>, String);
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct QuantifierProblem {
+    span: Range<usize>,
+    found: LambdaType,
+}
+
 #[derive(Debug, Clone)]
 enum OwnedParseError {
     ParseError {
@@ -43,6 +52,14 @@ enum OwnedParseError {
         beta: Range<usize>,
         alpha_type: LambdaType,
         beta_type: LambdaType,
+    },
+    QuantifierError {
+        span: Range<usize>,
+        quantifier_span: Range<usize>,
+        intended: LambdaType,
+        body_span: QuantifierProblem,
+        second_body_span: Option<QuantifierProblem>,
+        is_double: bool,
     },
     UnTypedFreeVariable {},
 }
@@ -106,6 +123,48 @@ impl Display for LambdaParseError {
                     )
                     .finish(),
                 OwnedParseError::UnTypedFreeVariable {} => todo!(),
+                OwnedParseError::QuantifierError {
+                    span,
+                    quantifier_span,
+                    intended,
+                    body_span:
+                        QuantifierProblem {
+                            span: body_span,
+                            found,
+                        },
+                    second_body_span,
+                    is_double,
+                } => {
+                    let r = Report::build(ariadne::ReportKind::Error, span.clone())
+                        .with_config(
+                            ariadne::Config::new().with_index_type(ariadne::IndexType::Byte),
+                        )
+                        .with_message("This expression's body is of the wrong type.")
+                        .with_label(
+                            Label::new(quantifier_span.clone())
+                                .with_message(format!(
+                                    "This expression has {} of type {intended}",
+                                    if *is_double { "bodies" } else { "a body" }
+                                ))
+                                .with_color(Color::Yellow),
+                        )
+                        .with_label(
+                            Label::new(body_span.clone())
+                                .with_message(format!("This body is of type {found}"))
+                                .with_color(Color::Red),
+                        );
+
+                    if let Some(QuantifierProblem { span, found }) = second_body_span {
+                        r.with_label(
+                            Label::new(span.clone())
+                                .with_message(format!("This body is of type {found}"))
+                                .with_color(Color::Red),
+                        )
+                        .finish()
+                    } else {
+                        r.finish()
+                    }
+                }
             }
             .write(Source::from(&self.1), &mut buf)
             .map_err(|_| std::fmt::Error)?;
@@ -127,7 +186,7 @@ where
     }
 }
 
-fn add_to_pool<'src, T: LambdaLanguageOfThought>(
+fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
     ast: Spanned<ParseTree<'src, T>>,
     pool: &mut LambdaPool<'src, T>,
     variable_names: &mut VariableContext<'src>,
@@ -155,10 +214,6 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought>(
                     alpha_type: f,
                     beta_type: arg,
                 })
-                /*
-                return Err(LambdaParseError::FailedApplication(
-                    "Can't apply subformula to argument".to_string(),
-                ));*/
             }
 
             LambdaExpr::Application {
@@ -176,6 +231,120 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought>(
             variable_names.unbind(var);
             LambdaExpr::Lambda(body, lambda_type.clone())
         }
+        ParseTree::LanguageOfThoughtExprBindOne { body, var, expr } => {
+            let var_type = expr.var_type().unwrap_or_else(||panic!("Implementation error: {expr:?} is being parsed as a variable binding expression, but expr.var_type() returns None"));
+            let (arg_type, _)= expr.typ().split().unwrap_or_else(|_| panic!("Implementation error: {expr:?} is parsed as a variable binding expression but is not a function"));
+            let (implict_var_type, body_type) = arg_type.split().unwrap_or_else(|_| {
+                panic!(
+                    "Implementation error: {:?} is not at least a two place function",
+                    expr.inner
+                )
+            });
+            debug_assert_eq!(
+                var_type, implict_var_type,
+                "Implementation error: {:?}'s body must take as argument its {var_type:?}",
+                expr.inner
+            );
+
+            variable_names.bind_var(var, lambda_depth + 1, var_type.clone());
+            let body_span = body.span.into_range();
+            let body_ref = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1);
+            let found_body_type = pool.get_type(body_ref).unwrap();
+            if &found_body_type != body_type {
+                errors.push(OwnedParseError::QuantifierError {
+                    span: ast.span.into_range(),
+                    quantifier_span: expr.span.into_range(),
+                    intended: body_type.clone(),
+                    body_span: QuantifierProblem {
+                        found: found_body_type,
+                        span: body_span,
+                    },
+                    second_body_span: None,
+                    is_double: false,
+                })
+            }
+
+            variable_names.unbind(var);
+            LambdaExpr::LanguageOfThoughtExpr(expr.inner, ExprType::BindVar(body_ref))
+        }
+        ParseTree::LanguageOfThoughtExprBindTwo {
+            body1,
+            body2,
+            var,
+            expr,
+        } => {
+            let var_type = expr.var_type().unwrap_or_else(||panic!("Implementation error: {expr:?} is being parsed as a variable binding expression, but expr.var_type() returns None"));
+            let (arg_type, arg_return_type) = expr.typ().split().unwrap_or_else(|_| panic!("Implementation error: {expr:?} is parsed as a variable binding expression but is not a function"));
+            let (arg_type2, return_type) = arg_return_type.split().unwrap_or_else(|_| panic!("Implementation error: {expr:?} is parsed as a variable binding expression but is not a function"));
+            debug_assert_eq!(
+                arg_type, arg_type2,
+                "Implementation error: {:?}'s two bodies must have the same type.",
+                expr.inner
+            );
+
+            let (implict_var_type, body_type) = arg_type.split().unwrap_or_else(|_| {
+                panic!(
+                    "Implementation error: {:?} is not at least a two place function",
+                    expr.inner
+                )
+            });
+            debug_assert_eq!(
+                var_type, implict_var_type,
+                "Implementation error: {:?}'s body must take as argument its {var_type:?}",
+                expr.inner
+            );
+
+            variable_names.bind_var(var, lambda_depth + 1, var_type.clone());
+            let bodies = [*body1, *body2];
+            let mut refs = [None, None];
+            let mut q_errors = [None, None];
+
+            for (x, body) in bodies.into_iter().zip(refs.iter_mut()) {
+                let body_span = x.span.into_range();
+                let i = add_to_pool(x, pool, variable_names, errors, lambda_depth + 1);
+                let found_body_type = pool.get_type(i).unwrap();
+
+                if &found_body_type != body_type {
+                    let q = QuantifierProblem {
+                        found: found_body_type,
+                        span: body_span,
+                    };
+                    if q_errors[0].is_some() {
+                        q_errors[1] = Some(q);
+                    } else {
+                        q_errors[0] = Some(q);
+                    }
+                }
+                *body = Some(i);
+            }
+
+            match q_errors {
+                [Some(q), None] => errors.push(OwnedParseError::QuantifierError {
+                    span: ast.span.into_range(),
+                    intended: body_type.clone(),
+                    quantifier_span: expr.span.into_range(),
+                    body_span: q,
+                    second_body_span: None,
+                    is_double: true,
+                }),
+                [Some(q1), Some(q2)] => errors.push(OwnedParseError::QuantifierError {
+                    span: ast.span.into_range(),
+                    intended: body_type.clone(),
+                    quantifier_span: expr.span.into_range(),
+                    body_span: q1,
+                    second_body_span: Some(q2),
+                    is_double: true,
+                }),
+                _ => {}
+            }
+
+            variable_names.unbind(var);
+            let [body1, body2] = refs;
+            LambdaExpr::LanguageOfThoughtExpr(
+                expr.inner,
+                ExprType::BindVarTwoBodies(body1.unwrap(), body2.unwrap()),
+            )
+        }
         ParseTree::Variable(var) => variable_names.to_expr(var, None, lambda_depth).unwrap(),
         ParseTree::FreeVariable(var, lambda_type) => variable_names
             .to_expr(var, Some(lambda_type.clone()), lambda_depth)
@@ -183,13 +352,11 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought>(
         ParseTree::LanguageOfThoughtExpr(e) => {
             LambdaExpr::LanguageOfThoughtExpr(e, ExprType::NoVar)
         }
-        ParseTree::LanguageOfThoughtExprBindOne(..)
-        | ParseTree::LanguageOfThoughtExprBindTwo(..) => todo!(),
     };
     pool.add(expr)
 }
 
-fn into_pool<'src, T: LambdaLanguageOfThought>(
+fn into_pool<'src, T: LambdaLanguageOfThought + Debug>(
     ast: Spanned<ParseTree<'src, T>>,
 ) -> Result<RootedLambdaPool<'src, T>, Vec<OwnedParseError>> {
     let mut pool = LambdaPool::new();
@@ -264,12 +431,17 @@ enum ParseTree<'src, T> {
         argument: Box<Spanned<ParseTree<'src, T>>>,
     },
     LanguageOfThoughtExpr(T),
-    LanguageOfThoughtExprBindOne(T, Box<Spanned<ParseTree<'src, T>>>),
-    LanguageOfThoughtExprBindTwo(
-        T,
-        Box<Spanned<ParseTree<'src, T>>>,
-        Box<Spanned<ParseTree<'src, T>>>,
-    ),
+    LanguageOfThoughtExprBindOne {
+        expr: Spanned<T>,
+        body: Box<Spanned<ParseTree<'src, T>>>,
+        var: &'src str,
+    },
+    LanguageOfThoughtExprBindTwo {
+        expr: Spanned<T>,
+        body1: Box<Spanned<ParseTree<'src, T>>>,
+        body2: Box<Spanned<ParseTree<'src, T>>>,
+        var: &'src str,
+    },
 }
 
 fn keyword<'src, E>() -> impl Parser<'src, &'src str, &'src str, E> + Copy
@@ -282,14 +454,12 @@ where
         .to_slice()
 }
 
-type ChumskyErr<'tokens, 'src, T> = extra::Err<Rich<'tokens, Token<'src, T>>>;
-
 pub trait ParseLot<'src> {
     type Token;
 
     fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>>;
     fn is_infix(token: &Self::Token) -> bool;
-    fn is_prefix(token: &Self::Token) -> bool; 
+    fn is_prefix(token: &Self::Token) -> bool;
     fn bind_var_type(token: &Self::Token) -> PrimitiveVarType;
     fn into_expr(token: Self::Token) -> Self;
 }
@@ -301,21 +471,19 @@ impl<'src> ParseLot<'src> for () {
         just("1").to("1")
     }
 
-    fn is_infix(token: &Self::Token) -> bool {
+    fn is_infix(_: &Self::Token) -> bool {
         false
     }
 
-    fn is_prefix(token: &Self::Token) -> bool {
+    fn is_prefix(_: &Self::Token) -> bool {
         false
     }
 
-    fn bind_var_type(token: &Self::Token) -> PrimitiveVarType {
+    fn bind_var_type(_: &Self::Token) -> PrimitiveVarType {
         PrimitiveVarType::NoVar
     }
 
-    fn into_expr(token: Self::Token) -> Self {
-        todo!()
-    }
+    fn into_expr(_: Self::Token) -> Self {}
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -548,10 +716,47 @@ where
             tree
         });
 
+        let one_body= select! {
+            Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::BindVar => T::into_expr(x).with_span(e.span()),
+        }.then(
+            select! {Token::<T>::Variable(x) => x}
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone())
+            .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)))
+         .map(|(expr, (var, body)) : (Spanned<T>, _)| {
+                let span = expr.span.union(body.span);
+                ParseTree::LanguageOfThoughtExprBindOne {
+                    expr,
+                    body: Box::new(body),
+                    var,
+                }.with_span(span)
+            });
+
+        let two_body = select! {
+            Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::BindVarTwoBodies => T::into_expr(x).with_span(e.span()),
+        }.then(select! {Token::<T>::Variable(x) => x}
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone())
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone())
+            .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)))
+            .map(|(expr, ((var, body1), body2)): (Spanned<T>, _)| {
+                let span = expr.span.union(body2.span);
+                ParseTree::LanguageOfThoughtExprBindTwo {
+                    expr,
+                    body1: Box::new(body1),
+                    body2: Box::new(body2),
+                    var,
+                }
+                .with_span(span)
+            });
+
         let atom = choice((
             application,
             var,
             lot_prim,
+            one_body,
+            two_body,
             expr.delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
         ));
         atom.pratt((
@@ -574,11 +779,9 @@ where
             infix(left(1), select! {Token::LanguageOfThought(x) = e if T::is_infix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span())} , |l: Spanned<ParseTree<_>>, op: Spanned<ParseTree<_>>, r, _| {
                 let op_l = op.span.union(l.span);
                 let op_span = op_l.union(r.span);
-                
 
                 ParseTree::Application { subformula: Box::new(ParseTree::Application { subformula: Box::new(op), argument: Box::new(l) }.with_span(op_l)),
                     argument: Box::new(r)}.with_span(op_span)
-
             }),
         ))
     })
