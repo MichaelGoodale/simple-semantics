@@ -126,30 +126,6 @@ impl Display for Constant<'_> {
     }
 }
 
-///The ID of a given variable bound by quantification
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub enum Variable {
-    ///The variable is over actors.
-    Actor(u32),
-    ///The variable is over events.
-    Event(u32),
-}
-
-impl Variable {
-    fn id(self) -> u32 {
-        match self {
-            Variable::Actor(a) | Variable::Event(a) => a,
-        }
-    }
-
-    fn as_lambda_type(self) -> &'static LambdaType {
-        match self {
-            Variable::Actor(_) => LambdaType::a(),
-            Variable::Event(_) => LambdaType::e(),
-        }
-    }
-}
-
 ///An enum which represents all possible quantifiers in the language.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum Quantifier {
@@ -180,8 +156,6 @@ pub enum Expr<'a> {
         ///The type of bound variable
         var_type: ActorOrEvent,
     },
-    ///See [`Variable`]
-    Variable(Variable),
     ///See [`Actor`]. Written `a_NAME`
     Actor(Actor<'a>),
     ///See [`Event`]. Written `e_N` where `N` is an integer.

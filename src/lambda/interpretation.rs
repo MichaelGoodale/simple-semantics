@@ -6,7 +6,7 @@ use crate::{
     Actor, Entity, Event, Scenario,
     lambda::{
         ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-        parser::ExprToken, types::LambdaType,
+        types::LambdaType,
     },
     language::{
         ActorOrEvent, BinOp, Constant,
@@ -178,12 +178,8 @@ impl<'src> Expr<'src> {
         scenario: &Scenario<'src>,
     ) -> Option<InnerValue<'src, Expr<'src>>> {
         let x = match self {
-            Expr::Quantifier {
-                quantifier,
-                var_type,
-            } => todo!(),
-            Expr::Unary(MonOp::Iota(a_o_e)) => todo!(),
-            Expr::Variable(variable) => todo!(),
+            Expr::Quantifier { .. } => todo!(),
+            Expr::Unary(MonOp::Iota(_)) => todo!(),
             Expr::Actor(a) => BaseValue::Actor(a),
             Expr::Event(e) => BaseValue::Event(*e),
             Expr::Binary(op @ (BinOp::AgentOf | BinOp::PatientOf), ..) => {
@@ -330,11 +326,11 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                                         _ => todo!(),
                                     }
                                 }
-                                (InnerValue::Expr(e), x) => InnerValue::App(sub_id, arg_id),
+                                (InnerValue::Expr(_), _) => InnerValue::App(sub_id, arg_id),
                                 //TODO: Figure out how to make it so that functions indicate when
                                 //they can be evaluated (e.g. this will screw up if `e` takes only
                                 //one argument!.
-                                (InnerValue::Base(e), x) => InnerValue::App(sub_id, arg_id),
+                                (InnerValue::Base(_), _) => InnerValue::App(sub_id, arg_id),
                                 _ => todo!("Don't know how to combine {sub:?} and {arg:?}"),
                             };
                             value.0.push(v);
@@ -352,7 +348,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                                     Some(ValueId((value.0.len() - 1) as u32));
                             }
                         }
-                        LambdaExpr::LanguageOfThoughtExpr(x, _) => {
+                        LambdaExpr::LanguageOfThoughtExpr(_, _) => {
                             todo!("figure out quantification")
                         }
                     }

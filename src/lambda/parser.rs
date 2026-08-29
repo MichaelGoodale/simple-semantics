@@ -2,12 +2,8 @@ use crate::{
     Actor, Event,
     lambda::{
         Bvar, ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
-        PrimitiveVarType::{self},
-        RootedLambdaPool,
-        types::{
-            LambdaType::{self, A},
-            core_type_parser,
-        },
+        PrimitiveVarType, RootedLambdaPool,
+        types::{LambdaType, core_type_parser},
     },
     language::{ActorOrEvent, BinOp, Constant, Expr, MonOp, Quantifier},
 };

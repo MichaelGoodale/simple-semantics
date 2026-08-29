@@ -4,21 +4,11 @@ use thiserror::Error;
 use super::{ActorOrEvent, BinOp, Expr, MonOp};
 use crate::{
     lambda::{
-        LambdaLanguageOfThought,
-        PrimitiveVarType::{self},
-        ReductionError, RootedLambdaPool,
+        LambdaLanguageOfThought, PrimitiveVarType, ReductionError, RootedLambdaPool,
         types::LambdaType,
     },
     language::Constant,
 };
-
-#[derive(Debug, Clone, Error, PartialEq, Eq)]
-pub enum LambdaConversionError {
-    #[error("There are still lambda terms in this pool")]
-    StillHasLambdaTerms,
-    #[error("Reducing lambda exprs in quantifiers is leading to a bug ({0})")]
-    ReductionError(#[from] ReductionError),
-}
 
 impl<'a> LambdaLanguageOfThought for Expr<'a> {
     fn var_type(&self) -> Option<&LambdaType> {
@@ -57,7 +47,6 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
             } => LambdaType::gq_e(),
             Expr::Unary(MonOp::Iota(ActorOrEvent::Actor)) => LambdaType::ata(),
             Expr::Unary(MonOp::Iota(ActorOrEvent::Event)) => LambdaType::ete(),
-            Expr::Variable(variable) => unimplemented!("To be removed!"),
             Expr::Actor(_) => &LambdaType::A,
             Expr::Event(_) => &LambdaType::E,
             Expr::Binary(bin_op) => match bin_op {
