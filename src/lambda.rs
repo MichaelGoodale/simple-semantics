@@ -119,6 +119,10 @@ pub trait LambdaLanguageOfThought {
         false
     }
 
+    fn unary_associative(&self) -> bool {
+        false
+    }
+
     ///Checks whether an expression is commutative
     fn commutative(&self) -> bool {
         false

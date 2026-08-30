@@ -30,6 +30,10 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
     }
 
+    fn unary_associative(&self) -> bool {
+        matches!(self, Expr::Unary(MonOp::Not))
+    }
+
     fn bind_vars(&self) -> PrimitiveVarType {
         match self {
             Expr::Quantifier { .. } => PrimitiveVarType::BindVarTwoBodies,
@@ -252,38 +256,6 @@ mod test {
 
     use crate::lambda::{FreeVar, types::LambdaType};
     use crate::{Entity, Scenario, ThetaRoles, lambda::RootedLambdaPool};
-
-    #[test]
-    fn fancy_printing() -> anyhow::Result<()> {
-        for statement in [
-            "~AgentOf(a_John, e_0)",
-            "pa_Red(a_John) & ~pa_Red(a_Mary)",
-            "every(x, all_a, pa_Blue(x))",
-            "every(x, pa_Blue, pa_Blue(x))",
-            "every(x, pa_5, pa_10(a_59))",
-            "every_e(x, all_e, PatientOf(a_Mary, x))",
-        ] {
-            println!("{statement}");
-            let expression = RootedLambdaPool::<Expr>::parse(statement)?;
-            assert_eq!(expression.to_string(), statement);
-        }
-        for s in [
-            "cool#<a,t>(a_John)",
-            "bad#<a,t>(man#a)",
-            "woah#<<e,t>,t>(lambda e x pe_wow(x))",
-            "lambda <a,t> P lambda a x P(x)",
-            "lambda <a,t> P P(a_man) & ~P(a_woman)",
-            "loves#<a,<a,t>>(a_john, a_mary)",
-            "gives#<a,<a,<a,t>>>(a_john, a_mary, a_present)",
-            "lambda e x lambda a y loves#<e,<a,t>>(x, y)",
-        ] {
-            println!("{s}");
-            let p = RootedLambdaPool::<Expr>::parse(s)?;
-            assert_eq!(p.to_string(), s);
-        }
-
-        Ok(())
-    }
 
     #[test]
     fn type_checking() -> anyhow::Result<()> {

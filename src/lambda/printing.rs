@@ -37,7 +37,7 @@ pub fn to_var(x: usize, t: Option<&LambdaType>) -> String {
     }
 }
 
-impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src>> Serialize
+impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src> + PartialEq> Serialize
     for RootedLambdaPool<'src, T>
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -89,11 +89,6 @@ impl VarContext {
         }
     }
 
-    pub(super) fn inc_depth_q(self, t: ActorOrEvent) -> (Self, String) {
-        let t: LambdaType = t.into();
-        self.inc_depth(&t)
-    }
-
     pub(super) fn inc_depth(mut self, t: &LambdaType) -> (Self, String) {
         let d = self.depth;
         let map = self.get_map_mut(Some(t));
@@ -111,20 +106,32 @@ impl VarContext {
     }
 }
 
-impl<'a, T: LambdaLanguageOfThought + Display> std::fmt::Display for RootedLambdaPool<'a, T> {
+impl<'a, T: LambdaLanguageOfThought + Display + PartialEq> std::fmt::Display
+    for RootedLambdaPool<'a, T>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (string, _) = self.string(self.root(), VarContext::default(), false);
         write!(f, "{string}")
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum InfixPosition {
+    Op,
+    DoneLeftOnly,
+    Done,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum AssociativityData<'a, T> {
     Lambda,
     Var,
     App,
-    Associative(&'a T),
+    Infix(&'a T, InfixPosition),
+    Prefix,
 }
 
+/*
 pub(super) fn add_parenthesis_for_bin_op<'a, T: LambdaLanguageOfThought + PartialEq>(
     x: &'a T,
     data: AssociativityData<'a, T>,
@@ -135,8 +142,9 @@ pub(super) fn add_parenthesis_for_bin_op<'a, T: LambdaLanguageOfThought + Partia
         _ => false,
     }
 }
+*/
 
-impl<'src, T: LambdaLanguageOfThought + Display> RootedLambdaPool<'src, T> {
+impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'src, T> {
     #[allow(clippy::too_many_lines)]
     fn string<'a>(
         &'a self,
@@ -162,15 +170,47 @@ impl<'src, T: LambdaLanguageOfThought + Display> RootedLambdaPool<'src, T> {
                 argument,
             } => {
                 let (sub, associative) = self.string(*subformula, c.clone(), true);
-                let (arg, _) = self.string(*argument, c, false); // false
+                let (mut arg, arg_asso) = self.string(*argument, c, false); // false
                 // since apps only collapse if they're a left chain
 
+                if let AssociativityData::Infix(t1, _) = arg_asso
+                    && let AssociativityData::Infix(t2, _) = associative
+                    && t1 != t2
+                {
+                    arg = format!("({arg})");
+                }
+
                 let mut s = match associative {
-                    AssociativityData::Lambda | AssociativityData::Associative(_) => {
+                    AssociativityData::Infix(x, InfixPosition::Op) if parent_is_app => {
+                        return (
+                            format!("{arg} {sub}"),
+                            AssociativityData::Infix(x, InfixPosition::DoneLeftOnly),
+                        );
+                    }
+                    AssociativityData::Infix(x, InfixPosition::DoneLeftOnly) => {
+                        return (
+                            format!("{sub} {arg}"),
+                            AssociativityData::Infix(x, InfixPosition::Done),
+                        );
+                    }
+                    AssociativityData::Lambda => {
                         format!("({sub})({arg}")
+                    }
+                    AssociativityData::Prefix => {
+                        return match arg_asso {
+                            AssociativityData::App
+                            | AssociativityData::Var
+                            | AssociativityData::Prefix => {
+                                (format!("{sub}{arg}"), AssociativityData::Var)
+                            }
+                            AssociativityData::Lambda | AssociativityData::Infix(..) => {
+                                (format!("{sub}({arg})"), AssociativityData::Var)
+                            }
+                        };
                     }
                     AssociativityData::Var => format!("{sub}({arg}"),
                     AssociativityData::App => format!("{sub}{arg}"),
+                    _ => todo!(),
                 };
 
                 if parent_is_app {
@@ -188,16 +228,26 @@ impl<'src, T: LambdaLanguageOfThought + Display> RootedLambdaPool<'src, T> {
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => (
                 format!("{x}"),
                 if x.commutative() & x.infix() {
-                    AssociativityData::Associative(x)
+                    AssociativityData::Infix(x, InfixPosition::Op)
+                } else if x.unary_associative() {
+                    AssociativityData::Prefix
                 } else {
                     AssociativityData::Var
                 },
             ),
-            LambdaExpr::LanguageOfThoughtExpr(
-                x,
-                ExprType::BindVar(_) | ExprType::BindVarTwoBodies(..),
-            ) => {
+            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVar(_)) => {
                 todo!()
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVarTwoBodies(l, r)) => {
+                let (c, var_string) = c.inc_depth(x.var_type().expect(
+                    "Implementation error, if you bind a var, the expression must bind vars!",
+                ));
+                let (l, _) = self.string(LambdaExprRef(l.0), c.clone(), false);
+                let (r, _) = self.string(LambdaExprRef(r.0), c, false);
+                (
+                    format!("{x}({var_string}, {l}, {r})"),
+                    AssociativityData::Var,
+                )
             } /*match x {
               Expr::Variable(variable) => (
                   c.lambda_var(variable.id() as usize, variable.as_lambda_type()),
@@ -318,23 +368,124 @@ mod test {
     }
 
     #[test]
-    fn printing() -> anyhow::Result<()> {
-        let pool = RootedLambdaPool::<Expr>::parse(
-            "some_e(x0, all_e, AgentOf(a_1, x0) & PatientOf(a_0, x0) & pe_0(x0))",
-        )?;
-        assert_eq!(
-            pool.to_string(),
-            "some_e(x, all_e, AgentOf(a_1, x) & PatientOf(a_0, x) & pe_0(x))"
-        );
-        let likes = RootedLambdaPool::<Expr>::parse(
-            "lambda e x lambda e y (some(e, all_a, AgentOf(e, x) & PatientOf(e, y) & pe_likes(y)))",
-        )?;
+    fn printing_parsing_idempotent() -> anyhow::Result<()> {
+        for phi in [
+            "True & False & True & False",
+            "(True & False) | True",
+            "False | (True & False & True)",
+            "some_e(x, all_e(x), AgentOf(a_1, x) & PatientOf(a_0, x) & pe_0(x))",
+            "lambda e x lambda e y some(z, all_a(z), AgentOf(z, x) & PatientOf(z, y) & pe_likes(y))",
+            "~True",
+            "~~True",
+            "~~~True",
+            "~AgentOf(a_John, e_0)",
+            "pa_Red(a_John) & ~pa_Red(a_Mary)",
+            "every(x, all_a(x), pa_Blue(x))",
+            "every(x, pa_Blue(x), pa_Blue(x))",
+            "every(x, pa_5(x), pa_10(a_59))",
+            "every_e(x, all_e(x), PatientOf(a_Mary, x))",
+            "cool#<a,t>(a_John)",
+            "bad#<a,t>(man#a)",
+            "woah#<<e,t>,t>(lambda e x pe_wow(x))",
+            "lambda <a,t> P lambda a x P(x)",
+            "lambda <a,t> P P(a_man) & ~P(a_woman)",
+            "loves#<a,<a,t>>(a_john, a_mary)",
+            "gives#<a,<a,<a,t>>>(a_john, a_mary, a_present)",
+            "lambda e x lambda a y loves#<e,<a,t>>(x, y)",
+            "True",
+            "False",
+            "~False",
+            "~~~~False",
+            "(True & True) | False",
+            "True | (False & True)",
+            "(True & False) | (False & True)",
+            "~(True & ~False)",
+            "True & (False | (True & (False | True)))",
+            "pa_Red(a_John)",
+            "~pa_Red(a_John)",
+            "~~pa_Red(a_John)",
+            "pa_Red(a_John) & pa_Blue(a_John)",
+            "(pa_Red(a_John) & pa_Blue(a_John)) | pa_Green(a_John)",
+            "every(x, all_a(x), pa_Blue(x))",
+            "some(x, all_a(x), ~pa_Blue(x))",
+            "every(x, all_a(x), pa_Blue(x) & ~pa_Red(x))",
+            "some(x, all_a(x), pa_Blue(x) | pa_Red(x))",
+            "every(x, all_a(x), some_e(y, all_e(y), AgentOf(x, y)))",
+            "some(x, all_a(x), every_e(y, all_e(y), ~PatientOf(x, y)))",
+            "lambda e x pe_run(x)",
+            "lambda e x ~pe_run(x)",
+            "lambda e x pe_run(x) & pe_walk(x)",
+            "lambda a x lambda e y AgentOf(x, y)",
+            "lambda e x lambda a y loves#<e,<a,t>>(x, y)",
+            "lambda <a,t> P P(a_John)",
+            "lambda <a,t> P ~P(a_John)",
+            "lambda <a,t> P P(a_John) & P(a_Mary)",
+            "lambda <a,t> P P(a_John) & ~P(a_Mary)",
+            "lambda <a,<a,t>> M lambda a x lambda a y M(x, y)",
+            "cool#<a,t>(a_John)",
+            "bad#<a,t>(man#a)",
+            "loves#<a,<a,t>>(a_john, a_mary)",
+            "gives#<a,<a,<a,t>>>(a_john, a_mary, a_present)",
+            "woah#<<e,t>,t>(lambda e x pe_wow(x))",
+            "f#<a,t>(a_x)",
+            "f#<a,t>(a_x) & g#<a,t>(a_y)",
+            "f#<a,<a,t>>(a_x, a_y)",
+            "f#<a,<a,<a,t>>>(a_x, a_y, a_z)",
+            "some_e(x, all_e(x), AgentOf(a_1, x) & PatientOf(a_0, x) & pe_0(x))",
+            "every_e(x, all_e(x), PatientOf(a_Mary, x))",
+            "some_e(x, all_e(x), ~PatientOf(a_Mary, x))",
+            "every_e(x, all_e(x), some(y, all_a(y), AgentOf(y, x)))",
+            "lambda e x some(y, all_a(y), AgentOf(y, x))",
+            "lambda e x lambda e y some(z, all_a(z), AgentOf(z, x) & PatientOf(z, y) & pe_likes(y))",
+        ] {
+            let pool = RootedLambdaPool::<Expr>::parse(phi)?;
+            let s = pool.to_string();
+            assert_eq!(pool.to_string(), phi, "{s} instead of {phi}")
+        }
 
-        let s =
-            "lambda e x lambda e y some(z, all_a, AgentOf(z, x) & PatientOf(z, y) & pe_likes(y))";
-        assert_eq!(likes.to_string(), s,);
-        let likes2 = RootedLambdaPool::<Expr>::parse(s)?;
-        assert_eq!(likes, likes2);
+        Ok(())
+    }
+    #[test]
+    fn parse_print_normalized() -> anyhow::Result<()> {
+        for (phi, phi_normalized) in [
+            (
+                "(True & False) & True & False",
+                "True & False & True & False",
+            ),
+            ("True & False | True", "(True & False) | True"),
+            ("(True)", "True"),
+            ("(((True)))", "True"),
+            ("(((lambda e x pe_run(x))))", "lambda e x pe_run(x)"),
+            ("lambda e x (pe_run(x))", "lambda e x pe_run(x)"),
+            (
+                "((True & False) | (False & True))",
+                "(True & False) | (False & True)",
+            ),
+            (
+                "lambda <a,<a,t>> R lambda a x lambda a y R(x, y)",
+                "lambda <a,<a,t>> M lambda a x lambda a y M(x, y)",
+            ),
+            (
+                "lambda e x (pe_run(x) & ~pe_walk(x))",
+                "lambda e x pe_run(x) & ~pe_walk(x)",
+            ),
+            (
+                "every(x, all_a(x), (pa_Blue(x)))",
+                "every(x, all_a(x), pa_Blue(x))",
+            ),
+            (
+                "some(x, all_a(x), ((pa_Blue(x) & pa_Red(x))))",
+                "some(x, all_a(x), pa_Blue(x) & pa_Red(x))",
+            ),
+        ] {
+            let pool = RootedLambdaPool::<Expr>::parse(phi)?;
+            let s = pool.to_string();
+            assert_eq!(
+                pool.to_string(),
+                phi_normalized,
+                "{s} instead of {phi_normalized}"
+            )
+        }
 
         Ok(())
     }
