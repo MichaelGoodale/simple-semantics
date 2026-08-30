@@ -168,6 +168,26 @@ pub enum Expr<'a> {
     Constant(Constant<'a>),
 }
 
+impl Display for Expr<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expr::Quantifier {
+                quantifier,
+                var_type: ActorOrEvent::Actor,
+            } => write!(f, "{quantifier}"),
+            Expr::Quantifier {
+                quantifier,
+                var_type: ActorOrEvent::Event,
+            } => write!(f, "{quantifier}_e"),
+            Expr::Actor(a) => write!(f, "a_{a}"),
+            Expr::Event(e) => write!(f, "e_{e}"),
+            Expr::Binary(bin_op) => write!(f, "{bin_op}"),
+            Expr::Unary(mon_op) => write!(f, "{mon_op}"),
+            Expr::Constant(constant) => write!(f, "{constant}"),
+        }
+    }
+}
+
 //mod parser;
 //pub use parser::LambdaParseError;
 //pub use parser::parse_executable;
@@ -186,7 +206,7 @@ pub use lambda_implementation::ConjoiningError;
 //    Context, LambdaEnumerator, LambdaSampler, PossibleExpressions, TypeAgnosticSampler,
 //};
 
-mod serializations;
+//mod serializations;
 
 //#[cfg(test)]
 //mod tests {

@@ -18,6 +18,7 @@ pub mod types;
 use types::{LambdaType, TypeError};
 
 mod parser;
+mod printing;
 
 pub(crate) type Bvar = usize;
 
@@ -113,6 +114,10 @@ pub trait LambdaLanguageOfThought {
 
     ///Get the type of an expression.
     fn typ(&self) -> &LambdaType;
+
+    fn infix(&self) -> bool {
+        false
+    }
 
     ///Checks whether an expression is commutative
     fn commutative(&self) -> bool {

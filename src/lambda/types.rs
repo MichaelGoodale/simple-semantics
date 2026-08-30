@@ -7,6 +7,7 @@ use chumsky::{
 };
 #[cfg(feature = "sampling")]
 use rand::{Rng, RngExt, seq::IteratorRandom};
+use serde::{Deserialize, Serialize};
 use std::{fmt::Display, sync::LazyLock};
 use thiserror::Error;
 
@@ -55,6 +56,25 @@ pub enum LambdaType {
     T,
     ///A type for functions
     Composition(Box<LambdaType>, Box<LambdaType>),
+}
+
+impl Serialize for LambdaType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for LambdaType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        LambdaType::from_string(&s).map_err(serde::de::Error::custom)
+    }
 }
 
 pub(crate) fn core_type_parser<'src, E>()
