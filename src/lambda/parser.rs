@@ -57,7 +57,7 @@ enum OwnedParseError {
         second_body_span: Option<QuantifierProblem>,
         is_double: bool,
     },
-    UnTypedFreeVariable {},
+    UnTypedFreeVariable(Range<usize>, String),
 }
 
 impl From<Rich<'_, String>> for OwnedParseError {
@@ -118,7 +118,21 @@ impl Display for LambdaParseError {
                             .with_color(Color::Red),
                     )
                     .finish(),
-                OwnedParseError::UnTypedFreeVariable {} => todo!(),
+                OwnedParseError::UnTypedFreeVariable(var_span, var) => Report::build(
+                    ariadne::ReportKind::Error,
+                    var_span.clone(),
+                )
+                .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+                .with_message(format!("Free variable {var} has no type"))
+                .with_label(
+                    Label::new(var_span.clone())
+                        .with_message(format!(
+                            "This free variable needs a type. For example, {var}#e or {var}#<e,t>"
+                        ))
+                        .with_color(Color::Red),
+                )
+                .finish(),
+
                 OwnedParseError::QuantifierError {
                     span,
                     quantifier_span,
@@ -188,7 +202,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
     variable_names: &mut VariableContext<'src>,
     errors: &mut Vec<OwnedParseError>,
     lambda_depth: usize,
-) -> LambdaExprRef {
+) -> Option<LambdaExprRef> {
     let expr: LambdaExpr<'src, T> = match ast.inner {
         ParseTree::Application {
             subformula,
@@ -196,8 +210,8 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
         } => {
             let sub_span = subformula.span.into_range();
             let arg_span = argument.span.into_range();
-            let subformula = add_to_pool(*subformula, pool, variable_names, errors, lambda_depth);
-            let argument = add_to_pool(*argument, pool, variable_names, errors, lambda_depth);
+            let subformula = add_to_pool(*subformula, pool, variable_names, errors, lambda_depth)?;
+            let argument = add_to_pool(*argument, pool, variable_names, errors, lambda_depth)?;
 
             let f = pool.get_type(subformula).expect("wee");
             let arg = pool.get_type(argument).expect("woo");
@@ -223,7 +237,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
             lambda_type,
         } => {
             variable_names.bind_var(var, lambda_depth + 1, lambda_type.clone());
-            let body = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1);
+            let body = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1)?;
             variable_names.unbind(var);
             LambdaExpr::Lambda(body, lambda_type.clone())
         }
@@ -244,7 +258,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
 
             variable_names.bind_var(var, lambda_depth + 1, var_type.clone());
             let body_span = body.span.into_range();
-            let body_ref = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1);
+            let body_ref = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1)?;
             let found_body_type = pool.get_type(body_ref).unwrap();
             if &found_body_type != body_type {
                 errors.push(OwnedParseError::QuantifierError {
@@ -297,7 +311,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
 
             for (x, body) in bodies.into_iter().zip(refs.iter_mut()) {
                 let body_span = x.span.into_range();
-                let i = add_to_pool(x, pool, variable_names, errors, lambda_depth + 1);
+                let i = add_to_pool(x, pool, variable_names, errors, lambda_depth + 1)?;
                 let found_body_type = pool.get_type(i).unwrap();
 
                 if &found_body_type != body_type {
@@ -341,7 +355,17 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
                 ExprType::BindVarTwoBodies(body1.unwrap(), body2.unwrap()),
             )
         }
-        ParseTree::Variable(var) => variable_names.to_expr(var, None, lambda_depth).unwrap(),
+        ParseTree::Variable(var) => {
+            if let Some(x) = variable_names.to_expr(var, None, lambda_depth) {
+                x
+            } else {
+                errors.push(OwnedParseError::UnTypedFreeVariable(
+                    ast.span.into_range(),
+                    var.to_string(),
+                ));
+                return None;
+            }
+        }
         ParseTree::FreeVariable(var, lambda_type) => variable_names
             .to_expr(var, Some(lambda_type.clone()), lambda_depth)
             .unwrap(),
@@ -349,7 +373,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
             LambdaExpr::LanguageOfThoughtExpr(e, ExprType::NoVar)
         }
     };
-    pool.add(expr)
+    Some(pool.add(expr))
 }
 
 fn into_pool<'src, T: LambdaLanguageOfThought + Debug>(
@@ -360,7 +384,9 @@ fn into_pool<'src, T: LambdaLanguageOfThought + Debug>(
     let mut var_labels = VariableContext::default();
     let mut errors = vec![];
     let root = add_to_pool(ast, &mut pool, &mut var_labels, &mut errors, 0);
-    if errors.is_empty() {
+    if let Some(root) = root
+        && errors.is_empty()
+    {
         Ok(RootedLambdaPool::new(pool, root))
     } else {
         Err(errors)
@@ -376,13 +402,16 @@ impl<'src> VariableContext<'src> {
         variable: &'src str,
         lambda_type: Option<LambdaType>,
         lambda_depth: usize,
-    ) -> Result<LambdaExpr<'src, T>, OwnedParseError> {
-        Ok(match self.0.get(variable) {
+    ) -> Option<LambdaExpr<'src, T>> {
+        match self.0.get(variable) {
             Some(vars) if !vars.is_empty() => {
                 let (og_depth, lambda_type) = vars
                     .last()
                     .expect("There should never be an empty vec in the VariableContext");
-                LambdaExpr::BoundVariable(lambda_depth - og_depth, lambda_type.clone())
+                Some(LambdaExpr::BoundVariable(
+                    lambda_depth - og_depth,
+                    lambda_type.clone(),
+                ))
             }
             //Do free var
             _ => match lambda_type {
@@ -391,14 +420,11 @@ impl<'src> VariableContext<'src> {
                         .parse::<usize>()
                         .map_or(FreeVar::Named(variable), FreeVar::Anonymous);
 
-                    LambdaExpr::FreeVariable(free_var, lambda_type)
+                    Some(LambdaExpr::FreeVariable(free_var, lambda_type))
                 }
-                None => {
-                    //TODO: I don't think this should actually ever occur, but should check
-                    return Err(OwnedParseError::UnTypedFreeVariable {});
-                }
+                None => None,
             },
-        })
+        }
     }
 
     fn bind_var(&mut self, variable: &'src str, lambda_depth: usize, lambda_type: LambdaType) {
@@ -671,13 +697,50 @@ where
     .labelled("variable");
 
     let lot_prim = select! {
-        Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::NoVar && !T::is_infix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span()),
+        Token::LanguageOfThought(x) = e => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span()),
     }
     .labelled("LOT primitive");
 
     recursive(|expr: Recursive<_>| {
+        let one_body= select! {
+            Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::BindVar => T::into_expr(x).with_span(e.span()),
+        }.then(
+            select! {Token::<T>::Variable(x) => x}.labelled("variable definition")
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone())
+            .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)))
+         .map(|(expr, (var, body)) : (Spanned<T>, (_, Spanned<_>))| {
+                let span = expr.span.union(body.span);
+                ParseTree::LanguageOfThoughtExprBindOne {
+                    expr,
+                    body: Box::new(body),
+                    var,
+                }.with_span(span)
+            }).labelled("LOT var-binding primitive");
+
+        let two_body = select! {
+            Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::BindVarTwoBodies => T::into_expr(x).with_span(e.span()),
+        }.then(select! {Token::<T>::Variable(x) => x}.labelled("variable definition")
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone())
+            .then_ignore(just(Token::ArgSep))
+            .then(expr.clone())
+            .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)))
+            .map(|(expr, ((var, body1), body2)): (Spanned<T>, _)| {
+                let span = expr.span.union(body2.span);
+                ParseTree::LanguageOfThoughtExprBindTwo {
+                    expr,
+                    body1: Box::new(body1),
+                    body2: Box::new(body2),
+                    var,
+                }
+                .with_span(span)
+            }).labelled("LOT var-binding primitive with 2 bodies");
+
         let application = choice((
             var,
+            one_body.clone(),
+            two_body.clone(),
             lot_prim,
             expr.clone()
                 .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
@@ -710,55 +773,21 @@ where
             }
 
             tree
-        });
-
-        let one_body= select! {
-            Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::BindVar => T::into_expr(x).with_span(e.span()),
-        }.then(
-            select! {Token::<T>::Variable(x) => x}
-            .then_ignore(just(Token::ArgSep))
-            .then(expr.clone())
-            .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)))
-         .map(|(expr, (var, body)) : (Spanned<T>, _)| {
-                let span = expr.span.union(body.span);
-                ParseTree::LanguageOfThoughtExprBindOne {
-                    expr,
-                    body: Box::new(body),
-                    var,
-                }.with_span(span)
-            });
-
-        let two_body = select! {
-            Token::LanguageOfThought(x) = e if T::bind_var_type(&x) == PrimitiveVarType::BindVarTwoBodies => T::into_expr(x).with_span(e.span()),
-        }.then(select! {Token::<T>::Variable(x) => x}
-            .then_ignore(just(Token::ArgSep))
-            .then(expr.clone())
-            .then_ignore(just(Token::ArgSep))
-            .then(expr.clone())
-            .delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)))
-            .map(|(expr, ((var, body1), body2)): (Spanned<T>, _)| {
-                let span = expr.span.union(body2.span);
-                ParseTree::LanguageOfThoughtExprBindTwo {
-                    expr,
-                    body1: Box::new(body1),
-                    body2: Box::new(body2),
-                    var,
-                }
-                .with_span(span)
-            });
+        })
+        .labelled("application");
 
         let atom = choice((
             application,
             var,
-            lot_prim,
             one_body,
             two_body,
+            lot_prim,
             expr.delimited_by(just(Token::OpenDelim), just(Token::CloseDelim)),
         ));
         atom.pratt((
             prefix(
                 0,
-                select! {Token::Lambda(t, var) = e => (t, var, e.span())},
+                select! {Token::Lambda(t, var) = e => (t, var, e.span())}.labelled("lambda abstraction"),
                 |(lambda_type, var, lambda_span), r, _| {
                     ParseTree::Lambda {
                         body: Box::new(r),
@@ -768,18 +797,18 @@ where
                     .with_span(lambda_span)
                 },
             ),
-            prefix(2, select! {Token::LanguageOfThought(x) = e if T::is_prefix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span())}, |op: Spanned<ParseTree<_>>, x: Spanned<ParseTree<_>>, _| {
+            prefix(2, select! {Token::LanguageOfThought(x) = e if T::is_prefix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span())}.labelled("unary associative primitive"), |op: Spanned<ParseTree<_>>, x: Spanned<ParseTree<_>>, _| {
                 let span= op.span.union(x.span);
                  ParseTree::Application { subformula: Box::new(op), argument: Box::new(x) }.with_span(span)
             }),
-            infix(left(1), select! {Token::LanguageOfThought(x) = e if T::is_infix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span())} , |l: Spanned<ParseTree<_>>, op: Spanned<ParseTree<_>>, r, _| {
+            infix(left(1), select! {Token::LanguageOfThought(x) = e if T::is_infix(&x) => ParseTree::LanguageOfThoughtExpr(T::into_expr(x)).with_span(e.span())}.labelled("infix primitive") , |l: Spanned<ParseTree<_>>, op: Spanned<ParseTree<_>>, r, _| {
                 let op_l = op.span.union(l.span);
                 let op_span = op_l.union(r.span);
 
                 ParseTree::Application { subformula: Box::new(ParseTree::Application { subformula: Box::new(op), argument: Box::new(l) }.with_span(op_l)),
                     argument: Box::new(r)}.with_span(op_span)
             }),
-        ))
+        )).labelled("expression")
     })
 }
 
@@ -891,14 +920,41 @@ mod tests {
     }
 
     #[test]
+    fn weird_parsing() -> anyhow::Result<()> {
+        for (statement, t) in [
+            ("~", "<t,t>"),
+            ("lambda <a,t> P P", "<<a,t>, <a,t>>"),
+            ("loves#<a,<a,t>>(a_john)", "<a,t>"),
+            ("lambda <a,t> P ~", "<<a,t>, <t,t>>"),
+        ] {
+            let statement = RootedLambdaPool::<Expr>::parse(statement)?;
+            let t = LambdaType::from_string(t)?;
+            assert_eq!(statement.get_type()?, t);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_multi_errors_test() -> anyhow::Result<()> {
+        let statement = "True & pa_Blue & f#<a,t>(e_0)";
+        println!("{statement}");
+        let p = RootedLambdaPool::<Expr>::parse(statement);
+        assert!(p.is_err());
+        let e = p.unwrap_err();
+        assert_eq!(e.0.len(), 2);
+        Ok(())
+    }
+
+    #[test]
     fn parse_errors_test() -> anyhow::Result<()> {
         for statement in [
             "(wow#<a,<e,t>>(nice#a))(cool#e)",
-            "every(x,lambda a y pa_John(y), pa_Blue(y#a))",
+            "every(lambda a y pa_John(y), lambda a x pa_Blue(y#a))",
             "pa_cool(iota(x, pa_man(x)))",
             "pe_cool(iota_e(x, pe_man(x)))",
             "pa_cool(iota(x, (lambda a x pa_man(x))(x)))",
         ] {
+            println!("{statement}");
             RootedLambdaPool::<Expr>::parse(statement)?;
         }
 
@@ -906,9 +962,82 @@ mod tests {
             "wow#<e,t>(nice#a)",
             "(wow#<a,<e,t>>(nice#a))(cool#a)",
             "every(x,lambda a y pa_John(y), pa_Blue(y))",
+            "(",
+            ")",
+            "True)",
+            "(True",
+            "((True)",
+            "True &",
+            "& True",
+            "True |",
+            "| True",
+            "~~",
+            "True & | False",
+            "True | & False",
+            "True && False",
+            "True || False",
+            "True ~ False",
+            "True False",
+            "pa_Red()",
+            "pa_Red(a_John,)",
+            "pa_Red(,a_John)",
+            "pa_Red(a_John,,a_Mary)",
+            "pa_Red(a_John a_Mary)",
+            "pa_Red[a_John]",
+            "pa_Red{a_John}",
+            "every(x)",
+            "every(x, all_a(x))",
+            "every(, all_a(x), pa_Blue(x))",
+            "every(x,, pa_Blue(x))",
+            "every(x, all_a(x),)",
+            "every(x, all_a(x), pa_Blue(x), False)",
+            "every(x, all_a(x), pa_Blue(x)",
+            "every(x, all_a(x)), pa_Blue(x)",
+            "lambda",
+            "lambda e",
+            "lambda e x",
+            "lambda x pe_run(x)",
+            "lambda e lambda e",
+            "lambda e x lambda",
+            "lambda <a,t>",
+            "lambda <a,t> P",
+            "lambda <a,t> P (P(a_John)",
+            "lambda <a,t> P P(a_John))",
+            "lambda e x lambda a y",
+            "lambda e x every(y, all_a(y))",
+            "lambda e x some(z, all_a(z),)",
+            "cool#(a_John)",
+            "cool#<(a,t)>(a_John)",
+            "cool#<a,t>(a_John",
+            "cool#<a,t>(a_John))",
+            "cool##<a,t>(a_John)",
+            "loves#<a,<a,t>>(a_john,)",
+            "loves#<a,<a,t>>(,a_mary)",
+            "gives#<a,<a,<a,t>>>(a_john, a_mary,)",
+            "gives#<a,<a,<a,t>>>(a_john a_mary, a_present)",
+            "lambda <a,t> P P(a) &",
+            "lambda <a,t> P &P(a)",
+            "lambda <a,t> P ~P(a) Q(a)",
+            "every(x, all_a(x), lambda e y pe_run(y))",
+            "every(x, all_a(x), x)",
+            "every(x, all_a, pa_Blue(x))",
+            "every(x, all_a(x), pa_Blue)",
+            "True & (False |)",
+            "(True & False)) | True",
+            "((True & False) | True",
+            "~(True & False))",
+            "~~~(True & False",
+            "True & (~False",
+            "x",
+            "lambda e x",
+            "every(x, all_a(x), every(y, all_a(y)))",
         ] {
+            println!("{statement}");
             let p = RootedLambdaPool::<Expr>::parse(statement);
             assert!(p.is_err());
+            let e = p.unwrap_err();
+            println!("{e}");
+            println!("__________________________________");
         }
         Ok(())
     }
