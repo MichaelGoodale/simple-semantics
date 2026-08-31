@@ -3,8 +3,8 @@ use thiserror::Error;
 use super::{ActorOrEvent, BinOp, Expr, MonOp};
 use crate::{
     lambda::{
-        LambdaLanguageOfThought, PrimitiveVarType, ReductionError, RootedLambdaPool,
-        types::LambdaType,
+        ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, PrimitiveVarType,
+        ReductionError, RootedLambdaPool, types::LambdaType,
     },
     language::Constant,
 };
@@ -142,33 +142,35 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
             return Err(ConjoiningError::DoesntReturnT(self_type));
         }
         let lhs = lhs.clone();
-        let combinator: RootedLambdaPool<'a, Expr<'a>> = todo!();
-        /*
         let combinator = RootedLambdaPool {
             pool: LambdaPool(vec![
                 LambdaExpr::Lambda(LambdaExprRef(1), self_type.clone()),
                 LambdaExpr::Lambda(LambdaExprRef(2), other_type.clone()),
                 LambdaExpr::Lambda(LambdaExprRef(3), lhs.clone()),
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
-                    BinOp::And,
-                    LambdaExprRef(4),
-                    LambdaExprRef(7),
-                )),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(4),
+                    argument: LambdaExprRef(9),
+                },
                 LambdaExpr::Application {
                     subformula: LambdaExprRef(5),
                     argument: LambdaExprRef(6),
                 },
+                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(BinOp::And), ExprType::NoVar),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(7),
+                    argument: LambdaExprRef(8),
+                },
                 LambdaExpr::BoundVariable(2, self_type),
                 LambdaExpr::BoundVariable(0, lhs.clone()),
                 LambdaExpr::Application {
-                    subformula: LambdaExprRef(8),
-                    argument: LambdaExprRef(9),
+                    subformula: LambdaExprRef(10),
+                    argument: LambdaExprRef(11),
                 },
                 LambdaExpr::BoundVariable(1, other_type),
                 LambdaExpr::BoundVariable(0, lhs),
             ]),
             root: LambdaExprRef(0),
-        };*/
+        };
 
         let mut conjoined = combinator.merge(self).unwrap().merge(other).unwrap();
         conjoined.reduce()?;
@@ -201,53 +203,52 @@ impl<'a> RootedLambdaPool<'a, Expr<'a>> {
         let e = e.clone();
         let event = event.clone();
 
-        let combinator: RootedLambdaPool<'a, Expr<'a>> = todo!();
-        //let combinator = RootedLambdaPool {
-        //    pool: LambdaPool(vec![
-        //        LambdaExpr::Lambda(LambdaExprRef(1), a_type.clone()),
-        //        LambdaExpr::Lambda(LambdaExprRef(2), b_type.clone()),
-        //        LambdaExpr::Lambda(LambdaExprRef(3), event.clone()),
-        //        LambdaExpr::Lambda(LambdaExprRef(4), e.clone()),
-        //        LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
-        //            BinOp::And,
-        //            LambdaExprRef(5),
-        //            LambdaExprRef(10),
-        //        )),
-        //        LambdaExpr::Application {
-        //            subformula: LambdaExprRef(6),
-        //            argument: LambdaExprRef(9),
-        //        },
-        //        LambdaExpr::Application {
-        //            subformula: LambdaExprRef(7),
-        //            argument: LambdaExprRef(8),
-        //        },
-        //        LambdaExpr::BoundVariable(3, a_type),
-        //        LambdaExpr::BoundVariable(1, event),
-        //        LambdaExpr::BoundVariable(0, e.clone()),
-        //        LambdaExpr::Application {
-        //            subformula: LambdaExprRef(11),
-        //            argument: LambdaExprRef(12),
-        //        },
-        //        LambdaExpr::BoundVariable(2, b_type),
-        //        LambdaExpr::BoundVariable(0, e),
-        //    ]),
-        //    root: LambdaExprRef(0),
-        //};
-
+        let combinator = RootedLambdaPool {
+            pool: LambdaPool(vec![
+                LambdaExpr::Lambda(LambdaExprRef(1), a_type.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(2), b_type.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(3), event.clone()),
+                LambdaExpr::Lambda(LambdaExprRef(4), e.clone()),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(5),
+                    argument: LambdaExprRef(12),
+                }, //4
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(6),
+                    argument: LambdaExprRef(7),
+                },
+                LambdaExpr::LanguageOfThoughtExpr(
+                    Expr::Binary(
+                        //6
+                        BinOp::And,
+                    ),
+                    ExprType::NoVar,
+                ),
+                LambdaExpr::Application {
+                    //7
+                    subformula: LambdaExprRef(8),
+                    argument: LambdaExprRef(11),
+                },
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(9),
+                    argument: LambdaExprRef(10),
+                },
+                LambdaExpr::BoundVariable(3, a_type),
+                LambdaExpr::BoundVariable(1, event),
+                LambdaExpr::BoundVariable(0, e.clone()),
+                LambdaExpr::Application {
+                    subformula: LambdaExprRef(13),
+                    argument: LambdaExprRef(14),
+                },
+                LambdaExpr::BoundVariable(2, b_type),
+                LambdaExpr::BoundVariable(0, e),
+            ]),
+            root: LambdaExprRef(0),
+        };
         let mut conjoined = combinator.merge(a).unwrap().merge(b).unwrap();
         conjoined.reduce()?;
         Ok(conjoined)
     }
-
-    /*
-    ///Create a [`RootedLambdaPool<Expr>`] from a string.
-    ///
-    ///# Errors
-    ///Returns a [`LambdaParseError`] if the input string is malformed and not a LOT expression.
-    pub fn parse(s: &'a str) -> Result<Self, LambdaParseError> {
-        todo!()
-        //parse_lot(s)
-    }*/
 }
 
 #[cfg(test)]
