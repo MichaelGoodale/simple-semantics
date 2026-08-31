@@ -6,7 +6,8 @@ use crate::{
     Actor, Entity, Event, Scenario,
     lambda::{ExprType, FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
     language::{
-        ActorOrEvent, BinOp, Constant,
+        ActorOrEvent::{self},
+        BinOp, Constant,
         Expr::{self},
         MonOp,
     },
@@ -96,14 +97,14 @@ impl<'src> BaseValue<'src> {
 pub enum Value<'a, T> {
     Base(BaseValue<'a>),
     Function(Box<Value<'a, T>>),
-    PrimitiveFunction { func: T, args: Vec<Value<'a, T>> },
+    Expr(T),
     Neutral(Box<Value<'a, T>>),
-    Var(u32),
+    Var(usize),
     FreeVar(FreeVar<'a>),
     App(Box<Value<'a, T>>, Box<Value<'a, T>>),
 }
 
-impl<'src, T> Value<'src, T> {
+impl<'src> Value<'src, Expr<'src>> {
     fn to_base_value(&self) -> Option<&BaseValue<'src>> {
         if let Value::Base(b) = self {
             Some(b)
@@ -129,9 +130,9 @@ use thiserror::Error;
 #[error("Not the desired type!")]
 pub struct ValueConversionError;
 
-impl<T> TryFrom<Value<'_, T>> for bool {
+impl<'src> TryFrom<Value<'src, Expr<'src>>> for bool {
     type Error = ValueConversionError;
-    fn try_from(value: Value<T>) -> Result<Self, Self::Error> {
+    fn try_from(value: Value<'src, Expr<'src>>) -> Result<Self, Self::Error> {
         value
             .into_base_value()
             .and_then(|x| x.as_bool())
@@ -156,13 +157,31 @@ impl<'src> Expr<'src> {
         }
     }
 
+    fn can_eval(&self, arguments: &[&Value<'src, Expr<'src>>]) -> bool {
+        match self {
+            Expr::Quantifier { .. } => arguments
+                .iter()
+                .all(|x| matches!(x, Value::Base(_) | Value::Function(..))),
+            Expr::Binary(_) => arguments.iter().all(|x| matches!(x, Value::Base(_))),
+            Expr::Unary(MonOp::Not) => matches!(arguments.first().unwrap(), Value::Base(_)),
+            Expr::Unary(MonOp::Iota(_)) => todo!(),
+            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) => true,
+        }
+    }
+
     fn eval(
         &self,
-        arguments: &[Value<'src, Expr<'src>>],
+        mut arguments: Vec<Value<'src, Expr<'src>>>,
         scenario: &Scenario<'src>,
     ) -> Option<Value<'src, Expr<'src>>> {
         let x = match self {
-            Expr::Quantifier { .. } => todo!(),
+            Expr::Quantifier { .. } => {
+                println!("Quantifier args!!");
+                let predicate = arguments.pop().unwrap();
+                let restrictor = arguments.pop().unwrap();
+                println!("{predicate:?} {restrictor:?}");
+                todo!()
+            }
             Expr::Unary(MonOp::Iota(_)) => todo!(),
             Expr::Actor(a) => BaseValue::Actor(a),
             Expr::Event(e) => BaseValue::Event(*e),
@@ -190,9 +209,9 @@ impl<'src> Expr<'src> {
             })),
             Expr::Unary(MonOp::Not) => BaseValue::Bool(
                 !arguments
-                    .first()
+                    .pop()
                     .unwrap()
-                    .to_base_value()
+                    .into_base_value()
                     .unwrap()
                     .as_bool()
                     .unwrap(),
@@ -235,6 +254,82 @@ impl<'src> Expr<'src> {
     }
 }
 
+impl<'src> Value<'src, Expr<'src>> {
+    fn primitive_head(&self, last_arg: &Value<'src, Expr<'src>>) -> bool {
+        let mut x = self;
+        let mut args = vec![last_arg];
+        if let Value::Expr(t) = x {
+            return t.n_arguments() == args.len() && t.can_eval(&args);
+        }
+
+        while let Value::App(y, arg) = x {
+            args.push(&**arg);
+            if let Value::Expr(x) = &**y {
+                args.reverse();
+                return x.n_arguments() == args.len() && x.can_eval(&args);
+            }
+            x = y;
+        }
+        false
+    }
+
+    fn primitive_head_and_arguments(
+        mut self,
+        last_arg: Value<'src, Expr<'src>>,
+    ) -> Option<(Expr<'src>, Vec<Value<'src, Expr<'src>>>)> {
+        self = Value::App(Box::new(self), Box::new(last_arg));
+        let mut arguments = vec![];
+        while let Value::App(x, arg) = self {
+            arguments.push(*arg);
+            if let Value::Expr(x) = *x {
+                arguments.reverse();
+                return Some((x, arguments));
+            }
+            self = *x
+        }
+        None
+    }
+
+    fn reduce(
+        self,
+        variable: &Value<'src, Expr<'src>>,
+        depth: usize,
+        scenario: &Scenario<'src>,
+    ) -> Option<Value<'src, Expr<'src>>> {
+        println!("VARIABLE MUST BE ADJUSTED IF IT HAS DEBRUIJN INDICIES");
+        match self {
+            Value::Function(value) => value.reduce(variable, depth + 1, scenario),
+            Value::App(f, arg) => {
+                let f = f.reduce(variable, depth, scenario)?;
+                let arg = arg.reduce(variable, depth, scenario)?;
+                f.apply(arg, scenario)
+            }
+            Value::Neutral(_) => todo!(),
+            Value::Var(x) if x == depth => Some(variable.clone()),
+            Value::Var(x) if x > depth => Some(Value::Var(x - 1)),
+            v @ (Value::Var(_) | Value::FreeVar(_) | Value::Base(_) | Value::Expr(_)) => Some(v),
+        }
+    }
+
+    fn apply(self, other: Self, scenario: &Scenario<'src>) -> Option<Self> {
+        Some(match (self, other) {
+            (Value::Base(alpha), Value::Base(beta)) => Value::Base(alpha.apply(&beta)),
+            (x, y) if x.primitive_head(&y) => {
+                let (head, arguments) = x
+                    .primitive_head_and_arguments(y)
+                    .expect("Already checked the head was primitive!");
+                head.eval(arguments, scenario)?
+            }
+            (Value::Function(x), variable) => x.reduce(&variable, 0, scenario)?,
+            (x, y) => Value::App(Box::new(x), Box::new(y)),
+        })
+    }
+
+    fn highest_var(&self) -> Option<usize> {
+        todo!("Figure out what the highest var used in this expression is!");
+    }
+}
+
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     pub fn interp(&self, scenario: &Scenario<'src>) -> Option<Value<'src, Expr<'src>>> {
         let expression: Cow<Self> = if !self.is_reduced() {
@@ -244,76 +339,55 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         } else {
             Cow::Borrowed(self)
         };
+        expression.interp_inner(expression.root, vec![], scenario)
+    }
 
-        let mut stack = vec![ValueBuilder::Search(expression.root)];
-        let mut node_to_value: Vec<Option<Value<'src, Expr<'src>>>> =
-            vec![None; expression.pool.0.len()];
+    fn interp_inner(
+        &self,
+        index: LambdaExprRef,
+        mut variables: Vec<Option<Value<'src, Expr<'src>>>>,
+        scenario: &Scenario<'src>,
+    ) -> Option<Value<'src, Expr<'src>>> {
+        match self.get(index) {
+            LambdaExpr::Lambda(body, t) => {
+                variables.push(None);
+                let body = self.interp_inner(*body, variables, scenario)?;
 
-        while let Some(x) = stack.pop() {
-            match x {
-                ValueBuilder::Search(nx) => {
-                    stack.push(ValueBuilder::Build(nx));
-                    stack.extend(expression.get(nx).get_children().map(ValueBuilder::Search));
-                }
-
-                ValueBuilder::Build(nx) => {
-                    let node = expression.get(nx);
-                    node_to_value[nx.0 as usize] = Some(match node {
-                        LambdaExpr::Lambda(arg, _) => {
-                            let arg = node_to_value[arg.0 as usize].take().unwrap();
-                            Value::Function(Box::new(arg))
-                        }
-                        LambdaExpr::BoundVariable(e, _) => Value::Var(*e as u32),
-                        LambdaExpr::FreeVariable(free_var, _) => {
-                            Value::Neutral(Box::new(Value::FreeVar(*free_var)))
-                        }
-                        LambdaExpr::Application {
-                            subformula,
-                            argument,
-                        } => {
-                            let sub = node_to_value[subformula.0 as usize].take().unwrap();
-                            let arg = node_to_value[argument.0 as usize].take().unwrap();
-                            match (sub, arg) {
-                                (Value::Base(alpha), Value::Base(beta)) => {
-                                    Value::Base(alpha.apply(&beta))
-                                }
-                                (Value::PrimitiveFunction { func, mut args }, arg) => {
-                                    args.push(arg);
-                                    if func.n_arguments() == args.len() {
-                                        func.eval(&args, scenario)?
-                                    } else {
-                                        Value::PrimitiveFunction { func, args }
-                                    }
-                                }
-                                (sub, arg) => {
-                                    todo!("Don't know how to combine {sub:?} and {arg:?}")
-                                }
-                            }
-                        }
-                        LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => {
-                            if x.n_arguments() == 0 {
-                                x.eval(&[], scenario)?
-                            } else {
-                                Value::PrimitiveFunction {
-                                    func: *x,
-                                    args: vec![],
-                                }
-                            }
-                        }
-                        LambdaExpr::LanguageOfThoughtExpr(_, _) => {
-                            todo!("figure out quantification")
-                        }
-                    });
-                    println!(
-                        "{} {:#?}",
-                        nx.0,
-                        node_to_value[nx.0 as usize].as_ref().unwrap()
-                    );
+                if BaseValue::has_literal(t) && matches!(body.highest_var(), None | Some(0)) {
+                    todo!("write automatic converter from these types to literals");
+                } else {
+                    Some(Value::Function(Box::new(body)))
                 }
             }
+            LambdaExpr::BoundVariable(x, _) => {
+                Some(match variables[variables.len() - 1 - *x].as_ref() {
+                    Some(x) => x.clone(),
+                    None => Value::Var(*x),
+                })
+            }
+            LambdaExpr::FreeVariable(..) => {
+                todo!("No support for free variables yet.")
+            }
+            LambdaExpr::Application {
+                subformula,
+                argument,
+            } => {
+                let subformula = self.interp_inner(*subformula, variables.clone(), scenario)?;
+                let argument = self.interp_inner(*argument, variables, scenario)?;
+                subformula.apply(argument, scenario)
+            }
+            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => {
+                if x.n_arguments() == 0 {
+                    x.eval(vec![], scenario)
+                } else {
+                    Some(Value::Expr(*x))
+                }
+            }
+            LambdaExpr::LanguageOfThoughtExpr(
+                _,
+                ExprType::BindVar(_) | ExprType::BindVarTwoBodies(..),
+            ) => todo!("Binding vars is for later!"),
         }
-
-        node_to_value[self.root.0 as usize].take()
     }
 }
 
@@ -341,6 +415,10 @@ mod test {
             ("~True", BaseValue::Bool(false)),
             ("~(False & False)", BaseValue::Bool(true)),
             ("AgentOf(a_john, e_0) | False", BaseValue::Bool(true)),
+            (
+                "some(lambda a x pa_kind(x) | ~pa_kind(x), pa_kind)",
+                BaseValue::Bool(true),
+            ),
             ("some(all_a, pa_kind)", BaseValue::Bool(true)),
             ("every(all_a, pa_kind)", BaseValue::Bool(false)),
             ("some(x, all_a(x), pa_kind(x))", BaseValue::Bool(true)),
@@ -351,6 +429,7 @@ mod test {
             println!("{phi}");
             let phi = RootedLambdaPool::parse(phi)?;
             let calculated_value = phi.interp(&scenario).unwrap();
+            println!("{calculated_value:#?}");
             assert_eq!(calculated_value.into_base_value().unwrap(), val);
         }
         let phi = RootedLambdaPool::parse("lambda a x pa_kind(x)")?;
