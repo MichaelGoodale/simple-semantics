@@ -107,18 +107,24 @@ impl LambdaExprRef {
 ///A trait which allows one to define a language of thought that interacts with the lambda
 ///calculus. An example implementation can be found for [`crate::language::Expr`].
 pub trait LambdaLanguageOfThought {
-    ///Returns the type of the bound variable at an instruction
+    ///Returns the type of the bound variable at an instruction, if any
     fn var_type(&self) -> Option<&LambdaType>;
 
+    ///Returns whether an expression has no body, one or two. (If one or two, [`Self::var_type`]
+    ///must not return `None` for that expression).
     fn bind_vars(&self) -> PrimitiveVarType;
 
     ///Get the type of an expression.
     fn typ(&self) -> &LambdaType;
 
+    ///Does the primitive function as an infix? (Must be a two-place function).
+    ///For example, `phi & psi`, & is an infix.
     fn infix(&self) -> bool {
         false
     }
 
+    ///Can the function be repeatedly applied to itself?
+    ///Allows parsing !(!(!(phi))) as !!!phi
     fn unary_associative(&self) -> bool {
         false
     }
@@ -174,17 +180,27 @@ impl From<usize> for FreeVar<'_> {
     }
 }
 
+///An indicator type that defines the [`ExprType`] used in an expression
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum PrimitiveVarType {
+    ///Doesn't have a child
     NoVar,
+    ///Binds a variable and has one child/body.
     BindVar,
+    ///Binds a variable and has two children/bodies.
     BindVarTwoBodies,
 }
 
+///Whether a LOT primitive directly binds syntactic children.
+///If it does, it assumes that it is also binding a variable.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ExprType {
+    ///A normal primitive without binding children.
     NoVar,
+    ///A primitive that binds one child, e.g. some(x, P(x))
     BindVar(LambdaExprRef),
+    ///A primitive that binds two children (such as in generalized quantifiers),
+    ///For example,  some(x, P(x), Q(x))
     BindVarTwoBodies(LambdaExprRef, LambdaExprRef),
 }
 
@@ -284,7 +300,7 @@ impl<T: LambdaLanguageOfThought + Ord> PartialOrd for RootedLambdaPool<'_, T> {
 
 impl<T: LambdaLanguageOfThought + Ord> Ord for RootedLambdaPool<'_, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.len().cmp(&other.len()).then_with(|| {
+        self.appless_len().cmp(&other.appless_len()).then_with(|| {
             let mut stack: SmallVec<[_; 2]> = smallvec![(self.root, other.root)];
             while let Some((alpha, beta)) = stack.pop() {
                 let alpha = self.get(alpha);
@@ -389,6 +405,15 @@ impl<T: LambdaLanguageOfThought + PartialEq> LambdaExpr<'_, T> {
 }
 
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
+    ///The length of the expression, excluding the number of [`LambdaExpr::Application`].
+    ///Corresponds better to human intuitions about length.
+    pub fn appless_len(&self) -> usize {
+        self.pool
+            .bfs_from(self.root)
+            .filter(|(x, _)| !matches!(self.get(*x), LambdaExpr::Application { .. }))
+            .count()
+    }
+
     ///Check if the expression is fully reduced or not.
     pub fn is_reduced(&self) -> bool {
         self.pool.get_next_app(self.root).is_none()

@@ -3,12 +3,9 @@ use std::fmt::{Debug, Display};
 use ahash::HashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    lambda::{
-        ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-        parser::ParseLot, types::LambdaType,
-    },
-    language::ActorOrEvent,
+use crate::lambda::{
+    ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
+    parser::ParseLot, types::LambdaType,
 };
 
 static VARIABLENAMES: [&str; 26] = [
@@ -131,19 +128,6 @@ enum AssociativityData<'a, T> {
     Prefix,
 }
 
-/*
-pub(super) fn add_parenthesis_for_bin_op<'a, T: LambdaLanguageOfThought + PartialEq>(
-    x: &'a T,
-    data: AssociativityData<'a, T>,
-) -> bool {
-    match data {
-        AssociativityData::Associative(b) if b == x => true,
-        AssociativityData::Lambda => true,
-        _ => false,
-    }
-}
-*/
-
 impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'src, T> {
     #[allow(clippy::too_many_lines)]
     fn string<'a>(
@@ -235,8 +219,12 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'s
                     AssociativityData::Var
                 },
             ),
-            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVar(_)) => {
-                todo!()
+            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVar(body)) => {
+                let (c, var_string) = c.inc_depth(x.var_type().expect(
+                    "Implementation error, if you bind a var, the expression must bind vars!",
+                ));
+                let (body, _) = self.string(LambdaExprRef(body.0), c.clone(), false);
+                (format!("{x}({var_string}, {body})"), AssociativityData::Var)
             }
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVarTwoBodies(l, r)) => {
                 let (c, var_string) = c.inc_depth(x.var_type().expect(
@@ -248,104 +236,7 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'s
                     format!("{x}({var_string}, {l}, {r})"),
                     AssociativityData::Var,
                 )
-            } /*match x {
-              Expr::Variable(variable) => (
-                  c.lambda_var(variable.id() as usize, variable.as_lambda_type()),
-                  AssociativityData::Monop,
-              ),
-              Expr::Quantifier {
-                  quantifier,
-                  var_type,
-                  restrictor,
-                  subformula,
-              } => {
-                  let (c, var_string) = c.inc_depth_q(*var_type);
-                  let (restrictor, _) =
-                      self.string(LambdaExprRef(restrictor.0), c.clone(), false);
-                  let (subformula, _) = self.string(LambdaExprRef(subformula.0), c, false);
-                  (
-                      format!(
-                          "{}{}({}, {restrictor}, {subformula})",
-                          quantifier,
-                          match var_type {
-                              ActorOrEvent::Actor => "",
-                              ActorOrEvent::Event => "_e",
-                          },
-                          var_string,
-                      ),
-                      AssociativityData::Monop,
-                  )
-              }
-              Expr::Unary(MonOp::Iota(var_type), arg) => {
-                  let (c, var_string) = c.inc_depth_q(*var_type);
-                  let (arg, _) = self.string(LambdaExprRef(arg.0), c, false);
-                  (
-                      format!(
-                          "iota{}({}, {arg})",
-                          match var_type {
-                              ActorOrEvent::Actor => "",
-                              ActorOrEvent::Event => "_e",
-                          },
-                          var_string,
-                      ),
-                      AssociativityData::Monop,
-                  )
-              }
-              Expr::Actor(a) => (format!("a_{a}"), AssociativityData::Monop),
-              Expr::Event(e) => (format!("e_{e}"), AssociativityData::Monop),
-              Expr::Binary(bin_op, x, y) => {
-                  todo!()
-              }
-                    {
-                        let (x, x_a) = self.string(LambdaExprRef(x.0), c.clone(), false);
-                        let (y, y_a) = self.string(LambdaExprRef(y.0), c, false);
-                        match bin_op {
-                            BinOp::AgentOf | BinOp::PatientOf => {
-                                (format!("{bin_op}({x}, {y})"), AssociativityData::Monop)
-                            }
-
-                            BinOp::And | BinOp::Or => (
-                                {
-                                    let mut s = String::default();
-                                    if add_parenthesis_for_bin_op(*bin_op, x_a) {
-                                        write!(s, "({x})").unwrap();
-                                    } else {
-                                        s.push_str(&x);
-                                    }
-                                    write!(s, " {bin_op} ").unwrap();
-                                    if add_parenthesis_for_bin_op(*bin_op, y_a) {
-                                        write!(s, "({y})").unwrap();
-                                    } else {
-                                        s.push_str(&y);
-                                    }
-                                    s
-                                },
-                                AssociativityData::Binom(*bin_op),
-                            ),
-                        }
-                    }
-                    Expr::Unary(mon_op, arg) => {
-                        let (arg, arg_binom) = self.string(LambdaExprRef(arg.0), c, false);
-                        (
-                            match mon_op {
-                                MonOp::Not => match arg_binom {
-                                    AssociativityData::Binom(BinOp::And | BinOp::Or) => {
-                                        format!("{mon_op}({arg})")
-                                    }
-                                    AssociativityData::Binom(_)
-                                    | AssociativityData::Lambda
-                                    | AssociativityData::App
-                                    | AssociativityData::Monop => {
-                                        format!("{mon_op}{arg}")
-                                    }
-                                },
-                                _ => format!("{mon_op}({arg})"),
-                            },
-                            AssociativityData::Monop,
-                        )
-                    }
-                    Expr::Constant(constant) => (format!("{constant}"), AssociativityData::Monop),
-                },*/
+            }
         }
     }
 }

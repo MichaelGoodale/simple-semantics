@@ -285,7 +285,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
         } => {
             let var_type = expr.var_type().unwrap_or_else(||panic!("Implementation error: {expr:?} is being parsed as a variable binding expression, but expr.var_type() returns None"));
             let (arg_type, arg_return_type) = expr.typ().split().unwrap_or_else(|_| panic!("Implementation error: {expr:?} is parsed as a variable binding expression but is not a function"));
-            let (arg_type2, return_type) = arg_return_type.split().unwrap_or_else(|_| panic!("Implementation error: {expr:?} is parsed as a variable binding expression but is not a function"));
+            let (arg_type2, _) = arg_return_type.split().unwrap_or_else(|_| panic!("Implementation error: {expr:?} is parsed as a variable binding expression but is not a function"));
             debug_assert_eq!(
                 arg_type, arg_type2,
                 "Implementation error: {:?}'s two bodies must have the same type.",
