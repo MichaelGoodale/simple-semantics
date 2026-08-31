@@ -10,6 +10,7 @@ use std::{
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
+    mem::discriminant,
 };
 use thiserror::Error;
 
@@ -193,7 +194,7 @@ pub enum PrimitiveVarType {
 
 ///Whether a LOT primitive directly binds syntactic children.
 ///If it does, it assumes that it is also binding a variable.
-#[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ExprType {
     ///A normal primitive without binding children.
     NoVar,
@@ -202,6 +203,16 @@ pub enum ExprType {
     ///A primitive that binds two children (such as in generalized quantifiers),
     ///For example,  some(x, P(x), Q(x))
     BindVarTwoBodies(LambdaExprRef, LambdaExprRef),
+}
+
+impl From<ExprType> for PrimitiveVarType {
+    fn from(value: ExprType) -> Self {
+        match value {
+            ExprType::NoVar => PrimitiveVarType::NoVar,
+            ExprType::BindVar(_) => PrimitiveVarType::BindVar,
+            ExprType::BindVarTwoBodies(..) => PrimitiveVarType::BindVarTwoBodies,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -281,11 +292,40 @@ impl<T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPool<'_, 
             match (x, y) {
                 (None, None) => return true,
                 (None, Some(_)) | (Some(_), None) => return false,
-                (Some(a), Some(b)) => {
-                    if a != b {
+                (Some(x), Some(y)) => match (x, y) {
+                    (LambdaExpr::Lambda(_, a), LambdaExpr::Lambda(_, b)) if a != b => {
                         return false;
                     }
-                }
+                    (
+                        LambdaExpr::BoundVariable(id1, typ1),
+                        LambdaExpr::BoundVariable(id2, typ2),
+                    ) if id1 != id2 || typ1 != typ2 => {
+                        return false;
+                    }
+                    (
+                        LambdaExpr::FreeVariable(var1, typ1),
+                        LambdaExpr::FreeVariable(var2, typ2),
+                    ) if var1 != var2 || typ1 != typ2 => return false,
+                    (
+                        LambdaExpr::LanguageOfThoughtExpr(x, expr_type1),
+                        LambdaExpr::LanguageOfThoughtExpr(y, expr_type2),
+                    ) if (x != y
+                        || !matches!(
+                            (expr_type1, expr_type2),
+                            (ExprType::NoVar, ExprType::NoVar)
+                                | (ExprType::BindVar(_), ExprType::BindVar(_))
+                                | (
+                                    ExprType::BindVarTwoBodies(..),
+                                    ExprType::BindVarTwoBodies(..)
+                                )
+                        )) =>
+                    {
+                        return false;
+                    }
+                    //If they have different kinds, their discriminant is different.
+                    (x, y) if discriminant(x) != discriminant(y) => return false,
+                    _ => (),
+                },
             }
         }
     }
@@ -346,10 +386,15 @@ impl<T: LambdaLanguageOfThought + Ord> LambdaExpr<'_, T> {
                 }
                 (LambdaExpr::Application { .. }, LambdaExpr::Application { .. }) => Ordering::Equal,
                 (
-                    LambdaExpr::LanguageOfThoughtExpr(x, ..),
-                    LambdaExpr::LanguageOfThoughtExpr(y, ..),
-                ) => x.cmp(y),
-                _ => panic!("Previous check ensures they are the saame variant"),
+                    LambdaExpr::LanguageOfThoughtExpr(x, x_bind_type),
+                    LambdaExpr::LanguageOfThoughtExpr(y, y_bind_type),
+                ) => {
+                    let x_bind_type = PrimitiveVarType::from(*x_bind_type);
+                    let y_bind_type = PrimitiveVarType::from(*y_bind_type);
+                    x_bind_type.cmp(&y_bind_type).then(x.cmp(y))
+                }
+
+                _ => panic!("Previous check ensures they are the same variant"),
             })
     }
 }
@@ -1270,6 +1315,7 @@ mod test {
             .into_iter()
             .map(RootedLambdaPool::<Expr>::parse)
             .collect::<Result<_, _>>()?;
+
         assert_eq!(set.len(), 11);
         let order: Vec<_> = set.into_iter().map(|x| x.to_string()).collect();
 
@@ -1642,7 +1688,7 @@ mod test {
         let man = RootedLambdaPool::<Expr>::parse("lambda a x (pa_man(x))")?;
 
         let sleeps = RootedLambdaPool::<Expr>::parse(
-            "lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+            "lambda a x (some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))",
         )?;
         let every = RootedLambdaPool::<Expr>::parse(
             "lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))",
@@ -1656,17 +1702,17 @@ mod test {
         assert_eq!(
             phi,
             RootedLambdaPool::<Expr>::parse(
-                "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))"
+                "every(x, pa_man(x), some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))",
             )?
         );
         assert!(check_hashes(
             &phi,
             &RootedLambdaPool::<Expr>::parse(
-                "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+                "every(x, pa_man(x), some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))",
             )?,
         ));
         assert_eq!(
-            "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+            "every(x, pa_man(x), some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))",
             phi.to_string()
         );
         let phi = man.merge(every).unwrap();
@@ -1675,19 +1721,19 @@ mod test {
         assert_eq!(
             phi,
             RootedLambdaPool::<Expr>::parse(
-                "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+                "every(x, pa_man(x), some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))",
             )?
         );
 
         assert!(check_hashes(
             &phi,
             &RootedLambdaPool::<Expr>::parse(
-                "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+                "every(x, pa_man(x), some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))",
             )?,
         ));
 
         assert_eq!(
-            "every(x, pa_man(x), some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+            "every(x, pa_man(x), some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))",
             phi.to_string()
         );
         Ok(())
@@ -1713,14 +1759,14 @@ mod test {
         pool.bind_free_variable("phi".into(), RootedLambdaPool::<Expr>::parse("False")?)?;
         assert_eq!("False & True", pool.to_string());
 
-        let input = RootedLambdaPool::<Expr>::parse("lambda a x every_e(y,pe_4,AgentOf(x,y))")?;
+        let input = RootedLambdaPool::<Expr>::parse("lambda a x every_e(y,pe_4(y),AgentOf(x,y))")?;
         let mut a = RootedLambdaPool::<Expr>::parse("(P#<a,t>(a_3) & ~P#<a,t>(a_1))")?;
 
         a.bind_free_variable("P".into(), input)?;
         a.reduce()?;
         assert_eq!(
             a.to_string(),
-            "every_e(x, pe_4, AgentOf(a_3, x)) & ~every_e(x, pe_4, AgentOf(a_1, x))"
+            "every_e(x, pe_4(x), AgentOf(a_3, x)) & ~every_e(x, pe_4(x), AgentOf(a_1, x))"
         );
         Ok(())
     }
@@ -1733,34 +1779,11 @@ mod test {
 
         pool.apply_new_free_variable("X".into())?;
 
-        let gold_pool = RootedLambdaPool {
-            pool: LambdaPool(vec![
-                LambdaExpr::FreeVariable("X".into(), LambdaType::et().clone()),
-                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(0),
-                    argument: LambdaExprRef(1),
-                },
-                LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
-                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(3),
-                    argument: LambdaExprRef(4),
-                },
-                todo!(),
-                /*
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
-                    BinOp::And,
-                    LambdaExprRef(2),
-                    LambdaExprRef(5),
-                )),*/
-                LambdaExpr::Lambda(LambdaExprRef(6), LambdaType::e().clone()),
-                LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::et().clone()),
-            ]),
-            root: LambdaExprRef(8),
-        };
-        pool.cleanup();
-        assert_eq!(pool, gold_pool);
+        println!("{pool}");
+        assert_eq!(
+            pool,
+            RootedLambdaPool::parse("lambda <e,t> Q (lambda e x (X#<e,t>(x) & Q(x)))",)?
+        );
         Ok(())
     }
 
@@ -1771,50 +1794,12 @@ mod test {
         )?;
 
         pool.lambda_abstract_free_variable("Z".into(), LambdaType::et().clone(), false)?;
-
-        let gold_pool = RootedLambdaPool {
-            pool: LambdaPool(vec![
-                LambdaExpr::BoundVariable(3, LambdaType::et().clone()),
-                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(0),
-                    argument: LambdaExprRef(1),
-                },
-                LambdaExpr::BoundVariable(2, LambdaType::et().clone()),
-                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(3),
-                    argument: LambdaExprRef(4),
-                },
-                todo!(),
-                /*
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
-                    BinOp::And,
-                    LambdaExprRef(2),
-                    LambdaExprRef(5),
-                )),*/
-                LambdaExpr::BoundVariable(1, LambdaType::et().clone()),
-                LambdaExpr::BoundVariable(0, LambdaType::e().clone()),
-                LambdaExpr::Application {
-                    subformula: LambdaExprRef(7),
-                    argument: LambdaExprRef(8),
-                },
-                todo!(),
-                /*
-                LambdaExpr::LanguageOfThoughtExpr(Expr::Binary(
-                    BinOp::And,
-                    LambdaExprRef(6),
-                    LambdaExprRef(9),
-                ))*/
-                LambdaExpr::Lambda(LambdaExprRef(10), LambdaType::e().clone()),
-                LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::et().clone()),
-                LambdaExpr::Lambda(LambdaExprRef(12), LambdaType::et().clone()),
-                LambdaExpr::Lambda(LambdaExprRef(13), LambdaType::et().clone()),
-            ]),
-            root: LambdaExprRef(14),
-        };
-
-        assert_eq!(pool, gold_pool);
+        assert_eq!(
+            pool,
+            RootedLambdaPool::parse(
+                "lambda <e,t> P lambda <e,t> Q lambda <e,t> R lambda e x P(x) & Q(x) & R(x)",
+            )?
+        );
         Ok(())
     }
 
@@ -1849,12 +1834,12 @@ mod test {
     #[test]
     fn reduction_test() -> anyhow::Result<()> {
         let mut a = RootedLambdaPool::<Expr>::parse(
-            "lambda a x (every_e(z, all_e, AgentOf(a_0, (lambda e y ((lambda e w (w))(y)))(z))))",
+            "lambda a x (every_e(z, all_e(z), AgentOf(a_0, (lambda e y ((lambda e w (w))(y)))(z))))",
         )?;
         a.reduce()?;
 
         let mut a = RootedLambdaPool::<Expr>::parse(
-            "(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))",
+            "(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4(y),AgentOf(x,y))))",
         )?;
 
         a.pool.beta_reduce(a.root)?;
@@ -1863,13 +1848,13 @@ mod test {
         dbg!(&a);
 
         let mut a = RootedLambdaPool::<Expr>::parse(
-            "(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4,AgentOf(x,y))))",
+            "(lambda <a,t> P (P(a_3) & ~P(a_1)))(lambda a x (every_e(y,pe_4(y),AgentOf(x,y))))",
         )?;
 
         a.reduce()?;
         assert_eq!(
             a.to_string(),
-            "every_e(x, pe_4, AgentOf(a_3, x)) & ~every_e(x, pe_4, AgentOf(a_1, x))"
+            "every_e(x, pe_4(x), AgentOf(a_3, x)) & ~every_e(x, pe_4(x), AgentOf(a_1, x))"
         );
 
         Ok(())
@@ -1887,14 +1872,14 @@ mod test {
     #[test]
     fn lambda_abstractions() -> anyhow::Result<()> {
         let mut e = RootedLambdaPool::<Expr>::parse(
-            "(lambda t phi phi)(some_e(x, all_e, AgentOf(a_m, x) & PatientOf(blarg#a, x) & pe_likes(x)))",
+            "(lambda t phi phi)(some_e(x, all_e(x), AgentOf(a_m, x) & PatientOf(blarg#a, x) & pe_likes(x)))",
         )?;
         e.reduce()?;
         e.lambda_abstract_free_variable(FreeVar::Named("blarg"), LambdaType::A, false)
             .unwrap();
         assert_eq!(
             e.to_string(),
-            "lambda a x some_e(y, all_e, AgentOf(a_m, y) & PatientOf(x, y) & pe_likes(y))"
+            "lambda a x some_e(y, all_e(y), AgentOf(a_m, y) & PatientOf(x, y) & pe_likes(y))"
         );
         Ok(())
     }
@@ -1904,7 +1889,7 @@ mod test {
         let constants = [
             "lambda a x a_John",
             "lambda a x lambda a y pa_man(x)",
-            "lambda a x some_e(y, all_e, pe_runs(y))",
+            "lambda a x some_e(y, all_e(y), pe_runs(y))",
         ];
         for s in constants {
             println!("{s}");

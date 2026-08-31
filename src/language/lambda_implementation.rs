@@ -262,7 +262,7 @@ mod test {
     fn type_checking() -> anyhow::Result<()> {
         let john = RootedLambdaPool::<Expr>::parse("a_John")?;
         let likes = RootedLambdaPool::<Expr>::parse(
-            "lambda a x ((lambda a y (some_e(e, all_e, AgentOf(x, e) & PatientOf(y, e) & pe_likes(e)))))",
+            "lambda a x ((lambda a y (some_e(e, all_e(e), AgentOf(x, e) & PatientOf(y, e) & pe_likes(e)))))",
         )?;
 
         let mary = RootedLambdaPool::<Expr>::parse("a_Mary")?;
@@ -270,14 +270,14 @@ mod test {
         let mut phi = phi.merge(john.clone()).unwrap();
         phi.reduce()?;
         assert_eq!(
-            "some_e(x, all_e, AgentOf(a_Mary, x) & PatientOf(a_John, x) & pe_likes(x))",
+            "some_e(x, all_e(x), AgentOf(a_Mary, x) & PatientOf(a_John, x) & pe_likes(x))",
             phi.to_string()
         );
         let phi = likes.merge(mary).unwrap();
         let mut phi = john.merge(phi).unwrap();
         phi.reduce()?;
         assert_eq!(
-            "some_e(x, all_e, AgentOf(a_Mary, x) & PatientOf(a_John, x) & pe_likes(x))",
+            "some_e(x, all_e(x), AgentOf(a_Mary, x) & PatientOf(a_John, x) & pe_likes(x))",
             phi.to_string()
         );
         Ok(())
@@ -362,10 +362,11 @@ mod test {
 
     #[test]
     fn alpha_check() -> anyhow::Result<()> {
-        let everyone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
-        let someone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (some(x, all_a, P(x)))")?;
+        let everyone =
+            RootedLambdaPool::<Expr>::parse("lambda <a,t> P (every(x, all_a(x), P(x)))")?;
+        let someone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (some(x, all_a(x), P(x)))")?;
         let mut likes = RootedLambdaPool::<Expr>::parse(
-            "lambda a x (lambda a y (some_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e))))",
+            "lambda a x (lambda a y (some_e(e, all_e(e), AgentOf(y, e)&pe_likes(e)&PatientOf(x, e))))",
         )?;
 
         likes.apply_new_free_variable(FreeVar::Anonymous(0))?;
@@ -376,20 +377,20 @@ mod test {
 
         assert_eq!(
             sentence.to_string(),
-            "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
+            "every(x, all_a(x), some(y, all_a(y), some_e(z, all_e(z), AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
         );
-
         assert_eq!(
             sentence,
             RootedLambdaPool::<Expr>::parse(
-                "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
+                "every(x, all_a(x), some(y, all_a(y), some_e(z, all_e(z), AgentOf(y, z) & pe_likes(z) & PatientOf(x, z))))"
             )?
         );
 
-        let everyone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (every(x, all_a, P(x)))")?;
-        let someone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (some(x, all_a, P(x)))")?;
+        let everyone =
+            RootedLambdaPool::<Expr>::parse("lambda <a,t> P (every(x, all_a(x), P(x)))")?;
+        let someone = RootedLambdaPool::<Expr>::parse("lambda <a,t> P (some(x, all_a(x), P(x)))")?;
         let mut likes = RootedLambdaPool::<Expr>::parse(
-            "lambda a x (lambda a y ( some_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e)) | some(w, all_a, every_e(e, all_e, AgentOf(y, e)&pe_likes(e)&PatientOf(x, e)))))",
+            "lambda a x (lambda a y ( some_e(e, all_e(e), AgentOf(y, e)&pe_likes(e)&PatientOf(x, e)) | some(w, all_a(w), every_e(e, all_e(e), AgentOf(y, e)&pe_likes(e)&PatientOf(x, e)))))",
         )?;
 
         likes.apply_new_free_variable(FreeVar::Anonymous(0))?;
@@ -400,7 +401,7 @@ mod test {
         assert_eq!(
             sentence,
             RootedLambdaPool::<Expr>::parse(
-                "every(x, all_a, some(y, all_a, some_e(z, all_e, AgentOf(y, z) & pe_likes(z) & PatientOf(x, z)) | some(z, all_a, every_e(a, all_e, AgentOf(y, a) & pe_likes(a) & PatientOf(x, a)))))"
+                "every(x, all_a(x), some(y, all_a(y), some_e(z, all_e(z), AgentOf(y, z) & pe_likes(z) & PatientOf(x, z)) | some(z, all_a(z), every_e(a, all_e(a), AgentOf(y, a) & pe_likes(a) & PatientOf(x, a)))))"
             )?
         );
         Ok(())
