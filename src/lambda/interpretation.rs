@@ -4,10 +4,7 @@ use std::borrow::Cow;
 
 use crate::{
     Actor, Entity, Event, Scenario,
-    lambda::{
-        ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-        types::LambdaType,
-    },
+    lambda::{ExprType, FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
     language::{
         ActorOrEvent, BinOp, Constant,
         Expr::{self},
@@ -25,7 +22,7 @@ impl From<ValueId> for usize {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-enum BaseValue<'a> {
+pub enum BaseValue<'a> {
     Bool(bool),
     Actor(Actor<'a>),
     Event(Event),
@@ -96,19 +93,19 @@ impl<'src> BaseValue<'src> {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
-enum InnerValue<'a, T> {
+pub enum Value<'a, T> {
     Base(BaseValue<'a>),
-    Function(ValueId),
-    Expr(T),
-    Neutral(ValueId),
+    Function(Box<Value<'a, T>>),
+    PrimitiveFunction { func: T, args: Vec<Value<'a, T>> },
+    Neutral(Box<Value<'a, T>>),
     Var(u32),
     FreeVar(FreeVar<'a>),
-    App(ValueId, ValueId),
+    App(Box<Value<'a, T>>, Box<Value<'a, T>>),
 }
 
-impl<'src, T> InnerValue<'src, T> {
+impl<'src, T> Value<'src, T> {
     fn to_base_value(&self) -> Option<&BaseValue<'src>> {
-        if let InnerValue::Base(b) = self {
+        if let Value::Base(b) = self {
             Some(b)
         } else {
             None
@@ -116,11 +113,14 @@ impl<'src, T> InnerValue<'src, T> {
     }
 
     fn into_base_value(self) -> Option<BaseValue<'src>> {
-        if let InnerValue::Base(b) = self {
+        if let Value::Base(b) = self {
             Some(b)
         } else {
             None
         }
+    }
+    fn is_neutral(&self) -> bool {
+        matches!(&self, Value::Neutral(_))
     }
 }
 
@@ -128,9 +128,6 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[error("Not the desired type!")]
 pub struct ValueConversionError;
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Value<'a, T>(Vec<InnerValue<'a, T>>);
 
 impl<T> TryFrom<Value<'_, T>> for bool {
     type Error = ValueConversionError;
@@ -142,16 +139,6 @@ impl<T> TryFrom<Value<'_, T>> for bool {
     }
 }
 
-impl<'src, T> Value<'src, T> {
-    fn value_at<'a>(&'a self, id: ValueId) -> ValueRef<'a, 'src, T> {
-        ValueRef(id, self)
-    }
-
-    fn into_base_value(mut self) -> Option<BaseValue<'src>> {
-        self.0.swap_remove(self.0.len() - 1).into_base_value()
-    }
-}
-
 enum ValueBuilder {
     ///We haven't seen this value yet
     Search(LambdaExprRef),
@@ -159,24 +146,21 @@ enum ValueBuilder {
     Build(LambdaExprRef),
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-struct ValueRef<'a, 'src, T>(ValueId, &'a Value<'src, T>);
-
-impl<'a, 'src, T> ValueRef<'a, 'src, T> {
-    fn is_neutral(&self) -> bool {
-        matches!(self.1.0[self.0.0 as usize], InnerValue::Neutral(_))
-    }
-    fn to_base_value(&self) -> Option<&'a BaseValue<'src>> {
-        self.1.0[self.0.0 as usize].to_base_value()
-    }
-}
-
 impl<'src> Expr<'src> {
+    fn n_arguments(&self) -> usize {
+        match self {
+            Expr::Quantifier { .. } => 2,
+            Expr::Binary(_) => 2,
+            Expr::Unary(_) => 1,
+            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) => 0,
+        }
+    }
+
     fn eval(
         &self,
-        arguments: &[ValueRef<'_, 'src, Expr<'src>>],
+        arguments: &[Value<'src, Expr<'src>>],
         scenario: &Scenario<'src>,
-    ) -> Option<InnerValue<'src, Expr<'src>>> {
+    ) -> Option<Value<'src, Expr<'src>>> {
         let x = match self {
             Expr::Quantifier { .. } => todo!(),
             Expr::Unary(MonOp::Iota(_)) => todo!(),
@@ -247,7 +231,7 @@ impl<'src> Expr<'src> {
                 }
             }
         };
-        Some(InnerValue::Base(x))
+        Some(Value::Base(x))
     }
 }
 
@@ -262,8 +246,8 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         };
 
         let mut stack = vec![ValueBuilder::Search(expression.root)];
-        let mut node_to_value_id: Vec<Option<ValueId>> = vec![None; expression.pool.0.len()];
-        let mut value: Value<'src, Expr<'src>> = Value(vec![]);
+        let mut node_to_value: Vec<Option<Value<'src, Expr<'src>>>> =
+            vec![None; expression.pool.0.len()];
 
         while let Some(x) = stack.pop() {
             match x {
@@ -274,89 +258,62 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 
                 ValueBuilder::Build(nx) => {
                     let node = expression.get(nx);
-                    match node {
+                    node_to_value[nx.0 as usize] = Some(match node {
                         LambdaExpr::Lambda(arg, _) => {
-                            let arg_val = node_to_value_id[arg.0 as usize].unwrap();
-                            value.0.push(InnerValue::Function(arg_val));
-                            node_to_value_id[nx.0 as usize] =
-                                Some(ValueId((value.0.len() - 1) as u32));
+                            let arg = node_to_value[arg.0 as usize].take().unwrap();
+                            Value::Function(Box::new(arg))
                         }
-                        LambdaExpr::BoundVariable(e, _) => {
-                            value.0.push(InnerValue::Var(*e as u32));
-                            node_to_value_id[nx.0 as usize] =
-                                Some(ValueId((value.0.len() - 1) as u32));
-                        }
+                        LambdaExpr::BoundVariable(e, _) => Value::Var(*e as u32),
                         LambdaExpr::FreeVariable(free_var, _) => {
-                            value.0.push(InnerValue::FreeVar(*free_var));
-                            value
-                                .0
-                                .push(InnerValue::Neutral(ValueId((value.0.len() - 1) as u32)));
-                            node_to_value_id[nx.0 as usize] =
-                                Some(ValueId((value.0.len() - 1) as u32));
+                            Value::Neutral(Box::new(Value::FreeVar(*free_var)))
                         }
                         LambdaExpr::Application {
                             subformula,
                             argument,
                         } => {
-                            let sub_id = node_to_value_id[subformula.0 as usize].unwrap();
-                            let arg_id = node_to_value_id[argument.0 as usize].unwrap();
-                            let sub = &value.0[usize::from(sub_id)];
-                            let arg = &value.0[usize::from(arg_id)];
-
-                            let v = match (sub, arg) {
-                                (InnerValue::Base(alpha), InnerValue::Base(beta)) => {
-                                    InnerValue::Base(alpha.apply(beta))
+                            let sub = node_to_value[subformula.0 as usize].take().unwrap();
+                            let arg = node_to_value[argument.0 as usize].take().unwrap();
+                            match (sub, arg) {
+                                (Value::Base(alpha), Value::Base(beta)) => {
+                                    Value::Base(alpha.apply(&beta))
                                 }
-                                (InnerValue::App(f, x_id), _) => {
-                                    let mut arguments =
-                                        vec![value.value_at(arg_id), value.value_at(*x_id)];
-                                    let mut f = *f;
-                                    while let InnerValue::App(new_f, new_arg) =
-                                        value.0[usize::from(f)]
-                                    {
-                                        arguments.push(value.value_at(new_arg));
-                                        f = new_f;
-                                    }
-                                    arguments.reverse();
-                                    match &value.0[usize::from(f)] {
-                                        InnerValue::Expr(e) => e.eval(&arguments, scenario)?,
-                                        InnerValue::App(..) => {
-                                            panic!("Impossible because of previous loop")
-                                        }
-                                        _ => todo!(),
+                                (Value::PrimitiveFunction { func, mut args }, arg) => {
+                                    args.push(arg);
+                                    if func.n_arguments() == args.len() {
+                                        func.eval(&args, scenario)?
+                                    } else {
+                                        Value::PrimitiveFunction { func, args }
                                     }
                                 }
-                                (InnerValue::Expr(_), _) => InnerValue::App(sub_id, arg_id),
-                                //TODO: Figure out how to make it so that functions indicate when
-                                //they can be evaluated (e.g. this will screw up if `e` takes only
-                                //one argument!.
-                                (InnerValue::Base(_), _) => InnerValue::App(sub_id, arg_id),
-                                _ => todo!("Don't know how to combine {sub:?} and {arg:?}"),
-                            };
-                            value.0.push(v);
-                            node_to_value_id[nx.0 as usize] =
-                                Some(ValueId((value.0.len() - 1) as u32));
+                                (sub, arg) => {
+                                    todo!("Don't know how to combine {sub:?} and {arg:?}")
+                                }
+                            }
                         }
                         LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => {
-                            if BaseValue::has_literal(x.typ()) {
-                                value.0.push(x.eval(&[], scenario)?);
-                                node_to_value_id[nx.0 as usize] =
-                                    Some(ValueId((value.0.len() - 1) as u32));
+                            if x.n_arguments() == 0 {
+                                x.eval(&[], scenario)?
                             } else {
-                                value.0.push(InnerValue::Expr(*x));
-                                node_to_value_id[nx.0 as usize] =
-                                    Some(ValueId((value.0.len() - 1) as u32));
+                                Value::PrimitiveFunction {
+                                    func: *x,
+                                    args: vec![],
+                                }
                             }
                         }
                         LambdaExpr::LanguageOfThoughtExpr(_, _) => {
                             todo!("figure out quantification")
                         }
-                    }
+                    });
+                    println!(
+                        "{} {:#?}",
+                        nx.0,
+                        node_to_value[nx.0 as usize].as_ref().unwrap()
+                    );
                 }
             }
         }
 
-        Some(value)
+        node_to_value[self.root.0 as usize].take()
     }
 }
 
@@ -384,12 +341,16 @@ mod test {
             ("~True", BaseValue::Bool(false)),
             ("~(False & False)", BaseValue::Bool(true)),
             ("AgentOf(a_john, e_0) | False", BaseValue::Bool(true)),
+            ("some(all_a, pa_kind)", BaseValue::Bool(true)),
+            ("every(all_a, pa_kind)", BaseValue::Bool(false)),
+            ("some(x, all_a(x), pa_kind(x))", BaseValue::Bool(true)),
+            ("every(x, all_a(x), pa_kind(x))", BaseValue::Bool(false)),
         ];
 
         for (phi, val) in data {
+            println!("{phi}");
             let phi = RootedLambdaPool::parse(phi)?;
             let calculated_value = phi.interp(&scenario).unwrap();
-            println!("{phi:?} {calculated_value:?}");
             assert_eq!(calculated_value.into_base_value().unwrap(), val);
         }
         let phi = RootedLambdaPool::parse("lambda a x pa_kind(x)")?;
