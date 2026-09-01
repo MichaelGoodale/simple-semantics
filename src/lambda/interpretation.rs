@@ -1,17 +1,23 @@
 #![expect(dead_code)]
 
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Display, iter::repeat_n};
 
 use crate::{
     Actor, Entity, Event, Scenario,
-    lambda::{ExprType, FreeVar, LambdaExpr, LambdaExprRef, RootedLambdaPool, types::LambdaType},
+    lambda::{
+        ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
+        types::LambdaType,
+    },
     language::{
         ActorOrEvent::{self},
         BinOp, Constant,
         Expr::{self},
-        MonOp,
+        MonOp, Quantifier,
     },
 };
+use chumsky::container::Seq;
+use itertools::{Either, Itertools};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 struct ValueId(u32);
@@ -23,7 +29,7 @@ impl From<ValueId> for usize {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub enum BaseValue<'a> {
+pub enum Literal<'a> {
     Bool(bool),
     Actor(Actor<'a>),
     Event(Event),
@@ -35,35 +41,123 @@ pub enum BaseValue<'a> {
     TruthTable(bool, bool),
 }
 
-impl<'src> BaseValue<'src> {
+impl Display for Literal<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Literal::Bool(true) => f.write_str("True"),
+            Literal::Bool(false) => f.write_str("False"),
+            Literal::Actor(a) => write!(f, "a_{a}"),
+            Literal::Event(e) => write!(f, "e_{e}"),
+            Literal::ActorSet(items) => {
+                write!(
+                    f,
+                    "{{{}}}",
+                    items.iter().map(|x| format!("a_{x}")).join(", ")
+                )
+            }
+            Literal::EventSet(items) => {
+                write!(
+                    f,
+                    "{{{}}}",
+                    items.iter().map(|x| format!("e_{x}")).join(", ")
+                )
+            }
+            Literal::TruthTable(on_true, on_false) => {
+                write!(f, "False → {on_false}, True → {on_true}")
+            }
+        }
+    }
+}
+
+impl<'src> Literal<'src> {
+    fn into_actor_set(self) -> Option<Vec<Actor<'src>>> {
+        let Literal::ActorSet(x) = self else {
+            return None;
+        };
+        Some(x)
+    }
+
+    fn into_event_set(self) -> Option<Vec<Event>> {
+        let Literal::EventSet(x) = self else {
+            return None;
+        };
+        Some(x)
+    }
+
     fn has_literal(typ: &LambdaType) -> bool {
         !typ.is_function() || typ.is_one_place_function()
     }
 
-    fn typ(&self) -> &LambdaType {
-        match self {
-            BaseValue::Bool(_) => &LambdaType::T,
-            BaseValue::Actor(_) => &LambdaType::A,
-            BaseValue::Event(_) => &LambdaType::E,
-            BaseValue::ActorSet(_) => LambdaType::at(),
-            BaseValue::EventSet(_) => LambdaType::et(),
-            BaseValue::TruthTable(_, _) => LambdaType::tt(),
+    fn make_function_literal(
+        body: Value<'src, Expr<'src>>,
+        var_type: &LambdaType,
+        expr_type: &LambdaType,
+        scenario: &Scenario<'src>,
+    ) -> Literal<'src> {
+        //This is a closed expression that can be turned into a literal (check for neutral too)
+
+        let f = Value::Function(Box::new(body), var_type.clone(), expr_type.clone());
+        let bool_apply = |f: Value<'src, Expr<'src>>, x| {
+            let v = f.apply(Value::Base(x), vec![], scenario).unwrap();
+            v.into_base_value().unwrap().as_bool().unwrap()
+        };
+
+        match var_type {
+            LambdaType::T => Literal::TruthTable(
+                bool_apply(f.clone(), Literal::Bool(true)),
+                bool_apply(f, Literal::Bool(false)),
+            ),
+            LambdaType::A => {
+                let mut set = vec![];
+                for (actor, f) in scenario
+                    .actors
+                    .iter()
+                    .copied()
+                    .zip(repeat_n(f, scenario.actors.len()))
+                {
+                    if bool_apply(f.clone(), Literal::Actor(actor)) {
+                        set.push(actor);
+                    }
+                }
+                Literal::ActorSet(set)
+            }
+            LambdaType::E => {
+                let mut set = vec![];
+                for (event, f) in scenario.events().zip(repeat_n(f, scenario.events().len())) {
+                    if bool_apply(f.clone(), Literal::Event(event)) {
+                        set.push(event);
+                    }
+                }
+                Literal::EventSet(set)
+            }
+            _ => panic!("Cannot make something with var_type={var_type} a literal"),
         }
     }
 
-    fn apply(&self, other: &BaseValue<'src>) -> BaseValue<'src> {
+    fn typ(&self) -> &LambdaType {
+        match self {
+            Literal::Bool(_) => &LambdaType::T,
+            Literal::Actor(_) => &LambdaType::A,
+            Literal::Event(_) => &LambdaType::E,
+            Literal::ActorSet(_) => LambdaType::at(),
+            Literal::EventSet(_) => LambdaType::et(),
+            Literal::TruthTable(_, _) => LambdaType::tt(),
+        }
+    }
+
+    fn apply(&self, other: &Literal<'src>) -> Literal<'src> {
         match (self, other) {
-            (BaseValue::ActorSet(items), BaseValue::Actor(a)) => BaseValue::Bool(items.contains(a)),
-            (BaseValue::EventSet(items), BaseValue::Event(e)) => BaseValue::Bool(items.contains(e)),
-            (BaseValue::TruthTable(t, f), BaseValue::Bool(b)) => {
-                BaseValue::Bool(if *b { *t } else { *f })
+            (Literal::ActorSet(items), Literal::Actor(a)) => Literal::Bool(items.contains(a)),
+            (Literal::EventSet(items), Literal::Event(e)) => Literal::Bool(items.contains(e)),
+            (Literal::TruthTable(t, f), Literal::Bool(b)) => {
+                Literal::Bool(if *b { *t } else { *f })
             }
             _ => panic!("Type error that shouldn't occur!"),
         }
     }
 
     fn as_bool(&self) -> Option<bool> {
-        if let BaseValue::Bool(b) = self {
+        if let Literal::Bool(b) = self {
             Some(*b)
         } else {
             None
@@ -72,22 +166,22 @@ impl<'src> BaseValue<'src> {
 
     fn as_entity(&self) -> Option<Entity<'src>> {
         match self {
-            BaseValue::Actor(a) => Some(Entity::Actor(a)),
-            BaseValue::Event(e) => Some(Entity::Event(*e)),
+            Literal::Actor(a) => Some(Entity::Actor(a)),
+            Literal::Event(e) => Some(Entity::Event(*e)),
             _ => None,
         }
     }
 
     fn as_actor(&self) -> Option<Actor<'src>> {
         match self {
-            BaseValue::Actor(a) => Some(a),
+            Literal::Actor(a) => Some(a),
             _ => None,
         }
     }
 
     fn as_event(&self) -> Option<Event> {
         match self {
-            BaseValue::Event(e) => Some(*e),
+            Literal::Event(e) => Some(*e),
             _ => None,
         }
     }
@@ -95,17 +189,17 @@ impl<'src> BaseValue<'src> {
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
 pub enum Value<'a, T> {
-    Base(BaseValue<'a>),
-    Function(Box<Value<'a, T>>),
+    Base(Literal<'a>),
+    Function(Box<Value<'a, T>>, LambdaType, LambdaType),
     Expr(T),
     Neutral(Box<Value<'a, T>>),
     Var(usize),
-    FreeVar(FreeVar<'a>),
+    FreeVar(FreeVar<'a>, LambdaType),
     App(Box<Value<'a, T>>, Box<Value<'a, T>>),
 }
 
 impl<'src> Value<'src, Expr<'src>> {
-    fn to_base_value(&self) -> Option<&BaseValue<'src>> {
+    fn to_base_value(&self) -> Option<&Literal<'src>> {
         if let Value::Base(b) = self {
             Some(b)
         } else {
@@ -113,7 +207,7 @@ impl<'src> Value<'src, Expr<'src>> {
         }
     }
 
-    fn into_base_value(self) -> Option<BaseValue<'src>> {
+    fn into_base_value(self) -> Option<Literal<'src>> {
         if let Value::Base(b) = self {
             Some(b)
         } else {
@@ -125,7 +219,6 @@ impl<'src> Value<'src, Expr<'src>> {
     }
 }
 
-use thiserror::Error;
 #[derive(Debug, Error)]
 #[error("Not the desired type!")]
 pub struct ValueConversionError;
@@ -159,9 +252,7 @@ impl<'src> Expr<'src> {
 
     fn can_eval(&self, arguments: &[&Value<'src, Expr<'src>>]) -> bool {
         match self {
-            Expr::Quantifier { .. } => arguments
-                .iter()
-                .all(|x| matches!(x, Value::Base(_) | Value::Function(..))),
+            Expr::Quantifier { .. } => arguments.iter().all(|x| matches!(x, Value::Base(_))),
             Expr::Binary(_) => arguments.iter().all(|x| matches!(x, Value::Base(_))),
             Expr::Unary(MonOp::Not) => matches!(arguments.first().unwrap(), Value::Base(_)),
             Expr::Unary(MonOp::Iota(_)) => todo!(),
@@ -175,39 +266,66 @@ impl<'src> Expr<'src> {
         scenario: &Scenario<'src>,
     ) -> Option<Value<'src, Expr<'src>>> {
         let x = match self {
-            Expr::Quantifier { .. } => {
-                println!("Quantifier args!!");
-                let predicate = arguments.pop().unwrap();
-                let restrictor = arguments.pop().unwrap();
-                println!("{predicate:?} {restrictor:?}");
-                todo!()
+            Expr::Quantifier {
+                quantifier,
+                var_type,
+            } => {
+                let predicate = arguments.pop().unwrap().into_base_value().unwrap();
+                let restrictor = arguments.pop().unwrap().into_base_value().unwrap();
+                let v = match var_type {
+                    ActorOrEvent::Actor => {
+                        let predicate = predicate.into_actor_set().unwrap();
+                        let restrictor = restrictor.into_actor_set().unwrap();
+                        match quantifier {
+                            Quantifier::Universal => {
+                                restrictor.iter().all(|x| predicate.contains(x))
+                            }
+                            Quantifier::Existential => {
+                                restrictor.iter().any(|x| predicate.contains(x))
+                            }
+                        }
+                    }
+                    ActorOrEvent::Event => {
+                        let predicate = predicate.into_event_set().unwrap();
+                        let restrictor = restrictor.into_event_set().unwrap();
+                        match quantifier {
+                            Quantifier::Universal => {
+                                restrictor.iter().all(|x| predicate.contains(x))
+                            }
+                            Quantifier::Existential => {
+                                restrictor.iter().any(|x| predicate.contains(x))
+                            }
+                        }
+                    }
+                };
+                Literal::Bool(v)
             }
             Expr::Unary(MonOp::Iota(_)) => todo!(),
-            Expr::Actor(a) => BaseValue::Actor(a),
-            Expr::Event(e) => BaseValue::Event(*e),
+            Expr::Actor(a) => Literal::Actor(a),
+            Expr::Event(e) => Literal::Event(*e),
             Expr::Binary(op @ (BinOp::AgentOf | BinOp::PatientOf), ..) => {
                 let a = arguments[0].to_base_value().unwrap().as_actor().unwrap();
                 let e = arguments[1].to_base_value().unwrap().as_event().unwrap();
                 let e = scenario.thematic_relations[usize::from(e)];
-                BaseValue::Bool(match op {
+                Literal::Bool(match op {
                     BinOp::AgentOf => e.agent.is_some_and(|x| x == a),
                     BinOp::PatientOf => e.patient.is_some_and(|x| x == a),
                     _ => panic!("impossible bc of prior check!"),
                 })
             }
-            Expr::Binary(BinOp::And) => BaseValue::Bool(arguments.iter().all(|x| {
+            Expr::Binary(BinOp::And) => Literal::Bool(arguments.iter().all(|x| {
                 x.to_base_value()
                     .unwrap()
                     .as_bool()
                     .expect("Type inference error!")
             })),
-            Expr::Binary(BinOp::Or) => BaseValue::Bool(arguments.iter().any(|x| {
+            Expr::Binary(BinOp::Or) => Literal::Bool(arguments.iter().any(|x| {
                 x.to_base_value()
                     .unwrap()
                     .as_bool()
                     .expect("Type inference error!")
             })),
-            Expr::Unary(MonOp::Not) => BaseValue::Bool(
+            Expr::Unary(MonOp::Not) => Literal::Bool(
                 !arguments
                     .pop()
                     .unwrap()
@@ -216,16 +334,14 @@ impl<'src> Expr<'src> {
                     .as_bool()
                     .unwrap(),
             ),
-            Expr::Constant(Constant::Everyone) => BaseValue::ActorSet(scenario.actors.clone()),
-            Expr::Constant(Constant::EveryEvent) => {
-                BaseValue::EventSet(scenario.events().collect())
-            }
-            Expr::Constant(Constant::Tautology) => BaseValue::Bool(true),
-            Expr::Constant(Constant::Contradiction) => BaseValue::Bool(false),
+            Expr::Constant(Constant::Everyone) => Literal::ActorSet(scenario.actors.clone()),
+            Expr::Constant(Constant::EveryEvent) => Literal::EventSet(scenario.events().collect()),
+            Expr::Constant(Constant::Tautology) => Literal::Bool(true),
+            Expr::Constant(Constant::Contradiction) => Literal::Bool(false),
             Expr::Constant(Constant::Property(p, a_or_e)) => {
                 let x = scenario.properties.get(p)?;
                 match a_or_e {
-                    ActorOrEvent::Actor => BaseValue::ActorSet(
+                    ActorOrEvent::Actor => Literal::ActorSet(
                         x.iter()
                             .filter_map(|x| {
                                 if let Entity::Actor(x) = x {
@@ -236,7 +352,7 @@ impl<'src> Expr<'src> {
                             })
                             .collect(),
                     ),
-                    ActorOrEvent::Event => BaseValue::EventSet(
+                    ActorOrEvent::Event => Literal::EventSet(
                         x.iter()
                             .filter_map(|x| {
                                 if let Entity::Event(x) = x {
@@ -255,6 +371,18 @@ impl<'src> Expr<'src> {
 }
 
 impl<'src> Value<'src, Expr<'src>> {
+    fn children<'a>(&'a self) -> impl Iterator<Item = &'a Value<'src, Expr<'src>>> {
+        match self {
+            Value::Base(_) | Value::Expr(_) | Value::Var(_) | Value::FreeVar(_, _) => {
+                Either::Left(std::iter::empty())
+            }
+            Value::Function(value, _, _) | Value::Neutral(value) => {
+                Either::Right(Either::Left(std::iter::once(&**value)))
+            }
+            Value::App(v1, v2) => Either::Right(Either::Right([&**v1, &**v2].into_iter())),
+        }
+    }
+
     fn primitive_head(&self, last_arg: &Value<'src, Expr<'src>>) -> bool {
         let mut x = self;
         let mut args = vec![last_arg];
@@ -290,28 +418,54 @@ impl<'src> Value<'src, Expr<'src>> {
         None
     }
 
-    fn reduce(
-        self,
-        variable: &Value<'src, Expr<'src>>,
-        depth: usize,
-        scenario: &Scenario<'src>,
-    ) -> Option<Value<'src, Expr<'src>>> {
-        println!("VARIABLE MUST BE ADJUSTED IF IT HAS DEBRUIJN INDICIES");
-        match self {
-            Value::Function(value) => value.reduce(variable, depth + 1, scenario),
-            Value::App(f, arg) => {
-                let f = f.reduce(variable, depth, scenario)?;
-                let arg = arg.reduce(variable, depth, scenario)?;
-                f.apply(arg, scenario)
+    fn reduce_fully(self, scenario: &Scenario<'src>) {
+        let mut stack = vec![self];
+        while let Some(x) = stack.pop() {
+            match x {
+                Value::Base(literal) => todo!(),
+                Value::Function(value, lambda_type, lambda_type1) => todo!(),
+                Value::Expr(_) => todo!(),
+                Value::Neutral(value) => todo!(),
+                Value::Var(_) => todo!(),
+                Value::FreeVar(free_var, lambda_type) => todo!(),
+                Value::App(value, value1) => todo!(),
             }
-            Value::Neutral(_) => todo!(),
-            Value::Var(x) if x == depth => Some(variable.clone()),
-            Value::Var(x) if x > depth => Some(Value::Var(x - 1)),
-            v @ (Value::Var(_) | Value::FreeVar(_) | Value::Base(_) | Value::Expr(_)) => Some(v),
         }
     }
 
-    fn apply(self, other: Self, scenario: &Scenario<'src>) -> Option<Self> {
+    fn reduce(
+        self,
+        mut variables: Vec<Option<Value<'src, Expr<'src>>>>,
+        scenario: &Scenario<'src>,
+    ) -> Option<Value<'src, Expr<'src>>> {
+        match self {
+            Value::Function(body, var_type, expr_type) => {
+                variables.push(None);
+                let body = body.reduce(variables, scenario)?;
+                if Literal::has_literal(&expr_type) && !body.open_var() {
+                    Some(Value::Base(Literal::make_function_literal(
+                        body, &var_type, &expr_type, scenario,
+                    )))
+                } else {
+                    Some(Value::Function(Box::new(body), var_type, expr_type))
+                }
+            }
+            Value::App(f, arg) => f.apply(*arg, variables, scenario),
+            Value::Neutral(_) => todo!(),
+            Value::Var(x) => Some(match variables[variables.len() - 1 - x].as_ref() {
+                Some(x) => x.clone(),
+                None => Value::Var(x),
+            }),
+            v @ (Value::FreeVar(..) | Value::Base(_) | Value::Expr(_)) => Some(v),
+        }
+    }
+
+    fn apply(
+        self,
+        other: Self,
+        mut variables: Vec<Option<Value<'src, Expr<'src>>>>,
+        scenario: &Scenario<'src>,
+    ) -> Option<Self> {
         Some(match (self, other) {
             (Value::Base(alpha), Value::Base(beta)) => Value::Base(alpha.apply(&beta)),
             (x, y) if x.primitive_head(&y) => {
@@ -320,13 +474,47 @@ impl<'src> Value<'src, Expr<'src>> {
                     .expect("Already checked the head was primitive!");
                 head.eval(arguments, scenario)?
             }
-            (Value::Function(x), variable) => x.reduce(&variable, 0, scenario)?,
-            (x, y) => Value::App(Box::new(x), Box::new(y)),
+            (Value::Function(x, _, _), variable) => {
+                let v = variable.reduce(variables.clone(), scenario)?;
+                variables.push(Some(v));
+                x.reduce(variables, scenario)?
+            }
+            (x, y) => {
+                let x = x.reduce(variables.clone(), scenario)?;
+                let y = y.reduce(variables.clone(), scenario)?;
+                match (x, y) {
+                    (Value::Base(alpha), Value::Base(beta)) => Value::Base(alpha.apply(&beta)),
+                    (x, y) if x.primitive_head(&y) => {
+                        let (head, arguments) = x
+                            .primitive_head_and_arguments(y)
+                            .expect("Already checked the head was primitive!");
+                        head.eval(arguments, scenario)?
+                    }
+                    (Value::Function(x, _, _), variable) => {
+                        let v = variable.reduce(variables.clone(), scenario)?;
+                        variables.push(Some(v));
+                        x.reduce(variables, scenario)?
+                    }
+                    (x, y) => Value::App(Box::new(x), Box::new(y)),
+                }
+            }
         })
     }
 
-    fn highest_var(&self) -> Option<usize> {
-        todo!("Figure out what the highest var used in this expression is!");
+    fn open_var(&self) -> bool {
+        let mut stack = vec![(self, 0)];
+
+        while let Some((s, mut d)) = stack.pop() {
+            if let Value::Var(n) = s {
+                if *n > d {
+                    return true;
+                }
+            } else if matches!(s, Value::Function(..)) {
+                d += 1;
+            }
+            stack.extend(s.children().map(|x| (x, d)))
+        }
+        false
     }
 }
 
@@ -349,14 +537,21 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         scenario: &Scenario<'src>,
     ) -> Option<Value<'src, Expr<'src>>> {
         match self.get(index) {
-            LambdaExpr::Lambda(body, t) => {
+            LambdaExpr::Lambda(body, var_type) => {
                 variables.push(None);
+                let expr_type = self.pool.get_type(index).unwrap();
                 let body = self.interp_inner(*body, variables, scenario)?;
 
-                if BaseValue::has_literal(t) && matches!(body.highest_var(), None | Some(0)) {
-                    todo!("write automatic converter from these types to literals");
+                if Literal::has_literal(&expr_type) && !body.open_var() {
+                    Some(Value::Base(Literal::make_function_literal(
+                        body, var_type, &expr_type, scenario,
+                    )))
                 } else {
-                    Some(Value::Function(Box::new(body)))
+                    Some(Value::Function(
+                        Box::new(body),
+                        var_type.clone(),
+                        expr_type.clone(),
+                    ))
                 }
             }
             LambdaExpr::BoundVariable(x, _) => {
@@ -372,9 +567,9 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 subformula,
                 argument,
             } => {
+                let argument = self.interp_inner(*argument, variables.clone(), scenario)?;
                 let subformula = self.interp_inner(*subformula, variables.clone(), scenario)?;
-                let argument = self.interp_inner(*argument, variables, scenario)?;
-                subformula.apply(argument, scenario)
+                subformula.apply(argument, variables, scenario)
             }
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => {
                 if x.n_arguments() == 0 {
@@ -383,10 +578,32 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                     Some(Value::Expr(*x))
                 }
             }
-            LambdaExpr::LanguageOfThoughtExpr(
-                _,
-                ExprType::BindVar(_) | ExprType::BindVarTwoBodies(..),
-            ) => todo!("Binding vars is for later!"),
+
+            LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::BindVarTwoBodies(x, y)) => {
+                variables.push(None);
+                let x = Value::Function(
+                    Box::new(self.interp_inner(*x, variables.clone(), scenario)?),
+                    expr.var_type().unwrap().clone(),
+                    expr.typ().clone().lhs().unwrap().clone(),
+                );
+                let y = Value::Function(
+                    Box::new(self.interp_inner(*y, variables.clone(), scenario)?),
+                    expr.var_type().unwrap().clone(),
+                    expr.typ().clone().lhs().unwrap().clone(),
+                );
+                variables.pop();
+
+                Some(
+                    Value::App(
+                        Box::new(Value::App(Box::new(Value::Expr(*expr)), Box::new(x))),
+                        Box::new(y),
+                    )
+                    .reduce(variables, scenario)?,
+                )
+            }
+            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(_)) => {
+                todo!("Binding vars is for later!")
+            }
         }
     }
 }
@@ -394,44 +611,72 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 #[cfg(test)]
 mod test {
     use super::*;
-
     #[test]
+
     fn basic_interp() -> anyhow::Result<()> {
-        let scenario =
-            Scenario::parse("<john,mary,phil (kind);{A: john,P: mary},{A: mary},{P: phil}>")?;
+        let scenario = Scenario::parse(
+            "<john,mary,phil (kind);{A: john,P: mary (likes)},{A: mary},{P: phil}>",
+        )?;
 
         let data = [
-            ("a_john", BaseValue::Actor("john")),
-            ("pa_kind(a_john)", BaseValue::Bool(false)),
-            ("True | True", BaseValue::Bool(true)),
-            ("True | False", BaseValue::Bool(true)),
-            ("False | True", BaseValue::Bool(true)),
-            ("False | False", BaseValue::Bool(false)),
-            ("True & True", BaseValue::Bool(true)),
-            ("True & False", BaseValue::Bool(false)),
-            ("False & True", BaseValue::Bool(false)),
-            ("False & False", BaseValue::Bool(false)),
-            ("~False", BaseValue::Bool(true)),
-            ("~True", BaseValue::Bool(false)),
-            ("~(False & False)", BaseValue::Bool(true)),
-            ("AgentOf(a_john, e_0) | False", BaseValue::Bool(true)),
+            ("a_john", "a_john"),
+            ("pa_kind(a_john)", "False"),
+            ("True | True", "True"),
+            ("True | False", "True"),
+            ("False | True", "True"),
+            ("False | False", "False"),
+            ("True & True", "True"),
+            ("True & False", "False"),
+            ("False & True", "False"),
+            ("False & False", "False"),
+            ("~False", "True"),
+            ("~True", "False"),
+            ("~(False & False)", "True"),
+            ("AgentOf(a_john, e_0) | False", "True"),
+            ("some(all_a, pa_kind)", "True"),
+            ("every(all_a, pa_kind)", "False"),
+            ("some(lambda a x pa_kind(x) | ~pa_kind(x), pa_kind)", "True"),
             (
-                "some(lambda a x pa_kind(x) | ~pa_kind(x), pa_kind)",
-                BaseValue::Bool(true),
+                "some_e(all_e, lambda e x some(pa_kind, lambda a y AgentOf(y, x)))",
+                "False",
             ),
-            ("some(all_a, pa_kind)", BaseValue::Bool(true)),
-            ("every(all_a, pa_kind)", BaseValue::Bool(false)),
-            ("some(x, all_a(x), pa_kind(x))", BaseValue::Bool(true)),
-            ("every(x, all_a(x), pa_kind(x))", BaseValue::Bool(false)),
+            (
+                "some_e(all_e, lambda e x some(lambda a y ~pa_kind(y), lambda a y AgentOf(y,x)))",
+                "True",
+            ),
+            (
+                "lambda a x lambda a y pa_kind(x)",
+                "lambda a x lambda a y {a_phil}(x)",
+            ),
+            ("some(x, all_a(x), pa_kind(x))", "True"),
+            ("every(x, all_a(x), pa_kind(x))", "False"),
         ];
 
+        let n_width = data
+            .iter()
+            .map(|(x, y)| x.chars().count() + y.chars().count() + 5)
+            .max()
+            .unwrap();
+
         for (phi, val) in data {
-            println!("{phi}");
+            print!("[{phi}] = {val}");
+            let n_dots = n_width - phi.chars().count() - val.chars().count();
+            print!("{}", ".".repeat(n_dots));
+
             let phi = RootedLambdaPool::parse(phi)?;
             let calculated_value = phi.interp(&scenario).unwrap();
-            println!("{calculated_value:#?}");
-            assert_eq!(calculated_value.into_base_value().unwrap(), val);
+            if calculated_value.to_string() != val {
+                println!("❌");
+                assert_eq!(
+                    calculated_value.to_string(),
+                    val,
+                    "{calculated_value} != {val} \n ({calculated_value:#?}"
+                );
+            }
+
+            println!("✅");
         }
+
         let phi = RootedLambdaPool::parse("lambda a x pa_kind(x)")?;
         println!("{phi}");
         let v = phi.interp(&scenario).unwrap();

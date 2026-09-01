@@ -107,7 +107,7 @@ impl<'a> Scenario<'a> {
         &mut self.question
     }
 
-    fn events(&self) -> impl Iterator<Item = Event> {
+    fn events(&self) -> impl ExactSizeIterator<Item = Event> {
         0..Event::try_from(self.thematic_relations.len()).unwrap()
     }
 }

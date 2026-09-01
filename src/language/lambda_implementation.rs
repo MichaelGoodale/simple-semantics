@@ -317,7 +317,7 @@ mod test {
         assert!(pool.interp(&scenario).unwrap().try_into()?);
 
         let pool = RootedLambdaPool::<Expr>::parse(
-            "every_e(x, pe_laughs, every(y, pe_sleeps(x), pa_woman(y)))",
+            "every_e(x, pe_laughs(x), every(y, pe_sleeps(x), pa_woman(y)))",
         )?;
         println!("{}", pool);
         Ok(())

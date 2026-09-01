@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+use super::interpretation::Value;
 use ahash::HashMap;
 use serde::{Deserialize, Serialize};
 
@@ -60,15 +61,15 @@ where
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub(super) struct VarContext {
+pub(super) struct VarContext<'a> {
     vars: HashMap<usize, usize>,
     predicates: HashMap<usize, usize>,
     other_functions: HashMap<usize, usize>,
     truths: HashMap<usize, usize>,
-    depth: usize,
+    lambdas: Vec<&'a LambdaType>,
 }
 
-impl VarContext {
+impl<'a> VarContext<'a> {
     fn get_map(&self, t: Option<&LambdaType>) -> &HashMap<usize, usize> {
         match t {
             Some(t) if t == LambdaType::t() => &self.truths,
@@ -86,20 +87,28 @@ impl VarContext {
         }
     }
 
-    pub(super) fn inc_depth(mut self, t: &LambdaType) -> (Self, String) {
-        let d = self.depth;
+    pub(super) fn inc_depth(mut self, t: &'a LambdaType) -> (Self, String) {
+        let d = self.depth();
         let map = self.get_map_mut(Some(t));
         let n_var = map.len();
         map.insert(d, n_var);
-        self.depth += 1;
+        self.lambdas.push(t);
         (self, to_var(n_var, Some(t)))
     }
 
-    pub(super) fn lambda_var(&self, bvar: usize, t: &LambdaType) -> String {
+    pub(super) fn lambda_var(&self, bvar: usize) -> String {
+        let t = self.lambdas[self.depth() - bvar - 1];
         to_var(
-            *self.get_map(Some(t)).get(&(self.depth - bvar - 1)).unwrap(),
+            *self
+                .get_map(Some(t))
+                .get(&(self.depth() - bvar - 1))
+                .unwrap(),
             Some(t),
         )
+    }
+
+    fn depth(&self) -> usize {
+        self.lambdas.len()
     }
 }
 
@@ -108,7 +117,7 @@ impl<'a, T: LambdaLanguageOfThought + Display + PartialEq> std::fmt::Display
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (string, _) = self.string(self.root(), VarContext::default(), false);
-        write!(f, "{string}")
+        f.write_str(string.as_str())
     }
 }
 
@@ -129,7 +138,6 @@ enum AssociativityData<'a, T> {
 }
 
 impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'src, T> {
-    #[allow(clippy::too_many_lines)]
     fn string<'a>(
         &'a self,
         expr: LambdaExprRef,
@@ -205,9 +213,7 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'s
 
                 (s, AssociativityData::App)
             }
-            LambdaExpr::BoundVariable(bvar, lambda_type) => {
-                (c.lambda_var(*bvar, lambda_type), AssociativityData::Var)
-            }
+            LambdaExpr::BoundVariable(bvar, _) => (c.lambda_var(*bvar), AssociativityData::Var),
             LambdaExpr::FreeVariable(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Var),
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => (
                 format!("{x}"),
@@ -237,6 +243,97 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'s
                     AssociativityData::Var,
                 )
             }
+        }
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> Display for Value<'src, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (string, _) = self.string(VarContext::default(), false);
+        f.write_str(string.as_str())
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> Value<'src, T> {
+    fn string<'a>(
+        &'a self,
+        c: VarContext,
+        parent_is_app: bool,
+    ) -> (String, AssociativityData<'a, T>) {
+        match self {
+            Value::Function(body, lambda_type, _) => {
+                let (c, var) = c.inc_depth(lambda_type);
+                (
+                    format!("lambda {} {} {}", lambda_type, var, body.string(c, false).0),
+                    AssociativityData::Lambda,
+                )
+            }
+            Value::App(subformula, argument) => {
+                let (sub, associative) = subformula.string(c.clone(), true);
+                let (mut arg, arg_asso) = argument.string(c, false); // false
+
+                if let AssociativityData::Infix(t1, _) = arg_asso
+                    && let AssociativityData::Infix(t2, _) = associative
+                    && t1 != t2
+                {
+                    arg = format!("({arg})");
+                }
+
+                let mut s = match associative {
+                    AssociativityData::Infix(x, InfixPosition::Op) if parent_is_app => {
+                        return (
+                            format!("{arg} {sub}"),
+                            AssociativityData::Infix(x, InfixPosition::DoneLeftOnly),
+                        );
+                    }
+                    AssociativityData::Infix(x, InfixPosition::DoneLeftOnly) => {
+                        return (
+                            format!("{sub} {arg}"),
+                            AssociativityData::Infix(x, InfixPosition::Done),
+                        );
+                    }
+                    AssociativityData::Lambda => {
+                        format!("({sub})({arg}")
+                    }
+                    AssociativityData::Prefix => {
+                        return match arg_asso {
+                            AssociativityData::App
+                            | AssociativityData::Var
+                            | AssociativityData::Prefix => {
+                                (format!("{sub}{arg}"), AssociativityData::Var)
+                            }
+                            AssociativityData::Lambda | AssociativityData::Infix(..) => {
+                                (format!("{sub}({arg})"), AssociativityData::Var)
+                            }
+                        };
+                    }
+                    AssociativityData::Var => format!("{sub}({arg}"),
+                    AssociativityData::App => format!("{sub}{arg}"),
+                    _ => todo!(),
+                };
+
+                if parent_is_app {
+                    s.push_str(", ");
+                } else {
+                    s.push(')');
+                }
+
+                (s, AssociativityData::App)
+            }
+            Value::Var(bvar) => (c.lambda_var(*bvar), AssociativityData::Var),
+            Value::FreeVar(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Var),
+            Value::Expr(x) => (
+                format!("{x}"),
+                if x.commutative() & x.infix() {
+                    AssociativityData::Infix(x, InfixPosition::Op)
+                } else if x.unary_associative() {
+                    AssociativityData::Prefix
+                } else {
+                    AssociativityData::Var
+                },
+            ),
+            Value::Base(literal) => (literal.to_string(), AssociativityData::Var),
+            Value::Neutral(x) => x.string(c, parent_is_app),
         }
     }
 }

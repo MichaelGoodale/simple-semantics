@@ -78,7 +78,7 @@ fn lambda_stuff() -> anyhow::Result<()> {
     assert_eq!(parsed_data, alt_parsed_data);
 
     let executable = RootedLambdaPool::<Expr>::parse(
-        "every(x,pa_man, some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))",
+        "every(x, pa_man(x), some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))",
     )?;
     assert_eq!(
         parsed_data
@@ -90,8 +90,9 @@ fn lambda_stuff() -> anyhow::Result<()> {
 
     let man = "lambda a x (pa_man(x))";
     let woman = "lambda a x (pa_woman(x))";
-    let sleeps = "lambda a x (some_e(y, all_e, AgentOf(x, y) & pe_sleep(y)))";
-    let every = "lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))";
+    let sleeps = "lambda a x (some_e(y, all_e(y), AgentOf(x, y) & pe_sleep(y)))";
+    //let every = "lambda <a,t> p (lambda <a,t> q every(x, p(x), q(x)))";
+    let every = "every";
     let and = "lambda t psi (lambda t phi (psi & phi))";
     let not = "lambda t phi (~phi)";
 
