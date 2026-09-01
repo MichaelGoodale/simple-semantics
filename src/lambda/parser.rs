@@ -191,6 +191,19 @@ where
     T: ParseLot<'src> + LambdaLanguageOfThought + Clone + PartialEq + Debug,
     T::Token: Display + Clone + PartialEq + Debug,
 {
+    ///Parse a [`RootedLambdaPool`] from a string.
+    ///
+    ///```
+    /// # use simple_semantics::lambda::RootedLambdaPool;
+    /// # use simple_semantics::language::Expr;
+    /// # fn main() -> anyhow::Result<()> {
+    /// let expression = RootedLambdaPool::<Expr>::parse("lambda a x pa_kind(x) & pa_nice(x)")?;
+    /// # Ok(())
+    /// # }
+    ///
+    ///```
+    ///
+    ///This provides nice error messages thanks to [chumsky](https://crates.io/crates/chumsky) and [ariadne](https://crates.io/crates/ariadne) that you can print if you have invalid input.
     pub fn parse(s: &'src str) -> Result<RootedLambdaPool<'src, T>, LambdaParseError> {
         parse_lot(s)
     }

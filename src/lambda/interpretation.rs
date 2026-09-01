@@ -418,21 +418,6 @@ impl<'src> Value<'src, Expr<'src>> {
         None
     }
 
-    fn reduce_fully(self, scenario: &Scenario<'src>) {
-        let mut stack = vec![self];
-        while let Some(x) = stack.pop() {
-            match x {
-                Value::Base(literal) => todo!(),
-                Value::Function(value, lambda_type, lambda_type1) => todo!(),
-                Value::Expr(_) => todo!(),
-                Value::Neutral(value) => todo!(),
-                Value::Var(_) => todo!(),
-                Value::FreeVar(free_var, lambda_type) => todo!(),
-                Value::App(value, value1) => todo!(),
-            }
-        }
-    }
-
     fn reduce(
         self,
         mut variables: Vec<Option<Value<'src, Expr<'src>>>>,
@@ -519,6 +504,9 @@ impl<'src> Value<'src, Expr<'src>> {
 }
 
 impl<'src> RootedLambdaPool<'src, Expr<'src>> {
+    ///Interprets an expression given a particular scenario.
+    ///The resulting [`Value`] may be a [`Literal`] but may also still be an unreduced function
+    ///(e.g. if you have a closure or the like)
     pub fn interp(&self, scenario: &Scenario<'src>) -> Option<Value<'src, Expr<'src>>> {
         let expression: Cow<Self> = if !self.is_reduced() {
             let mut x = self.clone();
@@ -682,7 +670,7 @@ mod test {
         let v = phi.interp(&scenario).unwrap();
         println!("{v:?}");
 
-        let mut phi = RootedLambdaPool::parse("lambda a x lambda a y pa_kind(x)")?;
+        let phi = RootedLambdaPool::parse("lambda a x lambda a y pa_kind(x)")?;
         let v = phi.interp(&scenario).unwrap();
         println!("{v:?}");
 

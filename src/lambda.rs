@@ -1,7 +1,6 @@
 //! The module that defines the basic lambda calculus used to compose expressions in the langauge
 //! of thought.
 
-use core::sync;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
@@ -18,8 +17,6 @@ use thiserror::Error;
 mod interpretation;
 pub mod types;
 use types::{LambdaType, TypeError};
-
-use crate::lambda::types::LambdaType::A;
 
 mod parser;
 mod printing;
@@ -431,26 +428,6 @@ impl<T: LambdaLanguageOfThought + Hash> Hash for RootedLambdaPool<'_, T> {
                     4.hash(state);
                     x.hash(state);
                 }
-            }
-        }
-    }
-}
-
-impl<T: LambdaLanguageOfThought + PartialEq> LambdaExpr<'_, T> {
-    fn same_expr(&self, other: &Self) -> bool {
-        match self {
-            LambdaExpr::Lambda(_, lambda_type) => {
-                matches!(other, LambdaExpr::Lambda(_, other_type) if lambda_type == other_type)
-            }
-            LambdaExpr::BoundVariable(x, a) => {
-                matches!(other, LambdaExpr::BoundVariable(y, b) if x==y && a==b)
-            }
-            LambdaExpr::FreeVariable(free_var, lambda_type) => {
-                matches!(other, LambdaExpr::FreeVariable(o_var, o_type) if o_var == free_var && o_type == lambda_type)
-            }
-            LambdaExpr::Application { .. } => matches!(self, LambdaExpr::Application { .. }),
-            LambdaExpr::LanguageOfThoughtExpr(x, ..) => {
-                matches!(other, LambdaExpr::LanguageOfThoughtExpr(y,..) if x == y)
             }
         }
     }
@@ -2017,6 +1994,11 @@ mod test {
                 "(lambda <<a,t>,<<a,t>,t>> R lambda <a,t> P lambda <a,t> Q R(P, Q))(every)",
                 "every",
             ),
+            (
+                "lambda a x lambda a y pa_kind(x)",
+                "lambda a x lambda a y pa_kind(x)",
+            ),
+            ("lambda a x lambda a y pa_kind(y)", "lambda a x pa_kind"),
         ];
         for (expresssion, reduced) in expressions {
             let mut phi = RootedLambdaPool::<Expr>::parse(expresssion)?;

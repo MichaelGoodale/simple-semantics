@@ -35,15 +35,6 @@ impl Display for BinOp {
     }
 }
 
-impl BinOp {
-    fn get_argument_type(&self) -> [&LambdaType; 2] {
-        match self {
-            BinOp::AgentOf | BinOp::PatientOf => [LambdaType::a(), LambdaType::e()],
-            BinOp::And | BinOp::Or => [LambdaType::t(), LambdaType::t()],
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 ///All unary operations
 pub enum MonOp {
@@ -52,14 +43,6 @@ pub enum MonOp {
 
     ///Takes an actor or event predicate and returns the one present example that has it.
     Iota(ActorOrEvent),
-}
-
-impl MonOp {
-    fn get_argument_type(&self) -> &LambdaType {
-        match self {
-            MonOp::Iota(ActorOrEvent::Actor | ActorOrEvent::Event) | MonOp::Not => LambdaType::t(),
-        }
-    }
 }
 
 impl Display for MonOp {
@@ -210,7 +193,7 @@ pub use lambda_implementation::ConjoiningError;
 
 #[cfg(test)]
 mod tests {
-    use crate::{Entity, Scenario, ScenarioDataset, lambda::RootedLambdaPool};
+    use crate::{Entity, Scenario, lambda::RootedLambdaPool};
     use std::collections::BTreeMap;
 
     use super::*;
