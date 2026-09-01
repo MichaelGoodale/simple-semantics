@@ -187,8 +187,9 @@ impl<'src> Literal<'src> {
     }
 }
 
-#[derive(Debug, Error, Clone, Copy)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("This expression cannot be evaluated because it returns an undefined value")]
+///An error resulting from evaluating an expression that returns undefined.
 pub struct UndefinedExpression;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
@@ -211,7 +212,7 @@ impl<'src> Value<'src, Expr<'src>> {
         }
     }
 
-    fn into_base_value(self) -> Option<Literal<'src>> {
+    pub fn into_base_value(self) -> Option<Literal<'src>> {
         if let Value::Base(b) = self {
             Some(b)
         } else {

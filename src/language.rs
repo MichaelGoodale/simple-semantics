@@ -193,7 +193,10 @@ pub use lambda_implementation::ConjoiningError;
 
 #[cfg(test)]
 mod tests {
-    use crate::{Entity, Scenario, lambda::RootedLambdaPool};
+    use crate::{
+        Entity, Scenario, ScenarioDataset,
+        lambda::{Literal, RootedLambdaPool, UndefinedExpression},
+    };
     use std::collections::BTreeMap;
 
     use super::*;
@@ -399,11 +402,10 @@ mod tests {
         }
         Ok(())
     }
-    /*
 
     #[test]
     fn error_handling() -> anyhow::Result<()> {
-        let expr = parse_executable("some_e(y,pe_1,PatientOf(a_1,y))")?;
+        let expr = RootedLambdaPool::<Expr>::parse("some_e(y,pe_1(y),PatientOf(a_1,y))")?;
 
         let a = Scenario {
             question: vec![],
@@ -424,11 +426,8 @@ mod tests {
             }],
             properties: vec![("0", vec![Entity::Event(0)])].into_iter().collect(),
         };
-        assert_eq!(
-            expr.run(&b, None),
-            Err(LanguageTypeError::PresuppositionError)
-        );
-        expr.run(&a, None)?;
+        assert_eq!(expr.interp(&b), Err(UndefinedExpression));
+        expr.interp(&a)?;
 
         Ok(())
     }
@@ -439,42 +438,37 @@ mod tests {
 
         let labels = ScenarioDataset::parse(scenario)?;
 
-        let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))")?;
-        let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))")?;
-        let c = LanguageExpression::parse(
-            "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))",
+        let a = RootedLambdaPool::<Expr>::parse("every_e(x,pe_dance(x),AgentOf(a_Phil,x))")?;
+        let b = RootedLambdaPool::<Expr>::parse("every_e(x,pe_dance(x),AgentOf(a_Mary,x))")?;
+        let c = RootedLambdaPool::<Expr>::parse(
+            "(every_e(x,pe_dance(x),AgentOf(a_Phil,x)))&~(every_e(x,pe_dance(x),AgentOf(a_Mary,x)))",
         )?;
         let scenario = labels.iter_scenarios().next().unwrap();
-        assert_eq!(a.run(scenario, None)?, LanguageResult::Bool(true));
-        assert_eq!(b.run(scenario, None)?, LanguageResult::Bool(false));
-        assert_eq!(c.run(scenario, None)?, LanguageResult::Bool(true));
+        assert!(bool::try_from(a.interp(scenario)?)?);
+        assert!(!bool::try_from(b.interp(scenario)?)?);
+        assert!(bool::try_from(c.interp(scenario)?)?);
 
-        let pool = LanguageExpression::parse(
+        let pool = RootedLambdaPool::<Expr>::parse(
             "every_e(x, AgentOf(a_Mary, x), PatientOf(a_Phil, x)) & ~every_e(x, AgentOf(a_John, x), PatientOf(a_Phil, x)) & ~every_e(x, AgentOf(a_Phil, x), PatientOf(a_Phil, x)) & ~every_e(x, AgentOf(a_Sue, x), PatientOf(a_Phil, x))",
         )?;
         let labels = ScenarioDataset::parse(
-            "\"Mary loves Phil\" <John (man), Mary (woman), Phil (man), Sue (woman); {A: Mary, P: Phil (loves)}> lambda a x some_e(e, pe_loves, AgentOf(x, e)); lambda a x some_e(e, pe_loves, PatientOf(x, e)); lambda <a,<a,t>> P P(a_Phil, a_Mary) & ~P(a_John, a_Mary) & ~P(a_Mary, a_Mary) & ~P(a_Sue, a_Mary); lambda <a,t> P P(a_Mary) & ~P(a_John) & ~P(a_Phil) & ~P(a_Sue)",
+            "\"Mary loves Phil\" <John (man), Mary (woman), Phil (man), Sue (woman); {A: Mary, P: Phil (loves)}> lambda a x some_e(e, pe_loves(e), AgentOf(x, e)); lambda a x some_e(e, pe_loves(e), PatientOf(x, e)); lambda <a,<a,t>> P P(a_Phil, a_Mary) & ~P(a_John, a_Mary) & ~P(a_Mary, a_Mary) & ~P(a_Sue, a_Mary); lambda <a,t> P P(a_Mary) & ~P(a_John) & ~P(a_Phil) & ~P(a_Sue)",
         )?;
 
-        let config = ExecutionConfig::default().allow_empty_quantification();
         let scenario = labels.iter_scenarios().next().unwrap();
 
-        pool.run(scenario, Some(config))?;
+        pool.interp(scenario)?;
 
-        let pool = LanguageExpression::parse(
-            "some_e(x, all_e, AgentOf(a_John, x) & PatientOf(a_Mary, x) & pe_helps(x))",
+        let pool = RootedLambdaPool::<Expr>::parse(
+            "some_e(x, all_e(x), AgentOf(a_John, x) & PatientOf(a_Mary, x) & pe_helps(x))",
         )?;
         let labels = ScenarioDataset::parse(
             "\"John helps Mary\" <John (man), Phil (man), Mary (woman); {A: John (sleeps)}, {A: John, P: Mary (helps)}> lambda a x AgentOf(x, e_1); lambda <a, t> P P(a_John) & ~P(a_Phil) & ~P(a_Mary); lambda a x PatientOf(x, e_1); lambda <a, <a, t>> P P(a_Mary, a_John) & ~P(a_John, a_John) & ~P(a_Phil, a_John)",
         )?;
 
-        let config = ExecutionConfig::default().allow_empty_quantification();
         let scenario = labels.iter_scenarios().next().unwrap();
 
-        assert_eq!(
-            pool.run(scenario, Some(config))?,
-            LanguageResult::Bool(true)
-        );
+        assert!(bool::try_from(pool.interp(scenario)?)?);
 
         Ok(())
     }
@@ -485,27 +479,30 @@ mod tests {
 
         let labels = ScenarioDataset::parse(scenario)?;
 
-        let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_man(x)),x))")?;
-        let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_woman(x)),x))")?;
-        let c = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(iota(x, pa_red(x)),x))")?;
+        let a = RootedLambdaPool::<Expr>::parse(
+            "every_e(x,pe_dance(x),AgentOf(iota(x, pa_man(x)),x))",
+        )?;
+        let b = RootedLambdaPool::<Expr>::parse(
+            "every_e(x,pe_dance(x),AgentOf(iota(x, pa_woman(x)),x))",
+        )?;
+        let c = RootedLambdaPool::<Expr>::parse(
+            "every_e(x,pe_dance(x),AgentOf(iota(x, pa_red(x)),x))",
+        )?;
+        let d = RootedLambdaPool::<Expr>::parse("iota_e(x, pe_dance(x))")?;
 
-        let d = LanguageExpression::parse("iota_e(x, pe_dance(x))")?;
         let scenario = labels.iter_scenarios().next().unwrap();
         assert_eq!(
             a.to_string(),
-            "every_e(x, pe_dance, AgentOf(iota(y, pa_man(y)), x))"
+            "every_e(x, pe_dance(x), AgentOf(iota(y, pa_man(y)), x))"
         );
-        assert_eq!(a.run(scenario, None)?, LanguageResult::Bool(true));
+        assert!(bool::try_from(a.interp(scenario)?)?);
+        assert_eq!(b.interp(scenario), Err(UndefinedExpression));
+        assert_eq!(c.interp(scenario), Err(UndefinedExpression));
         assert_eq!(
-            b.run(scenario, None),
-            Err(LanguageTypeError::PresuppositionError)
+            d.interp(scenario).unwrap().into_base_value().unwrap(),
+            Literal::Event(0)
         );
-        assert_eq!(
-            c.run(scenario, None),
-            Err(LanguageTypeError::PresuppositionError)
-        );
-        assert_eq!(d.run(scenario, None), Ok(LanguageResult::Event(0)));
 
         Ok(())
-    }*/
+    }
 }

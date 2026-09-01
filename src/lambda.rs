@@ -15,6 +15,7 @@ use std::{
 use thiserror::Error;
 
 mod interpretation;
+pub use interpretation::{Literal, UndefinedExpression, Value};
 pub mod types;
 use types::{LambdaType, TypeError};
 
