@@ -1,6 +1,7 @@
 //! The module that defines the basic lambda calculus used to compose expressions in the langauge
 //! of thought.
 
+use core::sync;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
@@ -17,6 +18,8 @@ use thiserror::Error;
 mod interpretation;
 pub mod types;
 use types::{LambdaType, TypeError};
+
+use crate::lambda::types::LambdaType::A;
 
 mod parser;
 mod printing;
@@ -80,6 +83,10 @@ pub enum ReductionError {
     ///A reference to a [`LambdaExpr`] which is not an application is passed
     #[error("{0:?} is not an application!")]
     NotApplication(LambdaExprRef),
+
+    ///A reference to a [`LambdaExpr`] which is not a lambda(app(b, x))  is passed
+    #[error("{0:?} is not an application!")]
+    NoEtaReduction(LambdaExprRef),
 
     ///An application that doesn't apply a lambda expression
     #[error("The left hand side of the application ({app:?}), {lhs:?} is not a lambda expression!")]
@@ -910,16 +917,48 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
         MutableLambdaPoolBFSIterator::new(self, x)
     }
 
-    fn get_next_app(&self, root: LambdaExprRef) -> Option<LambdaExprRef> {
+    fn get_next_app(&self, root: LambdaExprRef) -> Option<ApplicationOpportunity> {
         self.bfs_from(root)
             .map(|(x, _)| x)
-            .find(|x| match self.get(*x) {
-                LambdaExpr::Application { subformula, .. } => {
-                    matches!(self.get(*subformula), LambdaExpr::Lambda(..))
+            .find_map(|r| match self.get(r) {
+                LambdaExpr::Lambda(..) if self.is_eta_opportunity(r) => {
+                    Some(ApplicationOpportunity::Eta(r))
                 }
-                _ => false,
+                LambdaExpr::Application { subformula, .. }
+                    if matches!(self.get(*subformula), LambdaExpr::Lambda(..)) =>
+                {
+                    Some(ApplicationOpportunity::Beta(r))
+                }
+
+                _ => None,
             })
     }
+
+    fn is_eta_opportunity(&self, root: LambdaExprRef) -> bool {
+        let LambdaExpr::Lambda(body, _) = self.get(root) else {
+            return false;
+        };
+        let LambdaExpr::Application {
+            subformula,
+            argument,
+        } = self.get(*body)
+        else {
+            return false;
+        };
+        if !matches!(self.get(*argument), LambdaExpr::BoundVariable(0, _)) {
+            return false;
+        };
+
+        let uses_variable_in_body = self
+            .bfs_from(*subformula)
+            .any(|(x, d)| matches!(self.get(x), LambdaExpr::BoundVariable(v, _) if *v==d ));
+        !uses_variable_in_body
+    }
+}
+
+enum ApplicationOpportunity {
+    Beta(LambdaExprRef),
+    Eta(LambdaExprRef),
 }
 
 impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T>
@@ -999,6 +1038,49 @@ where
                 *self.get_mut(*x) = head.unwrap();
             }
         }
+    }
+
+    fn eta_reduce(&mut self, lambda: LambdaExprRef) -> Result<(), ReductionError> {
+        //BFS over all children and then replace debruijn k w/ argument ref where k is the number
+        //of lambda abstractions we've gone under, e.g. (lambda 0 lambda 0 1)(u) -> lambda u lambda
+        //1
+        //
+        //swap position of lambda ref and subformula ref so the lambda now leads to this.
+        //
+        let Some(expr) = self.checked_get(lambda) else {
+            return Err(ReductionError::NotValidRef(lambda));
+        };
+        let LambdaExpr::Lambda(body, _) = expr else {
+            return Err(ReductionError::NoEtaReduction(lambda));
+        };
+        let LambdaExpr::Application {
+            subformula,
+            argument,
+        } = *self.get(*body)
+        else {
+            return Err(ReductionError::NoEtaReduction(lambda));
+        };
+
+        if !matches!(self.get(argument), LambdaExpr::BoundVariable(0, _)) {
+            return Err(ReductionError::NoEtaReduction(lambda));
+        }
+
+        for (x, d) in self.bfs_from_mut(subformula).filter_map(|(x, d, _)| {
+            if let LambdaExpr::BoundVariable(bvar, _) = x {
+                Some((bvar, d))
+            } else {
+                None
+            }
+        }) {
+            if *x == d {
+                return Err(ReductionError::NoEtaReduction(lambda));
+            }
+            *x -= 1;
+        }
+
+        *self.get_mut(lambda) = self.get(subformula).clone();
+
+        Ok(())
     }
 
     fn beta_reduce(&mut self, app: LambdaExprRef) -> Result<(), ReductionError> {
@@ -1093,7 +1175,10 @@ where
 
     pub fn reduce(&mut self, root: LambdaExprRef) -> Result<(), ReductionError> {
         while let Some(x) = self.get_next_app(root) {
-            self.beta_reduce(x)?;
+            match x {
+                ApplicationOpportunity::Beta(x) => self.beta_reduce(x)?,
+                ApplicationOpportunity::Eta(x) => self.eta_reduce(x)?,
+            }
         }
         Ok(())
     }
@@ -1293,7 +1378,7 @@ mod test {
     };
 
     use super::*;
-    use crate::language::{ActorOrEvent, BinOp, Expr, MonOp};
+    use crate::language::Expr;
 
     #[test]
     fn ordering() -> anyhow::Result<()> {
@@ -1919,6 +2004,25 @@ mod test {
                 panic!("{s} is poorly formed")
             };
             assert!(!constant_function);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reduce_with_expressions() -> anyhow::Result<()> {
+        let expressions = [
+            ("lambda a x pa_kind(x)", "pa_kind"),
+            ("lambda a x kind#<a,t>(x)", "kind#<a,t>"),
+            (
+                "(lambda <<a,t>,<<a,t>,t>> R lambda <a,t> P lambda <a,t> Q R(P, Q))(every)",
+                "every",
+            ),
+        ];
+        for (expresssion, reduced) in expressions {
+            let mut phi = RootedLambdaPool::<Expr>::parse(expresssion)?;
+            phi.reduce()?;
+            let reduced = RootedLambdaPool::<Expr>::parse(reduced)?;
+            assert_eq!(phi, reduced, "{phi} != {reduced}");
         }
         Ok(())
     }
