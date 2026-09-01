@@ -187,6 +187,10 @@ impl<'src> Literal<'src> {
     }
 }
 
+#[derive(Debug, Error, Clone, Copy)]
+#[error("This expression cannot be evaluated because it returns an undefined value")]
+pub struct UndefinedExpression;
+
 #[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
 pub enum Value<'a, T> {
     Base(Literal<'a>),
@@ -264,7 +268,7 @@ impl<'src> Expr<'src> {
         &self,
         mut arguments: Vec<Value<'src, Expr<'src>>>,
         scenario: &Scenario<'src>,
-    ) -> Option<Value<'src, Expr<'src>>> {
+    ) -> Result<Value<'src, Expr<'src>>, UndefinedExpression> {
         let x = match self {
             Expr::Quantifier {
                 quantifier,
@@ -306,7 +310,10 @@ impl<'src> Expr<'src> {
             Expr::Binary(op @ (BinOp::AgentOf | BinOp::PatientOf), ..) => {
                 let a = arguments[0].to_base_value().unwrap().as_actor().unwrap();
                 let e = arguments[1].to_base_value().unwrap().as_event().unwrap();
-                let e = scenario.thematic_relations[usize::from(e)];
+                let e = scenario
+                    .thematic_relations
+                    .get(usize::from(e))
+                    .ok_or(UndefinedExpression)?;
                 Literal::Bool(match op {
                     BinOp::AgentOf => e.agent.is_some_and(|x| x == a),
                     BinOp::PatientOf => e.patient.is_some_and(|x| x == a),
@@ -339,7 +346,7 @@ impl<'src> Expr<'src> {
             Expr::Constant(Constant::Tautology) => Literal::Bool(true),
             Expr::Constant(Constant::Contradiction) => Literal::Bool(false),
             Expr::Constant(Constant::Property(p, a_or_e)) => {
-                let x = scenario.properties.get(p)?;
+                let x = scenario.properties.get(p).ok_or(UndefinedExpression)?;
                 match a_or_e {
                     ActorOrEvent::Actor => Literal::ActorSet(
                         x.iter()
@@ -366,7 +373,7 @@ impl<'src> Expr<'src> {
                 }
             }
         };
-        Some(Value::Base(x))
+        Ok(Value::Base(x))
     }
 }
 
@@ -422,26 +429,26 @@ impl<'src> Value<'src, Expr<'src>> {
         self,
         mut variables: Vec<Option<Value<'src, Expr<'src>>>>,
         scenario: &Scenario<'src>,
-    ) -> Option<Value<'src, Expr<'src>>> {
+    ) -> Result<Value<'src, Expr<'src>>, UndefinedExpression> {
         match self {
             Value::Function(body, var_type, expr_type) => {
                 variables.push(None);
                 let body = body.reduce(variables, scenario)?;
                 if Literal::has_literal(&expr_type) && !body.open_var() {
-                    Some(Value::Base(Literal::make_function_literal(
+                    Ok(Value::Base(Literal::make_function_literal(
                         body, &var_type, &expr_type, scenario,
                     )))
                 } else {
-                    Some(Value::Function(Box::new(body), var_type, expr_type))
+                    Ok(Value::Function(Box::new(body), var_type, expr_type))
                 }
             }
             Value::App(f, arg) => f.apply(*arg, variables, scenario),
             Value::Neutral(_) => todo!(),
-            Value::Var(x) => Some(match variables[variables.len() - 1 - x].as_ref() {
+            Value::Var(x) => Ok(match variables[variables.len() - 1 - x].as_ref() {
                 Some(x) => x.clone(),
                 None => Value::Var(x),
             }),
-            v @ (Value::FreeVar(..) | Value::Base(_) | Value::Expr(_)) => Some(v),
+            v @ (Value::FreeVar(..) | Value::Base(_) | Value::Expr(_)) => Ok(v),
         }
     }
 
@@ -450,8 +457,8 @@ impl<'src> Value<'src, Expr<'src>> {
         other: Self,
         mut variables: Vec<Option<Value<'src, Expr<'src>>>>,
         scenario: &Scenario<'src>,
-    ) -> Option<Self> {
-        Some(match (self, other) {
+    ) -> Result<Self, UndefinedExpression> {
+        Ok(match (self, other) {
             (Value::Base(alpha), Value::Base(beta)) => Value::Base(alpha.apply(&beta)),
             (x, y) if x.primitive_head(&y) => {
                 let (head, arguments) = x
@@ -507,7 +514,10 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     ///Interprets an expression given a particular scenario.
     ///The resulting [`Value`] may be a [`Literal`] but may also still be an unreduced function
     ///(e.g. if you have a closure or the like)
-    pub fn interp(&self, scenario: &Scenario<'src>) -> Option<Value<'src, Expr<'src>>> {
+    pub fn interp(
+        &self,
+        scenario: &Scenario<'src>,
+    ) -> Result<Value<'src, Expr<'src>>, UndefinedExpression> {
         let expression: Cow<Self> = if !self.is_reduced() {
             let mut x = self.clone();
             x.reduce().expect("Can't reduce :(");
@@ -523,7 +533,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         index: LambdaExprRef,
         mut variables: Vec<Option<Value<'src, Expr<'src>>>>,
         scenario: &Scenario<'src>,
-    ) -> Option<Value<'src, Expr<'src>>> {
+    ) -> Result<Value<'src, Expr<'src>>, UndefinedExpression> {
         match self.get(index) {
             LambdaExpr::Lambda(body, var_type) => {
                 variables.push(None);
@@ -531,11 +541,11 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 let body = self.interp_inner(*body, variables, scenario)?;
 
                 if Literal::has_literal(&expr_type) && !body.open_var() {
-                    Some(Value::Base(Literal::make_function_literal(
+                    Ok(Value::Base(Literal::make_function_literal(
                         body, var_type, &expr_type, scenario,
                     )))
                 } else {
-                    Some(Value::Function(
+                    Ok(Value::Function(
                         Box::new(body),
                         var_type.clone(),
                         expr_type.clone(),
@@ -543,7 +553,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 }
             }
             LambdaExpr::BoundVariable(x, _) => {
-                Some(match variables[variables.len() - 1 - *x].as_ref() {
+                Ok(match variables[variables.len() - 1 - *x].as_ref() {
                     Some(x) => x.clone(),
                     None => Value::Var(*x),
                 })
@@ -563,7 +573,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 if x.n_arguments() == 0 {
                     x.eval(vec![], scenario)
                 } else {
-                    Some(Value::Expr(*x))
+                    Ok(Value::Expr(*x))
                 }
             }
 
@@ -581,13 +591,11 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 );
                 variables.pop();
 
-                Some(
-                    Value::App(
-                        Box::new(Value::App(Box::new(Value::Expr(*expr)), Box::new(x))),
-                        Box::new(y),
-                    )
-                    .reduce(variables, scenario)?,
+                Ok(Value::App(
+                    Box::new(Value::App(Box::new(Value::Expr(*expr)), Box::new(x))),
+                    Box::new(y),
                 )
+                .reduce(variables, scenario)?)
             }
             LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(_)) => {
                 todo!("Binding vars is for later!")
