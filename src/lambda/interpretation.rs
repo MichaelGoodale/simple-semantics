@@ -259,8 +259,9 @@ impl<'src> Expr<'src> {
         match self {
             Expr::Quantifier { .. } => arguments.iter().all(|x| matches!(x, Value::Base(_))),
             Expr::Binary(_) => arguments.iter().all(|x| matches!(x, Value::Base(_))),
-            Expr::Unary(MonOp::Not) => matches!(arguments.first().unwrap(), Value::Base(_)),
-            Expr::Unary(MonOp::Iota(_)) => todo!(),
+            Expr::Unary(MonOp::Not) | Expr::Unary(MonOp::Iota(_)) => {
+                matches!(arguments.first().unwrap(), Value::Base(_))
+            }
             Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) => true,
         }
     }
@@ -305,7 +306,25 @@ impl<'src> Expr<'src> {
                 };
                 Literal::Bool(v)
             }
-            Expr::Unary(MonOp::Iota(_)) => todo!(),
+            Expr::Unary(MonOp::Iota(a_o_e)) => {
+                let x = arguments.pop().unwrap().into_base_value().unwrap();
+                match a_o_e {
+                    ActorOrEvent::Actor => {
+                        let mut x = x.into_actor_set().unwrap();
+                        if x.len() != 1 {
+                            return Err(UndefinedExpression);
+                        }
+                        Literal::Actor(x.pop().unwrap())
+                    }
+                    ActorOrEvent::Event => {
+                        let mut x = x.into_event_set().unwrap();
+                        if x.len() != 1 {
+                            return Err(UndefinedExpression);
+                        }
+                        Literal::Event(x.pop().unwrap())
+                    }
+                }
+            }
             Expr::Actor(a) => Literal::Actor(a),
             Expr::Event(e) => Literal::Event(*e),
             Expr::Binary(op @ (BinOp::AgentOf | BinOp::PatientOf), ..) => {
@@ -598,8 +617,17 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 )
                 .reduce(variables, scenario)?)
             }
-            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(_)) => {
-                todo!("Binding vars is for later!")
+            LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::BindVar(x)) => {
+                variables.push(None);
+                let x = Value::Function(
+                    Box::new(self.interp_inner(*x, variables.clone(), scenario)?),
+                    expr.var_type().unwrap().clone(),
+                    expr.typ().clone().lhs().unwrap().clone(),
+                );
+                variables.pop();
+
+                Ok(Value::App(Box::new(Value::Expr(*expr)), Box::new(x))
+                    .reduce(variables, scenario)?)
             }
         }
     }
