@@ -28,16 +28,20 @@ impl From<ValueId> for usize {
     }
 }
 
+///A representation of literals of a few basic types.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Literal<'a> {
+    ///Booleans, type: t
     Bool(bool),
+    ///[`Actor`], type: a
     Actor(Actor<'a>),
+    ///[`Event`], type: e
     Event(Event),
-    ///A set of actors (represented as a vector).
+    ///A set of actors (represented as a vector), type: <a,t>
     ActorSet(Vec<Actor<'a>>),
-    ///A set of events (represented as a vector).
+    ///A set of events (represented as a vector), type: <e,t>
     EventSet(Vec<Event>),
-    //A mapping from truth to truth.
+    ///A mapping from truth to truth, type: <t,t>
     TruthTable(bool, bool),
 }
 
@@ -192,14 +196,22 @@ impl<'src> Literal<'src> {
 ///An error resulting from evaluating an expression that returns undefined.
 pub struct UndefinedExpression;
 
+///A value resulting from evaluating an expression.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
 pub enum Value<'a, T> {
+    ///A [`Literal`]
     Base(Literal<'a>),
+    ///A function
     Function(Box<Value<'a, T>>, LambdaType, LambdaType),
+    ///An primitive expression
     Expr(T),
+    ///A value that cannot be evaluated because of a free variable.
     Neutral(Box<Value<'a, T>>),
+    ///A variable
     Var(usize),
+    ///A free variable
     FreeVar(FreeVar<'a>, LambdaType),
+    ///An application
     App(Box<Value<'a, T>>, Box<Value<'a, T>>),
 }
 
@@ -212,6 +224,7 @@ impl<'src> Value<'src, Expr<'src>> {
         }
     }
 
+    ///Convert the value into a [`Literal`], if possible.
     pub fn into_base_value(self) -> Option<Literal<'src>> {
         if let Value::Base(b) = self {
             Some(b)
