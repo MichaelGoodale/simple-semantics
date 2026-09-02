@@ -21,6 +21,7 @@ use types::{LambdaType, TypeError};
 
 mod parser;
 mod printing;
+mod serializations;
 
 pub(crate) type Bvar = usize;
 

@@ -14,9 +14,11 @@ use chumsky::{
     pratt::{infix, left, prefix},
     prelude::*,
     span::{SimpleSpan, Spanned},
-    text::inline_whitespace,
+    text::{inline_whitespace, int},
 };
+use serde::Serialize;
 use std::{
+    borrow::Cow,
     collections::{HashMap, VecDeque},
     fmt::{Debug, Display},
     ops::Range,
@@ -249,6 +251,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
             var,
             lambda_type,
         } => {
+            let var = force_unwrap_cow(&var);
             variable_names.bind_var(var, lambda_depth + 1, lambda_type.clone());
             let body = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1)?;
             variable_names.unbind(var);
@@ -269,6 +272,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
                 expr.inner
             );
 
+            let var = force_unwrap_cow(&var);
             variable_names.bind_var(var, lambda_depth + 1, var_type.clone());
             let body_span = body.span.into_range();
             let body_ref = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1)?;
@@ -317,6 +321,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
                 expr.inner
             );
 
+            let var = force_unwrap_cow(&var);
             variable_names.bind_var(var, lambda_depth + 1, var_type.clone());
             let bodies = [*body1, *body2];
             let mut refs = [None, None];
@@ -369,7 +374,8 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
             )
         }
         ParseTree::Variable(var) => {
-            if let Some(x) = variable_names.to_expr(var, None, lambda_depth) {
+            let var = force_unwrap_cow(&var);
+            if let Some(x) = variable_names.to_expr(var, lambda_depth) {
                 x
             } else {
                 errors.push(OwnedParseError::UnTypedFreeVariable(
@@ -379,9 +385,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
                 return None;
             }
         }
-        ParseTree::FreeVariable(var, lambda_type) => variable_names
-            .to_expr(var, Some(lambda_type.clone()), lambda_depth)
-            .unwrap(),
+        ParseTree::FreeVariable(fvar, lambda_type) => LambdaExpr::FreeVariable(fvar, lambda_type),
         ParseTree::LanguageOfThoughtExpr(e) => {
             LambdaExpr::LanguageOfThoughtExpr(e, ExprType::NoVar)
         }
@@ -409,13 +413,15 @@ fn into_pool<'src, T: LambdaLanguageOfThought + Debug>(
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 struct VariableContext<'src>(HashMap<&'src str, Vec<(Bvar, LambdaType)>>, u32);
 
+fn force_unwrap_cow<'b>(x: &Cow<'b, str>) -> &'b str {
+    match x {
+        Cow::Borrowed(x) => x,
+        Cow::Owned(_) => panic!("Parsing may only use borrowed strs!"),
+    }
+}
+
 impl<'src> VariableContext<'src> {
-    fn to_expr<T>(
-        &self,
-        variable: &'src str,
-        lambda_type: Option<LambdaType>,
-        lambda_depth: usize,
-    ) -> Option<LambdaExpr<'src, T>> {
+    fn to_expr<T>(&self, variable: &'src str, lambda_depth: usize) -> Option<LambdaExpr<'src, T>> {
         match self.0.get(variable) {
             Some(vars) if !vars.is_empty() => {
                 let (og_depth, lambda_type) = vars
@@ -426,17 +432,7 @@ impl<'src> VariableContext<'src> {
                     lambda_type.clone(),
                 ))
             }
-            //Do free var
-            _ => match lambda_type {
-                Some(lambda_type) => {
-                    let free_var = variable
-                        .parse::<usize>()
-                        .map_or(FreeVar::Named(variable), FreeVar::Anonymous);
-
-                    Some(LambdaExpr::FreeVariable(free_var, lambda_type))
-                }
-                None => None,
-            },
+            _ => None,
         }
     }
 
@@ -457,10 +453,10 @@ enum ParseTree<'src, T> {
     Lambda {
         body: Box<Spanned<ParseTree<'src, T>>>,
         lambda_type: LambdaType,
-        var: &'src str,
+        var: Cow<'src, str>,
     },
-    Variable(&'src str),
-    FreeVariable(&'src str, LambdaType),
+    Variable(Cow<'src, str>),
+    FreeVariable(FreeVar<'src>, LambdaType),
     Application {
         subformula: Box<Spanned<ParseTree<'src, T>>>,
         argument: Box<Spanned<ParseTree<'src, T>>>,
@@ -469,13 +465,13 @@ enum ParseTree<'src, T> {
     LanguageOfThoughtExprBindOne {
         expr: Spanned<T>,
         body: Box<Spanned<ParseTree<'src, T>>>,
-        var: &'src str,
+        var: Cow<'src, str>,
     },
     LanguageOfThoughtExprBindTwo {
         expr: Spanned<T>,
         body1: Box<Spanned<ParseTree<'src, T>>>,
         body2: Box<Spanned<ParseTree<'src, T>>>,
-        var: &'src str,
+        var: Cow<'src, str>,
     },
 }
 
@@ -497,6 +493,7 @@ pub trait ParseLot<'src> {
     fn is_prefix(token: &Self::Token) -> bool;
     fn bind_var_type(token: &Self::Token) -> PrimitiveVarType;
     fn into_expr(token: Self::Token) -> Self;
+    fn into_token(&self) -> Self::Token;
 }
 
 impl<'src> ParseLot<'src> for () {
@@ -519,6 +516,10 @@ impl<'src> ParseLot<'src> for () {
     }
 
     fn into_expr(_: Self::Token) -> Self {}
+
+    fn into_token(&self) -> Self::Token {
+        "1"
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -631,18 +632,35 @@ impl<'src> ParseLot<'src> for Expr<'src> {
             _ => PrimitiveVarType::NoVar,
         }
     }
+
+    fn into_token(&self) -> Self::Token {
+        match self {
+            Expr::Quantifier {
+                quantifier,
+                var_type,
+            } => ExprToken::Quantifier(*quantifier, *var_type),
+            Expr::Actor(a) => ExprToken::Actor(a),
+            Expr::Event(e) => ExprToken::Event(*e),
+            Expr::Binary(bin_op) => ExprToken::BinOp(*bin_op),
+            Expr::Unary(mon_op) => ExprToken::MonOp(*mon_op),
+            Expr::Constant(constant) => ExprToken::Constant(*constant),
+        }
+    }
 }
 
+//We use Cow here instead of &'src str so that Token can be re-used in fancy serialization where
+//variable names have to be invented.
 #[derive(Debug, Clone, Eq, PartialEq)]
-enum Token<'src, T: ParseLot<'src>> {
+pub(super) enum Token<'src, T: ParseLot<'src>> {
     OpenDelim,
     ArgSep,
     CloseDelim,
-    Lambda(LambdaType, &'src str),
-    Variable(&'src str),
-    FreeVariable(&'src str, LambdaType),
+    Lambda(LambdaType, Cow<'src, str>),
+    Variable(Cow<'src, str>),
+    FreeVariable(FreeVar<'src>, LambdaType),
     LanguageOfThought(T::Token),
 }
+
 impl<'src, T> Display for Token<'src, T>
 where
     T: ParseLot<'src>,
@@ -678,14 +696,19 @@ where
             .then_ignore(inline_whitespace().at_least(1))
             .then(keyword())
             .then_ignore(inline_whitespace().at_least(1))
-            .map(|(t, x)| Token::Lambda(t, x)),
+            .map(|(t, x)| Token::Lambda(t, Cow::Borrowed(x))),
+        int(10)
+            .then(just("#").ignore_then(core_type_parser()))
+            .map(|(var, t)| {
+                Token::FreeVariable(FreeVar::Anonymous(str::parse::<usize>(var).unwrap()), t)
+            }),
         keyword()
             .then(just("#").ignore_then(core_type_parser()).or_not())
             .map(|(var, lambda_type)| {
                 if let Some(t) = lambda_type {
-                    Token::FreeVariable(var, t)
+                    Token::FreeVariable(FreeVar::Named(var), t)
                 } else {
-                    Token::Variable(var)
+                    Token::Variable(Cow::Borrowed(var))
                 }
             }),
     ))

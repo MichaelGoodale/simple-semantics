@@ -171,10 +171,6 @@ impl Display for Expr<'_> {
     }
 }
 
-//mod parser;
-//pub use parser::LambdaParseError;
-//pub use parser::parse_executable;
-
 mod lambda_implementation;
 pub use lambda_implementation::ConjoiningError;
 
@@ -188,8 +184,6 @@ pub use lambda_implementation::ConjoiningError;
 //pub use mutations::{
 //    Context, LambdaEnumerator, LambdaSampler, PossibleExpressions, TypeAgnosticSampler,
 //};
-
-//mod serializations;
 
 #[cfg(test)]
 mod tests {

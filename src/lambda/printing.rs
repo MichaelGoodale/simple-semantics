@@ -35,31 +35,6 @@ pub fn to_var(x: usize, t: Option<&LambdaType>) -> String {
     }
 }
 
-impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src> + PartialEq> Serialize
-    for RootedLambdaPool<'src, T>
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.to_string().as_str())
-    }
-}
-impl<'de, 'a, T> Deserialize<'de> for RootedLambdaPool<'a, T>
-where
-    'de: 'a,
-    T: ParseLot<'a> + LambdaLanguageOfThought + Clone + PartialEq + Debug,
-    T::Token: Display + Clone + PartialEq + Debug,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = <&'de str>::deserialize(deserializer)?;
-        RootedLambdaPool::parse(s).map_err(serde::de::Error::custom)
-    }
-}
-
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub(super) struct VarContext<'a> {
     vars: HashMap<usize, usize>,
@@ -122,14 +97,14 @@ impl<'a, T: LambdaLanguageOfThought + Display + PartialEq> std::fmt::Display
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum InfixPosition {
+pub(super) enum InfixPosition {
     Op,
     DoneLeftOnly,
     Done,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum AssociativityData<'a, T> {
+pub(super) enum AssociativityData<'a, T> {
     Lambda,
     Var,
     App,
@@ -185,7 +160,8 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'s
                             AssociativityData::Infix(x, InfixPosition::Done),
                         );
                     }
-                    AssociativityData::Lambda => {
+                    AssociativityData::Lambda
+                    | AssociativityData::Infix(_, InfixPosition::Done) => {
                         format!("({sub})({arg}")
                     }
                     AssociativityData::Prefix => {
@@ -200,9 +176,10 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'s
                             }
                         };
                     }
-                    AssociativityData::Var => format!("{sub}({arg}"),
+                    AssociativityData::Var | AssociativityData::Infix(_, InfixPosition::Op) => {
+                        format!("{sub}({arg}")
+                    }
                     AssociativityData::App => format!("{sub}{arg}"),
-                    _ => todo!(),
                 };
 
                 if parent_is_app {
@@ -229,15 +206,15 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'s
                 let (c, var_string) = c.inc_depth(x.var_type().expect(
                     "Implementation error, if you bind a var, the expression must bind vars!",
                 ));
-                let (body, _) = self.string(LambdaExprRef(body.0), c.clone(), false);
+                let (body, _) = self.string(*body, c.clone(), false);
                 (format!("{x}({var_string}, {body})"), AssociativityData::Var)
             }
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVarTwoBodies(l, r)) => {
                 let (c, var_string) = c.inc_depth(x.var_type().expect(
                     "Implementation error, if you bind a var, the expression must bind vars!",
                 ));
-                let (l, _) = self.string(LambdaExprRef(l.0), c.clone(), false);
-                let (r, _) = self.string(LambdaExprRef(r.0), c, false);
+                let (l, _) = self.string(*l, c.clone(), false);
+                let (r, _) = self.string(*r, c, false);
                 (
                     format!("{x}({var_string}, {l}, {r})"),
                     AssociativityData::Var,
@@ -292,7 +269,8 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> Value<'src, T> {
                             AssociativityData::Infix(x, InfixPosition::Done),
                         );
                     }
-                    AssociativityData::Lambda => {
+                    AssociativityData::Lambda
+                    | AssociativityData::Infix(_, InfixPosition::Done) => {
                         format!("({sub})({arg}")
                     }
                     AssociativityData::Prefix => {
@@ -307,9 +285,10 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> Value<'src, T> {
                             }
                         };
                     }
-                    AssociativityData::Var => format!("{sub}({arg}"),
+                    AssociativityData::Var | AssociativityData::Infix(_, InfixPosition::Op) => {
+                        format!("{sub}({arg}")
+                    }
                     AssociativityData::App => format!("{sub}{arg}"),
-                    _ => todo!(),
                 };
 
                 if parent_is_app {
