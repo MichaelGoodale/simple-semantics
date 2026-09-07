@@ -151,6 +151,41 @@ pub enum Expr<'a> {
     Constant(Constant<'a>),
 }
 
+impl<'src> Expr<'src> {
+    ///All the basic operations that don't depend on any scenario for naming.
+    pub fn basic_ops() -> &'static [Expr<'src>] {
+        &[
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var_type: ActorOrEvent::Actor,
+            },
+            Expr::Quantifier {
+                quantifier: Quantifier::Universal,
+                var_type: ActorOrEvent::Event,
+            },
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var_type: ActorOrEvent::Actor,
+            },
+            Expr::Quantifier {
+                quantifier: Quantifier::Existential,
+                var_type: ActorOrEvent::Event,
+            },
+            Expr::Binary(BinOp::AgentOf),
+            Expr::Binary(BinOp::PatientOf),
+            Expr::Binary(BinOp::And),
+            Expr::Binary(BinOp::Or),
+            Expr::Unary(MonOp::Not),
+            Expr::Unary(MonOp::Iota(ActorOrEvent::Actor)),
+            Expr::Unary(MonOp::Iota(ActorOrEvent::Event)),
+            Expr::Constant(Constant::Everyone),
+            Expr::Constant(Constant::EveryEvent),
+            Expr::Constant(Constant::Tautology),
+            Expr::Constant(Constant::Contradiction),
+        ]
+    }
+}
+
 impl Display for Expr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -10,6 +10,7 @@ ahash = { version = "0.8.12", features = [
 ], default-features = false }
 ariadne = "0.6.0"
 chumsky = { version = "0.13.0", features = ["pratt"] }
+indexmap = { version = "2.14.2", features = ["serde"] }
 itertools = "0.15.0"
 rand = { version = "0.10.2", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }

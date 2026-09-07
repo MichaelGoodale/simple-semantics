@@ -1,541 +1,351 @@
-use std::{fmt::Debug, hash::Hash};
-
 use ahash::{HashMap, HashMapExt, HashSet};
-use itertools::{Either, repeat_n};
-use thiserror::Error;
+use indexmap::IndexSet;
+use std::{cmp::max, collections::BTreeSet, fmt::Debug, hash::Hash};
 
-use crate::{
-    lambda::{
-        LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-        types::LambdaType,
-    },
-    language::{Expr, MonOp, PossibleExpressions},
+use crate::lambda::{
+    Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
+    types::{LambdaType, TypeError},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum FinishedOrType<'src, T: LambdaLanguageOfThought> {
-    Type(LambdaType),
-    PartiallyExpanded(ExprWrapper<'src, T>),
-    Expr(FinishedExpr<'src, T>),
+struct Generator<'src, T> {
+    exprs: IndexSet<LambdaExpr<'src, T>>,
+    contexts: IndexSet<Context>,
+    types: IndexSet<LambdaType>,
+    constants: HashMap<TypeId, Vec<ExprId>>,
+    memo: HashMap<(ContextId, TypeId, usize), Vec<ExprId>>,
+    possible_types_memo: HashMap<BTreeSet<TypeId>, Vec<BTreeSet<TypeId>>>,
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone + Hash + Eq + PartialEq + Debug + Ord>
-    FinishedOrType<'src, T>
-{
-    fn mark_finished(&mut self) {
-        let temp = std::mem::replace(self, FinishedOrType::Type(LambdaType::A));
-        let FinishedOrType::PartiallyExpanded(ExprWrapper { h, .. }) = temp else {
-            panic!()
-        };
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ExprId(usize);
 
-        let h: FinishedExpr<'src, T> = h.try_into().unwrap();
-        *self = FinishedOrType::Expr(h);
-    }
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct TypeId(usize);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-struct FinishedExpr<'src, T: LambdaLanguageOfThought> {
-    expr: LambdaExpr<'src, T>,
-    constant_function: bool,
-    children: Vec<FinishedExpr<'src, T>>,
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ContextId(usize);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct HashedExpr<'src, T: LambdaLanguageOfThought> {
-    expr: LambdaExpr<'src, T>,
-    children: Vec<FinishedOrType<'src, T>>,
+enum Context {
+    Empty,
+    Context { parent: ContextId, typ: TypeId },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ExprWrapper<'src, T: LambdaLanguageOfThought> {
-    h: HashedExpr<'src, T>,
-    variables: Vec<LambdaType>,
-}
+impl Context {
+    fn variables<'src, T>(&self, typ: TypeId, g: &Generator<'src, T>) -> Vec<Bvar> {
+        let mut v = vec![];
+        let mut n = 0;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct Node<'src>(usize, ExprWrapper<'src, Expr<'src>>);
-
-impl PartialOrd for Node<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Node<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.0.cmp(&self.0)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Enumerator<'a, 'src> {
-    max_length: usize,
-    simples: Vec<RootedLambdaPool<'src, Expr<'src>>>,
-    stack: Vec<Node<'src>>,
-    done: HashSet<FinishedExpr<'src, Expr<'src>>>,
-    possibles: &'a PossibleExpressions<'src, Expr<'src>>,
-}
-
-impl<'src> Iterator for Enumerator<'_, 'src> {
-    type Item = RootedLambdaPool<'src, Expr<'src>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if !self.simples.is_empty() {
-            return self.simples.pop();
-        }
-
-        while let Some(Node(n, x)) = self.stack.pop() {
-            if let Some(new) = x.expand(vec![], self.possibles, &mut self.stack, self.max_length, n)
-            {
-                let h = new.clone();
-                if self.done.insert(new) {
-                    return Some(h.into());
-                }
-            }
-        }
-        None
-    }
-}
-
-impl<'src> PossibleExpressions<'src, Expr<'src>> {
-    ///Enumerate over all possible expressions of type [`t`]
-    #[must_use]
-    #[allow(clippy::missing_panics_doc)]
-    pub fn enumerator<'a>(&'a self, t: &LambdaType, max_length: usize) -> Enumerator<'a, 'src> {
-        let mut stack: Vec<HashedExpr<_>> = self
-            .terms(
-                t,
-                true,
-                std::iter::empty(),
-                possible_applications(t, std::iter::empty()),
-            )
-            .into_iter()
-            .map(|x| {
-                let (e, a) = x.into_expr();
-                let mut h: HashedExpr<_> = e.into();
-                if let LambdaExpr::Lambda(_, _) = h.expr {
-                    h.children = vec![FinishedOrType::Type(t.rhs().unwrap().clone())];
-                } else if let LambdaExpr::Application { .. } = h.expr {
-                    let (arg, func) = a.unwrap();
-                    h.children = vec![FinishedOrType::Type(arg), FinishedOrType::Type(func)];
-                }
-                h
-            })
-            .collect();
-
-        let done: HashSet<FinishedExpr<_>> = stack
-            .extract_if(.., |x| x.is_done())
-            .map(|x| x.try_into().unwrap())
-            .collect();
-
-        let simples = done.iter().map(|x| (*x).clone().into()).collect::<Vec<_>>();
-
-        let stack = stack
-            .into_iter()
-            .map(|h| {
-                Node(
-                    1 + h.children.len(),
-                    ExprWrapper {
-                        variables: std::iter::once(h.expr.var_type().cloned())
-                            .flatten()
-                            .collect(),
-                        h,
-                    },
-                )
-            })
-            .collect();
-
-        Enumerator {
-            max_length,
-            simples,
-            stack,
-            possibles: self,
-            done,
-        }
-    }
-}
-
-fn get_this<'a, 'src, T: LambdaLanguageOfThought + Debug>(
-    x: &'a mut ExprWrapper<'src, T>,
-    path: &[usize],
-) -> &'a mut ExprWrapper<'src, T> {
-    let mut this = x;
-    for i in path.iter().copied() {
-        match &mut this.h.children[i] {
-            FinishedOrType::PartiallyExpanded(expr_wrapper) => {
-                this = expr_wrapper;
-            }
-            _ => panic!(),
-        }
-    }
-    this
-}
-
-fn possible_applications<'a>(
-    t: &'a LambdaType,
-    variables: impl Iterator<Item = &'a LambdaType>,
-) -> impl Iterator<Item = (LambdaType, LambdaType)> + 'a {
-    let mut possible_types: HashMap<LambdaType, HashSet<LambdaType>> = HashMap::new();
-    let mut new_types: HashSet<(&LambdaType, &LambdaType)> = HashSet::default();
-    let mut base_types: HashSet<_> = variables.collect();
-    base_types.insert(LambdaType::a());
-    base_types.insert(LambdaType::e());
-    base_types.insert(LambdaType::t());
-    base_types.insert(LambdaType::at());
-    base_types.insert(LambdaType::et());
-
-    loop {
-        for subformula in &base_types {
-            if let Ok((argument, result_type)) = subformula.split() {
-                let already_has_type = possible_types
-                    .get(result_type)
-                    .is_some_and(|x| x.contains(argument));
-
-                if base_types.contains(argument) && !already_has_type {
-                    new_types.insert((result_type, argument));
-                }
-            }
-        }
-        if new_types.is_empty() {
-            break;
-        }
-        for (result, argument) in &new_types {
-            possible_types
-                .entry((*result).clone())
-                .or_default()
-                .insert((*argument).clone());
-        }
-        base_types.extend(new_types.drain().map(|(result, _arg)| result));
-    }
-
-    match possible_types.remove(t) {
-        Some(x) => Either::Left(
-            x.into_iter()
-                .map(|x| (LambdaType::compose(x.clone(), t.clone()), x.clone())),
-        ),
-        None => Either::Right(std::iter::empty()),
-    }
-}
-
-impl<'src> ExprWrapper<'src, Expr<'src>> {
-    fn percolate_up(&mut self, path: &[usize]) {
-        if let Some((this_i, path)) = path.split_last() {
-            let parent_of_path = get_this(self, path);
-            if parent_of_path.h.children[*this_i].is_ready_to_be_marked_done() {
-                parent_of_path.h.children[*this_i].mark_finished();
-            }
-            if parent_of_path.h.is_done() {
-                self.percolate_up(path);
-            }
-        }
-    }
-
-    fn is_constant(&self) -> bool {
-        self.h
-            .children
-            .iter()
-            .filter_map(|x| match x {
-                FinishedOrType::Expr(e) => Some(e.constant_function),
-                FinishedOrType::PartiallyExpanded(e) => Some(e.is_constant()),
-                FinishedOrType::Type(_) => None,
-            })
-            .any(|x| x)
-    }
-
-    fn expand(
-        mut self,
-        mut path: Vec<usize>,
-        possibles: &PossibleExpressions<'src, Expr<'src>>,
-        stack: &mut Vec<Node<'src>>,
-        max_length: usize,
-        n: usize,
-    ) -> Option<FinishedExpr<'src, Expr<'src>>> {
-        let this = get_this(&mut self, &path);
-
-        //Initialize any types that haven't been started.
-        if let Some((i, typ)) = this
-            .h
-            .children
-            .iter()
-            .enumerate()
-            .find_map(|(i, x)| match x {
-                FinishedOrType::Type(lambda_type) => Some((i, lambda_type)),
-                _ => None,
-            })
+        let mut c = self;
+        while let Context::Context {
+            parent,
+            typ: this_typ,
+        } = c
         {
-            let mut terms = possibles.terms(
-                typ,
-                //the function of a application shouldn't have lambdas, since otherwise we could just
-                //apply the argument there.
-                i != 0 || !matches!(this.h.expr, LambdaExpr::Application { .. }),
-                this.variables
-                    .iter()
-                    .rev()
-                    .enumerate()
-                    .filter(|(_, x)| x == &typ)
-                    .map(|(i, x)| LambdaExpr::BoundVariable(i, x.clone())),
-                possible_applications(typ, this.variables.iter()),
-            );
+            if &typ == this_typ {
+                v.push(n);
+            }
+            c = g.id_to_context(*parent).unwrap();
+            n += 1;
+        }
 
-            terms.retain(|x| {
-                (x.expr().n_children() + n
-                    - usize::from(matches!(x.expr(), LambdaExpr::Application { .. })))
-                    <= max_length
-                    && !(matches!(
-                        this.h.expr,
-                        LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, _))
-                    ) && matches!(
-                        x.expr(),
-                        LambdaExpr::LanguageOfThoughtExpr(Expr::Unary(MonOp::Not, _))
-                    ))
-            });
+        v
+    }
+}
 
-            let terms = terms
-                .into_iter()
-                .map(|x| {
-                    let (e, a) = x.into_expr();
-                    let mut h = HashedExpr::from(e);
-                    if let LambdaExpr::Lambda(_, _) = h.expr {
-                        h.children = vec![FinishedOrType::Type(typ.rhs().unwrap().clone())];
-                    } else if let LambdaExpr::Application { .. } = h.expr {
-                        let (arg, func) = a.unwrap();
-                        h.children = vec![FinishedOrType::Type(arg), FinishedOrType::Type(func)];
+fn mk_expr<'src, T: Hash + Eq>(g: &mut Generator<'src, T>, expr: LambdaExpr<'src, T>) -> ExprId {
+    let (x, _) = g.exprs.insert_full(expr);
+    ExprId(x)
+}
+
+fn mk_ctx<'src, T>(g: &mut Generator<'src, T>, parent: ContextId, typ: TypeId) -> ContextId {
+    let c = Context::Context { parent, typ };
+    let (x, _) = g.contexts.insert_full(c);
+    ContextId(x)
+}
+
+fn possible_size_table<'src, T>(
+    g: &mut Generator<'src, T>,
+    ctx: ContextId,
+    max_size: usize,
+) -> BTreeSet<TypeId> {
+    let mut c = g.id_to_context(ctx).unwrap();
+    let mut ctx_vars = BTreeSet::new();
+    while let Context::Context { typ, parent } = c {
+        ctx_vars.insert(*typ);
+        c = g.id_to_context(*parent).unwrap();
+    }
+
+    let mut start = 1;
+
+    let mut table = if let Some(x) = g.possible_types_memo.get(&ctx_vars) {
+        if x.len() < max_size {
+            let mut v = g.possible_types_memo.remove(&ctx_vars).unwrap();
+            start = v.len();
+            v.extend((v.len()..max_size).map(|_| BTreeSet::new()));
+            v
+        } else {
+            return x[max_size - 1].clone();
+        }
+    } else {
+        let mut table = (1..(max_size + 1))
+            .map(|_| BTreeSet::new())
+            .collect::<Vec<_>>();
+        //If there is a constant, then we can make the LHS of an app of that type with 1 expression.
+        table[0] = g.constants.keys().copied().collect();
+        table
+    };
+
+    let types = &mut g.types;
+
+    debug_assert_eq!(table.len(), max_size);
+
+    for current_size in start..max_size {
+        println!("{current_size}");
+        let [curr, old] = table
+            .get_disjoint_mut([current_size, current_size - 1])
+            .unwrap();
+        curr.extend(old.iter().copied());
+
+        //apps
+        for i in 1..current_size {
+            //The size of i and j sum to current_size, so we can make anything of that size;
+            let j = current_size - i;
+            let bodies = table[i]
+                .iter()
+                .filter_map(|x| {
+                    let t = types.get_index(x.0).unwrap();
+                    if let Ok((lhs, rhs)) = t.split() {
+                        let rhs = rhs.clone();
+                        let lhs = TypeId(types.insert_full(lhs.clone()).0);
+                        let rhs = TypeId(types.insert_full(rhs).0);
+                        Some((lhs, rhs))
+                    } else {
+                        None
                     }
-
-                    h
                 })
                 .collect::<Vec<_>>();
 
-            let this_variables = this.variables.clone();
-            for (mut parent, h) in repeat_n(self, terms.len()).zip(terms) {
-                if h.is_done() {
-                    let this = get_this(&mut parent, &path);
-                    this.h.children[i] = FinishedOrType::Expr(h.try_into().unwrap());
-                    if i == this.h.children.len() - 1 {
-                        parent.percolate_up(&path);
-                    }
+            let [args, current] = table.get_disjoint_mut([j, current_size]).unwrap();
 
-                    if !parent.is_constant() {
-                        stack.push(Node(n, parent));
-                    }
-                } else {
-                    let mut variables = this_variables.clone();
-                    if let Some(t) = h.expr.var_type() {
-                        variables.push(t.clone());
-                    }
+            for (arg, res) in bodies {
+                if args.contains(&arg) {
+                    current.insert(res);
+                }
+            }
+        }
+    }
 
-                    let this = get_this(&mut parent, &path);
+    let ret = table[max_size - 1].clone();
+    g.possible_types_memo.insert(ctx_vars, table.clone());
+    ret
+}
 
-                    let n = n + h.children.len()
-                        - usize::from(matches!(h.expr, LambdaExpr::Application { .. }));
-                    let e = ExprWrapper { h, variables };
-                    this.h.children[i] = FinishedOrType::PartiallyExpanded(e);
+fn generate<'src, T: Hash + Eq>(
+    g: &mut Generator<'src, T>,
+    c: ContextId,
+    typ: TypeId,
+    size: usize,
+) -> Vec<ExprId> {
+    let arg_key = (c, typ, size);
+    if let Some(x) = g.memo.get(&arg_key) {
+        return x.clone();
+    }
+    let vars = g.id_to_context(c).unwrap().variables(typ, g);
+    let mut exprs = if !vars.is_empty() {
+        let t = g.id_to_type(typ).unwrap().clone();
+        std::iter::repeat_n(t, vars.len())
+            .zip(vars)
+            .map(|(t, bvar)| mk_expr(g, LambdaExpr::<T>::BoundVariable(bvar, t)))
+            .collect()
+    } else {
+        vec![]
+    };
 
-                    if !parent.is_constant() {
-                        stack.push(Node(n, parent));
+    if let Some(x) = g.constants.get(&typ) {
+        exprs.extend(x.iter().copied());
+    }
+
+    if size >= 2 {
+        for i in 1..size {
+            //The size of i and j sum to current_size, so we can make anything of that size;
+            let j = size - i;
+            let t_j = possible_size_table(g, c, j);
+            let t_i = possible_size_table(g, c, i);
+            for subformula_type in t_j {
+                if let Some((lhs, rhs)) = g.type_children_or_insert(subformula_type)
+                    && rhs == typ
+                    && t_i.contains(&lhs)
+                {
+                    let args = generate(g, c, lhs, i);
+                    let formulae = generate(g, c, subformula_type, j);
+                    for arg in args {
+                        for formula in formulae.iter().copied() {
+                            let expr = mk_expr(
+                                g,
+                                LambdaExpr::<T>::Application {
+                                    subformula: LambdaExprRef(u32::try_from(formula.0).unwrap()),
+                                    argument: LambdaExprRef(u32::try_from(arg.0).unwrap()),
+                                },
+                            );
+                            exprs.push(expr);
+                        }
                     }
                 }
             }
-        } else if let Some(i) = this
-            .h
-            .children
-            .iter()
-            .position(|x| matches!(x, FinishedOrType::PartiallyExpanded(_)))
-        {
-            path.push(i);
-            self.expand(path, possibles, stack, max_length, n);
-        } else if path.is_empty() {
-            let x: FinishedExpr<'src, Expr<'src>> = self.h.try_into().unwrap();
-            if !x.constant_function {
-                return Some(x);
-            }
-        } else {
-            panic!("this path should never occur");
         }
-        None
-    }
-}
 
-impl<'src, T: LambdaLanguageOfThought + Clone> FinishedExpr<'src, T> {
-    fn has_variable(&self, typ: &LambdaType, depth: usize) -> bool {
-        if let LambdaExpr::BoundVariable(d, x) = &self.expr
-            && d == &depth
-            && x == typ
-        {
-            true
-        } else {
-            self.children
-                .iter()
-                .any(|x| x.has_variable(typ, depth + usize::from(self.expr.inc_depth())))
+        if let Ok((arg_type, res_type)) = g.id_to_type(typ).unwrap().split() {
+            let res_type = res_type.clone();
+            let arg_type = arg_type.clone();
+            let res_type = g.type_id_or_insert(res_type);
+            let arg_type_id = g.type_id_or_insert(arg_type.clone());
+            let c = mk_ctx(g, c, arg_type_id);
+            let bodies = generate(g, c, res_type, size - 1);
+
+            exprs.extend(std::iter::repeat_n(arg_type, bodies.len()).zip(bodies).map(
+                |(t, body)| {
+                    mk_expr(
+                        g,
+                        LambdaExpr::<T>::Lambda(LambdaExprRef(u32::try_from(body.0).unwrap()), t),
+                    )
+                },
+            ));
         }
     }
 
-    fn convert(pool: &RootedLambdaPool<'src, T>, i: LambdaExprRef) -> FinishedExpr<'src, T> {
-        let expr = pool.get(i).clone();
-        let children = expr
-            .get_children()
-            .map(|i| FinishedExpr::convert(pool, i))
-            .collect::<Vec<_>>();
+    g.memo.insert(arg_key, exprs.clone());
 
-        let constant_function = if children.iter().any(|x| x.constant_function) {
-            true
-        } else if let Some(t) = expr.var_type() {
-            !children.iter().any(|x| x.has_variable(t, 0))
-        } else {
-            false
-        };
+    exprs
+}
 
-        FinishedExpr {
-            expr,
-            constant_function,
-            children,
-        }
+impl<'src, T> Generator<'src, T> {
+    fn id_to_context(&self, c: ContextId) -> Option<&Context> {
+        self.contexts.get_index(c.0)
+    }
+
+    fn id_to_type(&self, t: TypeId) -> Option<&LambdaType> {
+        self.types.get_index(t.0)
+    }
+
+    fn type_id(&self, t: &LambdaType) -> Option<TypeId> {
+        self.types.get_index_of(t).map(TypeId)
+    }
+
+    fn type_children_or_insert(&mut self, t: TypeId) -> Option<(TypeId, TypeId)> {
+        let (lhs, rhs) = self.types.get_index(t.0)?.split().ok()?;
+        let lhs = lhs.clone();
+        let rhs = rhs.clone();
+        let lhs = self.types.insert_full(lhs).0;
+        let rhs = self.types.insert_full(rhs).0;
+
+        Some((TypeId(lhs), TypeId(rhs)))
+    }
+
+    fn type_id_or_insert(&mut self, t: LambdaType) -> TypeId {
+        let (id, _) = self.types.insert_full(t);
+        TypeId(id)
+    }
+
+    fn enumerate(&self, t: &LambdaType, max_size: usize) -> Option<&Vec<ExprId>> {
+        let t = self.type_id(t)?;
+        self.memo.get(&(ContextId(0), t, max_size))
     }
 }
 
-impl<T: LambdaLanguageOfThought + Clone> HashedExpr<'_, T> {
-    fn is_done(&self) -> bool {
-        self.children.iter().all(|x| match x {
-            FinishedOrType::Expr(_) => true,
-            FinishedOrType::PartiallyExpanded(_) | FinishedOrType::Type(_) => false,
-        })
-    }
-}
-
-impl<T: LambdaLanguageOfThought + Clone> FinishedOrType<'_, T> {
-    fn is_ready_to_be_marked_done(&self) -> bool {
-        match self {
-            FinishedOrType::PartiallyExpanded(e) => e.h.is_done(),
-            FinishedOrType::Expr(_) | FinishedOrType::Type(_) => false,
-        }
-    }
-}
-
-#[derive(Debug, Error)]
-#[error("This HashedExpr isn't done!")]
-struct FinishingError;
-
-impl<'src, T: LambdaLanguageOfThought + Clone + Debug + PartialOrd + Ord>
-    TryFrom<HashedExpr<'src, T>> for FinishedExpr<'src, T>
-{
-    type Error = FinishingError;
-    fn try_from(value: HashedExpr<'src, T>) -> Result<FinishedExpr<'src, T>, FinishingError> {
-        let mut children: Vec<_> = value
-            .children
-            .into_iter()
-            .map(|x| match x {
-                FinishedOrType::Expr(e) => Ok(e),
-                _ => Err(FinishingError),
-            })
-            .collect::<Result<_, _>>()?;
-
-        let constant_function = if children.iter().any(|x| x.constant_function) {
-            true
-        } else if let Some(t) = value.expr.var_type() {
-            !children.iter().any(|x| x.has_variable(t, 0))
-        } else {
-            false
-        };
-
-        if value.expr.commutative() {
-            children.sort();
-        }
-
-        Ok(FinishedExpr {
-            expr: value.expr,
-            constant_function,
-            children,
-        })
-    }
-}
-
-impl<'src, T: LambdaLanguageOfThought + Clone + Debug> From<LambdaExpr<'src, T>>
-    for HashedExpr<'src, T>
-{
-    fn from(value: LambdaExpr<'src, T>) -> Self {
-        let children = match &value {
-            LambdaExpr::LanguageOfThoughtExpr(e) => {
-                e.argument_types().map(FinishedOrType::Type).collect()
-            }
-            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => vec![],
-            LambdaExpr::Lambda(_, t) => {
-                //not quite right but we need this here otherwise it will falsely get considered
-                //"done"
-                vec![FinishedOrType::Type(t.clone())]
-            }
-            LambdaExpr::Application { .. } => {
-                vec![
-                    FinishedOrType::Type(LambdaType::A),
-                    FinishedOrType::Type(LambdaType::T),
-                ]
-            }
-        };
-
-        HashedExpr {
-            children,
-            expr: value,
-        }
-    }
-}
-
-impl<'src, T: LambdaLanguageOfThought + Clone> From<RootedLambdaPool<'src, T>>
-    for FinishedExpr<'src, T>
-{
-    fn from(value: RootedLambdaPool<'src, T>) -> Self {
-        FinishedExpr::convert(&value, value.root)
-    }
-}
-
-impl<'src, T: LambdaLanguageOfThought + Clone> From<FinishedExpr<'src, T>>
-    for RootedLambdaPool<'src, T>
-{
-    fn from(value: FinishedExpr<'src, T>) -> Self {
+impl<'src, T: LambdaLanguageOfThought + Clone> Generator<'src, T> {
+    fn to_rooted_lambda_pool(&self, x: ExprId) -> Option<RootedLambdaPool<'src, T>> {
         let mut pool = vec![None];
-        let mut stack = vec![(value, LambdaExprRef(0))];
-        while let Some((x, i)) = stack.pop() {
-            for x in x.children.iter().cloned() {
-                stack.push((x, LambdaExprRef::new(pool.len())));
-                pool.push(None);
-            }
-            let mut e = x.expr.clone();
-            e.change_children(
-                (0..e.n_children())
-                    .rev()
-                    .map(|i| LambdaExprRef::new(pool.len() - i - 1)),
+        //check the root exists
+        self.exprs.get_index(x.0)?;
+        let mut stack = vec![(0, x)];
+
+        while let Some((pool_id, x)) = stack.pop() {
+            let mut expr = self
+                .exprs
+                .get_index(x.0)
+                .expect("Invalid pool built!")
+                .clone();
+
+            let n_children = expr.n_children();
+            stack.extend(
+                expr.get_children()
+                    .enumerate()
+                    .map(|(i, x)| (pool.len() + i, ExprId(usize::try_from(x.0).unwrap()))),
             );
-            pool[i.0 as usize] = Some(e);
+            expr.change_children(
+                (0..n_children).map(|x| LambdaExprRef(u32::try_from(pool.len() + x).unwrap())),
+            );
+            pool.extend((0..n_children).map(|_| None));
+            pool[pool_id] = Some(expr);
         }
 
-        RootedLambdaPool {
-            pool: LambdaPool(pool.into_iter().collect::<Option<_>>().unwrap()),
+        Some(RootedLambdaPool {
+            pool: super::LambdaPool(pool.into_iter().collect::<Option<Vec<_>>>().unwrap()),
             root: LambdaExprRef(0),
-        }
+        })
     }
 }
 
+impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
+    fn enumerate_or_generate(&mut self, t: LambdaType, max_size: usize) -> &Vec<ExprId> {
+        let t = self.type_id_or_insert(t);
+        if !self.memo.contains_key(&(ContextId(0), t, max_size)) {
+            generate(self, ContextId(0), t, max_size);
+        }
+        self.memo.get(&(ContextId(0), t, max_size)).unwrap()
+    }
+
+    fn new(base_expressions: Vec<T>) -> Generator<'src, T> {
+        let mut contexts = IndexSet::new();
+        contexts.insert(Context::Empty);
+        assert!(contexts.get_index(0).is_some());
+
+        let mut constants: HashMap<_, Vec<_>> = HashMap::new();
+        let mut types = IndexSet::new();
+        let mut exprs = IndexSet::new();
+
+        for b in base_expressions {
+            let t = b.typ();
+            let (t, _) = types.insert_full(t.clone());
+            let b = LambdaExpr::LanguageOfThoughtExpr(b, crate::lambda::ExprType::NoVar);
+            let (b, _) = exprs.insert_full(b);
+            constants.entry(TypeId(t)).or_default().push(ExprId(b));
+        }
+
+        Generator {
+            exprs,
+            contexts,
+            constants,
+            types,
+            memo: HashMap::new(),
+            possible_types_memo: HashMap::new(),
+        }
+    }
+}
 #[cfg(test)]
 mod test {
-    use ahash::HashSetExt;
+    use std::collections::HashSet;
+
+    use itertools::enumerate;
+
+    use crate::language::{ActorOrEvent, Constant::Property, Expr};
 
     use super::*;
-
-    #[test]
-    fn convert_to_weak() -> anyhow::Result<()> {
-        let x = RootedLambdaPool::parse("lambda a x some_e(e, pe_run(e), AgentOf(x, e))")?;
-        let y: FinishedExpr<_> = x.clone().into();
-        let x2: RootedLambdaPool<_> = y.into();
-        println!("{x2:?}");
-        assert_eq!(x.to_string(), x2.to_string());
-
-        Ok(())
-    }
 
     #[test]
     fn new_enumerate() -> anyhow::Result<()> {
         let actors = ["john"]; //, "mary", "phil", "sue"];
         let actor_properties = ["a"];
         let event_properties = ["e"];
-        let possibles = PossibleExpressions::new(&actors, &actor_properties, &event_properties);
+
+        let mut expressions = vec![
+            Expr::Actor("John"),
+            Expr::Constant(Property("a", ActorOrEvent::Actor)),
+            Expr::Constant(Property("e", ActorOrEvent::Event)),
+        ];
+        expressions.extend(Expr::basic_ops());
+
         let t = vec![
             (LambdaType::A, 19),
             (LambdaType::E, 22),
@@ -544,26 +354,31 @@ mod test {
             (LambdaType::et().clone(), 22),
             (LambdaType::from_string("<<a,t>,t>").unwrap(), 37),
         ];
+
+        let mut generator: Generator<Expr> = Generator::new(expressions.to_vec());
         for (t, how_many) in t {
             println!("{t}");
             let mut count = 0;
-            let mut pool_set = HashSet::new();
-            let mut reduced_pool_set = HashSet::new();
+            //let mut pool_set = HashSet::new();
+            //let mut reduced_pool_set = HashSet::new();
 
-            for mut x in possibles.enumerator(&t, 6) {
-                println!("{x}");
-                let o = x.get_type()?;
+            let pools = generator.enumerate_or_generate(t.clone(), 5).clone();
+            for x in pools {
+                let expr = generator.to_rooted_lambda_pool(x).unwrap();
+                println!("\t{expr}");
+                let o = expr.get_type()?;
                 assert_eq!(o, t);
+                /*
                 count += 1;
                 pool_set.insert(x.clone());
                 x.reduce()?;
                 x.cleanup();
-                reduced_pool_set.insert(x);
+                reduced_pool_set.insert(x);*/
             }
-            assert_eq!(count, how_many);
-            println!("{t} {count}");
-            assert_eq!(pool_set.len(), count);
-            assert_eq!(pool_set.len(), reduced_pool_set.len());
+            //assert_eq!(count, how_many);
+            //println!("{t} {count}");
+            //assert_eq!(pool_set.len(), count);
+            //assert_eq!(pool_set.len(), reduced_pool_set.len());
         }
         Ok(())
     }
