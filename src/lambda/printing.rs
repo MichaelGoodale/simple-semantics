@@ -2,11 +2,10 @@ use std::fmt::{Debug, Display};
 
 use super::interpretation::Value;
 use ahash::HashMap;
-use serde::{Deserialize, Serialize};
 
 use crate::lambda::{
     ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-    parser::ParseLot, types::LambdaType,
+    types::LambdaType,
 };
 
 static VARIABLENAMES: [&str; 26] = [

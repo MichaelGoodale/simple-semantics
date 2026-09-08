@@ -1,9 +1,9 @@
-//! Defines the core language of thought of the model and a simple virtual machine.
+//! Defines an example language of thought for the model.
 
 use std::fmt::Display;
 
 use crate::lambda::types::LambdaType;
-use crate::{Actor, Event, PropertyLabel};
+use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 ///All binary operations
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -186,6 +186,23 @@ impl<'src> Expr<'src> {
     }
 }
 
+impl<'src> Scenario<'src> {
+    ///Gets the [`Expr] that are specifically valid in this [`Scenario`]. Doesn't include events.
+    pub fn scenario_ops(&self) -> Vec<Expr<'src>> {
+        let mut v: Vec<_> = self.actors.iter().map(|x| Expr::Actor(x)).collect();
+        for (k, prop) in self.properties.iter() {
+            if prop.iter().any(|x| matches!(x, Entity::Actor(_))) {
+                v.push(Expr::Constant(Constant::Property(k, ActorOrEvent::Actor)));
+            }
+
+            if prop.iter().any(|x| matches!(x, Entity::Event(_))) {
+                v.push(Expr::Constant(Constant::Property(k, ActorOrEvent::Actor)));
+            }
+        }
+        v
+    }
+}
+
 impl Display for Expr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -208,17 +225,6 @@ impl Display for Expr<'_> {
 
 mod lambda_implementation;
 pub use lambda_implementation::ConjoiningError;
-
-//#[cfg(feature = "sampling")]
-//mod enumerator;
-
-//#[cfg(feature = "sampling")]
-//mod mutations;
-//
-//#[cfg(feature = "sampling")]
-//pub use mutations::{
-//    Context, LambdaEnumerator, LambdaSampler, PossibleExpressions, TypeAgnosticSampler,
-//};
 
 #[cfg(test)]
 mod tests {

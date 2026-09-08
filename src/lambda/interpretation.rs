@@ -1,5 +1,3 @@
-#![expect(dead_code)]
-
 use std::{borrow::Cow, fmt::Display, iter::repeat_n};
 
 use crate::{
@@ -74,21 +72,24 @@ impl Display for Literal<'_> {
 }
 
 impl<'src> Literal<'src> {
-    fn into_actor_set(self) -> Option<Vec<Actor<'src>>> {
+    ///Converts the literal into an [`Vec<Actor>`]. Returns `None` if not a set of [`Actor`].
+    pub fn into_actor_set(self) -> Option<Vec<Actor<'src>>> {
         let Literal::ActorSet(x) = self else {
             return None;
         };
         Some(x)
     }
 
-    fn into_event_set(self) -> Option<Vec<Event>> {
+    ///Converts the literal into an [`Vec<Event>`]. Returns `None` if not a set of [`Event`].
+    pub fn into_event_set(self) -> Option<Vec<Event>> {
         let Literal::EventSet(x) = self else {
             return None;
         };
         Some(x)
     }
 
-    fn has_literal(typ: &LambdaType) -> bool {
+    ///Whether a type can be expressed as a [`Literal`].
+    pub fn has_literal(typ: &LambdaType) -> bool {
         !typ.is_function() || typ.is_one_place_function()
     }
 
@@ -138,7 +139,8 @@ impl<'src> Literal<'src> {
         }
     }
 
-    fn typ(&self) -> &LambdaType {
+    ///Get the type of the literal.
+    pub fn typ(&self) -> &LambdaType {
         match self {
             Literal::Bool(_) => &LambdaType::T,
             Literal::Actor(_) => &LambdaType::A,
@@ -160,7 +162,8 @@ impl<'src> Literal<'src> {
         }
     }
 
-    fn as_bool(&self) -> Option<bool> {
+    ///Converts the literal into a `bool`. Returns `None` if not a `bool`.
+    pub fn as_bool(&self) -> Option<bool> {
         if let Literal::Bool(b) = self {
             Some(*b)
         } else {
@@ -168,7 +171,8 @@ impl<'src> Literal<'src> {
         }
     }
 
-    fn as_entity(&self) -> Option<Entity<'src>> {
+    ///Converts the literal into an [`Entity`]. Returns `None` if not an [`Entity`].
+    pub fn as_entity(&self) -> Option<Entity<'src>> {
         match self {
             Literal::Actor(a) => Some(Entity::Actor(a)),
             Literal::Event(e) => Some(Entity::Event(*e)),
@@ -176,13 +180,15 @@ impl<'src> Literal<'src> {
         }
     }
 
-    fn as_actor(&self) -> Option<Actor<'src>> {
+    ///Converts the literal into an [`Actor`]. Returns `None` if not an [`Actor`].
+    pub fn as_actor(&self) -> Option<Actor<'src>> {
         match self {
             Literal::Actor(a) => Some(a),
             _ => None,
         }
     }
 
+    ///Converts the literal into an [`Event`]. Returns `None` if not an [`Event`].
     fn as_event(&self) -> Option<Event> {
         match self {
             Literal::Event(e) => Some(*e),
@@ -232,6 +238,8 @@ impl<'src> Value<'src, Expr<'src>> {
             None
         }
     }
+
+    #[expect(dead_code)]
     fn is_neutral(&self) -> bool {
         matches!(&self, Value::Neutral(_))
     }
@@ -249,13 +257,6 @@ impl<'src> TryFrom<Value<'src, Expr<'src>>> for bool {
             .and_then(|x| x.as_bool())
             .ok_or(ValueConversionError)
     }
-}
-
-enum ValueBuilder {
-    ///We haven't seen this value yet
-    Search(LambdaExprRef),
-    ///We've built its children
-    Build(LambdaExprRef),
 }
 
 impl<'src> Expr<'src> {

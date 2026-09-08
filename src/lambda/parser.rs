@@ -492,7 +492,7 @@ pub trait ParseLot<'src> {
     fn is_prefix(token: &Self::Token) -> bool;
     fn bind_var_type(token: &Self::Token) -> PrimitiveVarType;
     fn into_expr(token: Self::Token) -> Self;
-    fn into_token(&self) -> Self::Token;
+    fn as_token(&self) -> Self::Token;
 }
 
 impl<'src> ParseLot<'src> for () {
@@ -516,7 +516,7 @@ impl<'src> ParseLot<'src> for () {
 
     fn into_expr(_: Self::Token) -> Self {}
 
-    fn into_token(&self) -> Self::Token {
+    fn as_token(&self) -> Self::Token {
         "1"
     }
 }
@@ -632,7 +632,7 @@ impl<'src> ParseLot<'src> for Expr<'src> {
         }
     }
 
-    fn into_token(&self) -> Self::Token {
+    fn as_token(&self) -> Self::Token {
         match self {
             Expr::Quantifier {
                 quantifier,

@@ -106,12 +106,6 @@ pub enum ReductionError {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LambdaExprRef(pub u32);
 
-impl LambdaExprRef {
-    pub(crate) fn new(x: usize) -> Self {
-        LambdaExprRef(u32::try_from(x).expect("Reference is too high!"))
-    }
-}
-
 ///A trait which allows one to define a language of thought that interacts with the lambda
 ///calculus. An example implementation can be found for [`crate::language::Expr`].
 pub trait LambdaLanguageOfThought {
@@ -248,41 +242,6 @@ pub enum LambdaExpr<'a, T> {
     ///Any expression which is not part of the lambda calculus directly (e.g. primitives). See
     ///[`crate::Expr`] for an example.
     LanguageOfThoughtExpr(T, ExprType),
-}
-
-impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
-    pub(crate) fn var_type(&self) -> Option<&LambdaType> {
-        match self {
-            LambdaExpr::Lambda(_, lambda_type) => Some(lambda_type),
-            LambdaExpr::LanguageOfThoughtExpr(e, _) => e.var_type(),
-            LambdaExpr::BoundVariable(..)
-            | LambdaExpr::FreeVariable(..)
-            | LambdaExpr::Application { .. } => None,
-        }
-    }
-    pub(crate) fn inc_depth(&self) -> bool {
-        match self {
-            LambdaExpr::Lambda(..)
-            | LambdaExpr::LanguageOfThoughtExpr(
-                _,
-                ExprType::BindVar(_) | ExprType::BindVarTwoBodies(..),
-            ) => true,
-            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar)
-            | LambdaExpr::BoundVariable(..)
-            | LambdaExpr::FreeVariable(..)
-            | LambdaExpr::Application { .. } => false,
-        }
-    }
-
-    pub(crate) fn commutative(&self) -> bool {
-        match self {
-            LambdaExpr::LanguageOfThoughtExpr(e, _) => e.commutative(),
-            LambdaExpr::Lambda(..)
-            | LambdaExpr::BoundVariable(..)
-            | LambdaExpr::FreeVariable(..)
-            | LambdaExpr::Application { .. } => false,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -685,6 +644,7 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
         other_root
     }
 
+    #[cfg(test)]
     ///Convert from [`Vec<LambdaExpr<T>>`] to [`LambdaPool`]
     pub fn from(x: Vec<LambdaExpr<'src, T>>) -> Self {
         LambdaPool(x)

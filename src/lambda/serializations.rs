@@ -150,9 +150,7 @@ impl<'src, T: LambdaLanguageOfThought + ParseLot<'src> + PartialEq> RootedLambda
                 AssociativityData::App
             }
             LambdaExpr::LanguageOfThoughtExpr(x, super::ExprType::NoVar) => {
-                v.push(BindingToken::Token(Token::LanguageOfThought(
-                    x.into_token(),
-                )));
+                v.push(BindingToken::Token(Token::LanguageOfThought(x.as_token())));
                 if x.commutative() & x.infix() {
                     AssociativityData::Infix(x, InfixPosition::Op)
                 } else if x.unary_associative() {
@@ -167,7 +165,7 @@ impl<'src, T: LambdaLanguageOfThought + ParseLot<'src> + PartialEq> RootedLambda
                 ));
 
                 v.push(BindingToken::BindingToken {
-                    expr: x.into_token(),
+                    expr: x.as_token(),
                     var_name: var_string,
                     var_type: x.var_type().unwrap().clone(),
                 });
@@ -181,7 +179,7 @@ impl<'src, T: LambdaLanguageOfThought + ParseLot<'src> + PartialEq> RootedLambda
                     "Implementation error, if you bind a var, the expression must bind vars!",
                 ));
                 v.push(BindingToken::BindingToken {
-                    expr: x.into_token(),
+                    expr: x.as_token(),
                     var_name: var_string,
                     var_type: x.var_type().unwrap().clone(),
                 });

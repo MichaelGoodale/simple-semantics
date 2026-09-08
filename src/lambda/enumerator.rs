@@ -14,6 +14,11 @@ use crate::lambda::{
     Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool, types::LambdaType,
 };
 
+///A struct which is used to enumerate all expressions of a given Language of Thought.
+///
+///It automatically normalizes expressions to their beta-eta normal form as well as simplifying
+///repeated involutory expressions (e.g. repeated negation) and avoids degenerate functions
+///(constant functions or functions that produce constant functions)
 pub struct Generator<'src, T> {
     exprs: IndexSet<LambdaExpr<'src, T>>,
     expr_variable_usage: HashMap<ExprId, UsedVars>,
@@ -24,6 +29,7 @@ pub struct Generator<'src, T> {
     possible_types_memo: HashMap<BTreeSet<TypeId>, Vec<BTreeSet<TypeId>>>,
 }
 
+///The ID of an expression in a [`Generator`]. See [`Generator::to_rooted_lambda_pool`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExprId(usize);
 
@@ -70,6 +76,7 @@ impl UsedVars {
         UsedVars(vec![Reverse(x)])
     }
 
+    #[expect(dead_code)]
     fn insert(&mut self, x: Bvar) {
         let x = Reverse(x);
         if let Err(pos) = self.0.binary_search(&x) {
@@ -473,6 +480,8 @@ impl<'src, T> Generator<'src, T> {
         TypeId(id)
     }
 
+    ///Gets all expressions of type `t` up to `max_size`, if it has already been computed. Use
+    ///[`Generator::enumerate_or_generate`] to actually generate expressions.
     pub fn enumerate(&self, t: &LambdaType, max_size: usize) -> Option<&Vec<Vec<ExprId>>> {
         let t = self.type_id(t)?;
         self.memo.get(&(ContextId(0), t, max_size))
@@ -480,6 +489,8 @@ impl<'src, T> Generator<'src, T> {
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> Generator<'src, T> {
+    ///Converts an [`ExprId`] in a given [`Generator`] to a [`RootedLambdaPool<'src, T>`].
+    ///Will be [`None`] if `x` is undefined.
     pub fn to_rooted_lambda_pool(&self, x: ExprId) -> Option<RootedLambdaPool<'src, T>> {
         let mut pool = vec![None];
         //check the root exists
@@ -514,6 +525,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Generator<'src, T> {
 }
 
 impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
+    ///Gets all expressions of type `t` up to `max_size`. Returns a Vec<Vec<ExprId>> where
+    ///the outer vector groups expressions by size, e.g. id=0 means expressions of size 1, id=1 size
+    ///two, etc.
     pub fn enumerate_or_generate(&mut self, t: LambdaType, max_size: usize) -> &Vec<Vec<ExprId>> {
         let t = self.type_id_or_insert(t);
         if !self.memo.contains_key(&(ContextId(0), t, max_size)) {
@@ -522,6 +536,7 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
         self.memo.get(&(ContextId(0), t, max_size)).unwrap()
     }
 
+    ///Creates a new [`Generator`].
     pub fn new(base_expressions: Vec<T>) -> Generator<'src, T> {
         let mut contexts = IndexSet::new();
         contexts.insert(Context::Empty);
@@ -581,7 +596,7 @@ mod test {
             //let mut pool_set = HashSet::new();
             //let mut reduced_pool_set = HashSet::new();
 
-            let size = 10;
+            let size = 5;
             let pools = generator.enumerate_or_generate(ty.clone(), size).clone();
             for (size, x) in pools.into_iter().enumerate() {
                 for pool in x {
