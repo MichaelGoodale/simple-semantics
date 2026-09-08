@@ -19,7 +19,7 @@ pub use interpretation::{Literal, UndefinedExpression, Value};
 pub mod types;
 use types::{LambdaType, TypeError};
 
-mod enumerator;
+pub mod enumerator;
 mod parser;
 mod printing;
 mod serializations;

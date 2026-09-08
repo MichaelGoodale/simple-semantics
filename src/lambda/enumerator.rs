@@ -1,4 +1,5 @@
-#![expect(dead_code)]
+//! Allows for enumerating expressions up to a fixed size.
+
 use ahash::{HashMap, HashMapExt};
 use indexmap::IndexSet;
 use itertools::iproduct;
@@ -10,11 +11,10 @@ use std::{
 };
 
 use crate::lambda::{
-    Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-    printing::VarContext, types::LambdaType,
+    Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool, types::LambdaType,
 };
 
-struct Generator<'src, T> {
+pub struct Generator<'src, T> {
     exprs: IndexSet<LambdaExpr<'src, T>>,
     expr_variable_usage: HashMap<ExprId, UsedVars>,
     contexts: IndexSet<Context>,
@@ -25,7 +25,7 @@ struct Generator<'src, T> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct ExprId(usize);
+pub struct ExprId(usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct TypeId(usize);
@@ -326,15 +326,21 @@ fn generate<'src, T: Hash + Eq + LambdaLanguageOfThought>(
                 for arg_i in 0..(size - formula_j - 1) {
                     let args = &args[arg_i];
 
-                    exprs[arg_i + formula_j + 1].extend(iproduct!(formulae, args).map(|(f, x)| {
-                        mk_expr(
-                            g,
-                            LambdaExpr::<T>::Application {
-                                subformula: LambdaExprRef(u32::try_from(f.0).unwrap()),
-                                argument: LambdaExprRef(u32::try_from(x.0).unwrap()),
-                            },
-                        )
-                    }));
+                    exprs[arg_i + formula_j + 1].extend(iproduct!(formulae, args).filter_map(
+                        |(f, x)| {
+                            if is_involutory(*f, *x, g) {
+                                None
+                            } else {
+                                Some(mk_expr(
+                                    g,
+                                    LambdaExpr::<T>::Application {
+                                        subformula: LambdaExprRef(u32::try_from(f.0).unwrap()),
+                                        argument: LambdaExprRef(u32::try_from(x.0).unwrap()),
+                                    },
+                                ))
+                            }
+                        },
+                    ));
                 }
             }
         }
@@ -347,9 +353,9 @@ fn generate<'src, T: Hash + Eq + LambdaLanguageOfThought>(
             let c = mk_ctx(g, c, arg_type_id);
             let mut bodies = generate(g, c, res_type, size - 1);
 
-            bodies
-                .iter_mut()
-                .for_each(|x| x.retain(|x| !could_be_eta(*x, g)));
+            bodies.iter_mut().for_each(|x| {
+                x.retain(|f_body| uses_its_function(*f_body, g) && !could_be_eta(*f_body, g))
+            });
 
             for (i, b) in bodies.into_iter().enumerate() {
                 exprs[i + 1].extend(std::iter::repeat_n(arg_type.clone(), b.len()).zip(b).map(
@@ -372,9 +378,45 @@ fn generate<'src, T: Hash + Eq + LambdaLanguageOfThought>(
     exprs
 }
 
+///Checks if f_body has a variable to bind.
+fn uses_its_function<'src, T>(f_body: ExprId, g: &Generator<'src, T>) -> bool {
+    g.expr_variable_usage
+        .get(&f_body)
+        .is_some_and(|x| x.has_zero_var())
+}
+
+///Checks if this is applying a involutory function to an expression with that involutory function
+///as root. E.g. app(f, app(f, x)) where f is involutory (this allows us to simplify !!p to p.
+fn is_involutory<'src, T: LambdaLanguageOfThought + PartialEq>(
+    f: ExprId,
+    x: ExprId,
+    g: &Generator<'src, T>,
+) -> bool {
+    let LambdaExpr::LanguageOfThoughtExpr(outer_expr, _) = g.exprs.get_index(f.0).unwrap() else {
+        return false;
+    };
+
+    if !outer_expr.involutory() {
+        return false;
+    }
+
+    let LambdaExpr::Application { subformula, .. } = g.exprs.get_index(x.0).unwrap() else {
+        return false;
+    };
+    let LambdaExpr::LanguageOfThoughtExpr(inner_expr, _) = g
+        .exprs
+        .get_index(usize::try_from(subformula.0).unwrap())
+        .unwrap()
+    else {
+        return false;
+    };
+
+    outer_expr == inner_expr
+}
+
 ///this expression ID, if put inside a lambda, would be the site of an eta reduction.
-fn could_be_eta<'src, T>(x: ExprId, g: &Generator<'src, T>) -> bool {
-    let x = g.exprs.get_index(x.0).unwrap();
+fn could_be_eta<'src, T>(f_body: ExprId, g: &Generator<'src, T>) -> bool {
+    let x = g.exprs.get_index(f_body.0).unwrap();
     let LambdaExpr::Application {
         subformula,
         argument,
@@ -431,14 +473,14 @@ impl<'src, T> Generator<'src, T> {
         TypeId(id)
     }
 
-    fn enumerate(&self, t: &LambdaType, max_size: usize) -> Option<&Vec<Vec<ExprId>>> {
+    pub fn enumerate(&self, t: &LambdaType, max_size: usize) -> Option<&Vec<Vec<ExprId>>> {
         let t = self.type_id(t)?;
         self.memo.get(&(ContextId(0), t, max_size))
     }
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone> Generator<'src, T> {
-    fn to_rooted_lambda_pool(&self, x: ExprId) -> Option<RootedLambdaPool<'src, T>> {
+    pub fn to_rooted_lambda_pool(&self, x: ExprId) -> Option<RootedLambdaPool<'src, T>> {
         let mut pool = vec![None];
         //check the root exists
         self.exprs.get_index(x.0)?;
@@ -472,7 +514,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Generator<'src, T> {
 }
 
 impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
-    fn enumerate_or_generate(&mut self, t: LambdaType, max_size: usize) -> &Vec<Vec<ExprId>> {
+    pub fn enumerate_or_generate(&mut self, t: LambdaType, max_size: usize) -> &Vec<Vec<ExprId>> {
         let t = self.type_id_or_insert(t);
         if !self.memo.contains_key(&(ContextId(0), t, max_size)) {
             generate(self, ContextId(0), t, max_size);
@@ -480,7 +522,7 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
         self.memo.get(&(ContextId(0), t, max_size)).unwrap()
     }
 
-    fn new(base_expressions: Vec<T>) -> Generator<'src, T> {
+    pub fn new(base_expressions: Vec<T>) -> Generator<'src, T> {
         let mut contexts = IndexSet::new();
         contexts.insert(Context::Empty);
         assert!(contexts.get_index(0).is_some());
@@ -524,41 +566,33 @@ mod test {
         ];
         expressions.extend(Expr::basic_ops());
 
-        let t = vec![
-            (LambdaType::A, 19),
-            (LambdaType::E, 22),
-            (LambdaType::T, 96),
-            (LambdaType::at().clone(), 18),
-            (LambdaType::et().clone(), 22),
-            (LambdaType::from_string("<<a,t>,t>").unwrap(), 37),
+        let types = vec![
+            LambdaType::A,
+            LambdaType::E,
+            LambdaType::T,
+            LambdaType::at().clone(),
+            LambdaType::et().clone(),
+            LambdaType::from_string("<<a,t>,t>").unwrap(),
         ];
 
         let mut generator: Generator<Expr> = Generator::new(expressions.to_vec());
-        for (t, how_many) in t {
-            println!("{t}");
+        for ty in types {
+            println!("{ty}");
             //let mut pool_set = HashSet::new();
             //let mut reduced_pool_set = HashSet::new();
 
-            let size = 5;
-            let pools = generator.enumerate_or_generate(t.clone(), size).clone();
-            for x in pools.into_iter().flatten() {
-                let expr = generator.to_rooted_lambda_pool(x).unwrap();
-                println!("\t{expr}");
-                assert!(expr.is_reduced(), "{expr} is not fully reduced");
-                assert!(expr.appless_len() <= size);
-                let o = expr.get_type()?;
-                assert_eq!(o, t);
-                /*
-                count += 1;
-                pool_set.insert(x.clone());
-                x.reduce()?;
-                x.cleanup();
-                reduced_pool_set.insert(x);*/
+            let size = 10;
+            let pools = generator.enumerate_or_generate(ty.clone(), size).clone();
+            for (size, x) in pools.into_iter().enumerate() {
+                for pool in x {
+                    let expr = generator.to_rooted_lambda_pool(pool).unwrap();
+                    println!("\t{expr}");
+                    assert!(expr.is_reduced(), "{expr} is not fully reduced");
+                    assert!(expr.appless_len() <= size + 1);
+                    let o = expr.get_type()?;
+                    assert_eq!(o, ty);
+                }
             }
-            //assert_eq!(count, how_many);
-            //println!("{t} {count}");
-            //assert_eq!(pool_set.len(), count);
-            //assert_eq!(pool_set.len(), reduced_pool_set.len());
         }
         Ok(())
     }
