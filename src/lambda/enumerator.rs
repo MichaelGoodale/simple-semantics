@@ -326,7 +326,7 @@ fn generate<'src, T: Hash + Eq + LambdaLanguageOfThought>(
                 for arg_i in 0..(size - formula_j - 1) {
                     let args = &args[arg_i];
 
-                    exprs[arg_i + formula_j].extend(iproduct!(formulae, args).map(|(f, x)| {
+                    exprs[arg_i + formula_j + 1].extend(iproduct!(formulae, args).map(|(f, x)| {
                         mk_expr(
                             g,
                             LambdaExpr::<T>::Application {
@@ -539,11 +539,13 @@ mod test {
             //let mut pool_set = HashSet::new();
             //let mut reduced_pool_set = HashSet::new();
 
-            let pools = generator.enumerate_or_generate(t.clone(), 5).clone();
+            let size = 5;
+            let pools = generator.enumerate_or_generate(t.clone(), size).clone();
             for x in pools.into_iter().flatten() {
                 let expr = generator.to_rooted_lambda_pool(x).unwrap();
                 println!("\t{expr}");
                 assert!(expr.is_reduced(), "{expr} is not fully reduced");
+                assert!(expr.appless_len() <= size);
                 let o = expr.get_type()?;
                 assert_eq!(o, t);
                 /*
