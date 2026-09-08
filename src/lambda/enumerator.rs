@@ -46,7 +46,7 @@ enum Context {
 }
 
 impl Context {
-    fn variables<'src, T>(&self, typ: TypeId, g: &Generator<'src, T>) -> Vec<Bvar> {
+    fn variables<T>(&self, typ: TypeId, g: &Generator<'_, T>) -> Vec<Bvar> {
         let mut v = vec![];
         let mut n = 0;
 
@@ -172,14 +172,14 @@ fn mk_expr<'src, T: Hash + Eq + LambdaLanguageOfThought>(
     ExprId(x)
 }
 
-fn mk_ctx<'src, T>(g: &mut Generator<'src, T>, parent: ContextId, typ: TypeId) -> ContextId {
+fn mk_ctx<T>(g: &mut Generator<'_, T>, parent: ContextId, typ: TypeId) -> ContextId {
     let c = Context::Context { parent, typ };
     let (x, _) = g.contexts.insert_full(c);
     ContextId(x)
 }
 
-fn possible_size_table<'src, T>(
-    g: &mut Generator<'src, T>,
+fn possible_size_table<T>(
+    g: &mut Generator<'_, T>,
     ctx: ContextId,
     max_size: usize,
 ) -> BTreeSet<TypeId> {
@@ -202,7 +202,7 @@ fn possible_size_table<'src, T>(
             return x[max_size - 1].clone();
         }
     } else {
-        let mut table = (1..(max_size + 1))
+        let mut table = (1..=max_size)
             .map(|_| BTreeSet::new())
             .collect::<Vec<_>>();
         //If there is a constant, then we can make the LHS of an app of that type with 1 expression.
@@ -254,8 +254,8 @@ fn possible_size_table<'src, T>(
     ret
 }
 
-fn generate<'src, T: Hash + Eq + LambdaLanguageOfThought>(
-    g: &mut Generator<'src, T>,
+fn generate<T: Hash + Eq + LambdaLanguageOfThought>(
+    g: &mut Generator<'_, T>,
     c: ContextId,
     typ: TypeId,
     size: usize,
@@ -275,7 +275,7 @@ fn generate<'src, T: Hash + Eq + LambdaLanguageOfThought>(
                 .zip(vars)
                 .map(|(t, bvar)| mk_expr(g, LambdaExpr::<T>::BoundVariable(bvar, t))),
         );
-    };
+    }
 
     if let Some(x) = g.constants.get(&typ) {
         exprs[0].extend(x.iter().copied());
@@ -361,7 +361,7 @@ fn generate<'src, T: Hash + Eq + LambdaLanguageOfThought>(
             let mut bodies = generate(g, c, res_type, size - 1);
 
             bodies.iter_mut().for_each(|x| {
-                x.retain(|f_body| uses_its_function(*f_body, g) && !could_be_eta(*f_body, g))
+                x.retain(|f_body| uses_its_function(*f_body, g) && !could_be_eta(*f_body, g));
             });
 
             for (i, b) in bodies.into_iter().enumerate() {
@@ -385,19 +385,19 @@ fn generate<'src, T: Hash + Eq + LambdaLanguageOfThought>(
     exprs
 }
 
-///Checks if f_body has a variable to bind.
-fn uses_its_function<'src, T>(f_body: ExprId, g: &Generator<'src, T>) -> bool {
+///Checks if `f_body` has a variable to bind.
+fn uses_its_function<T>(f_body: ExprId, g: &Generator<'_, T>) -> bool {
     g.expr_variable_usage
         .get(&f_body)
-        .is_some_and(|x| x.has_zero_var())
+        .is_some_and(UsedVars::has_zero_var)
 }
 
 ///Checks if this is applying a involutory function to an expression with that involutory function
 ///as root. E.g. app(f, app(f, x)) where f is involutory (this allows us to simplify !!p to p.
-fn is_involutory<'src, T: LambdaLanguageOfThought + PartialEq>(
+fn is_involutory<T: LambdaLanguageOfThought + PartialEq>(
     f: ExprId,
     x: ExprId,
-    g: &Generator<'src, T>,
+    g: &Generator<'_, T>,
 ) -> bool {
     let LambdaExpr::LanguageOfThoughtExpr(outer_expr, _) = g.exprs.get_index(f.0).unwrap() else {
         return false;
@@ -422,7 +422,7 @@ fn is_involutory<'src, T: LambdaLanguageOfThought + PartialEq>(
 }
 
 ///this expression ID, if put inside a lambda, would be the site of an eta reduction.
-fn could_be_eta<'src, T>(f_body: ExprId, g: &Generator<'src, T>) -> bool {
+fn could_be_eta<T>(f_body: ExprId, g: &Generator<'_, T>) -> bool {
     let x = g.exprs.get_index(f_body.0).unwrap();
     let LambdaExpr::Application {
         subformula,
@@ -452,7 +452,7 @@ fn could_be_eta<'src, T>(f_body: ExprId, g: &Generator<'src, T>) -> bool {
     !subformula.has_zero_var()
 }
 
-impl<'src, T> Generator<'src, T> {
+impl<T> Generator<'_, T> {
     fn id_to_context(&self, c: ContextId) -> Option<&Context> {
         self.contexts.get_index(c.0)
     }
@@ -482,6 +482,7 @@ impl<'src, T> Generator<'src, T> {
 
     ///Gets all expressions of type `t` up to `max_size`, if it has already been computed. Use
     ///[`Generator::enumerate_or_generate`] to actually generate expressions.
+    #[must_use]
     pub fn enumerate(&self, t: &LambdaType, max_size: usize) -> Option<&Vec<Vec<ExprId>>> {
         let t = self.type_id(t)?;
         self.memo.get(&(ContextId(0), t, max_size))
@@ -491,6 +492,7 @@ impl<'src, T> Generator<'src, T> {
 impl<'src, T: LambdaLanguageOfThought + Clone> Generator<'src, T> {
     ///Converts an [`ExprId`] in a given [`Generator`] to a [`RootedLambdaPool<'src, T>`].
     ///Will be [`None`] if `x` is undefined.
+    #[must_use]
     pub fn to_rooted_lambda_pool(&self, x: ExprId) -> Option<RootedLambdaPool<'src, T>> {
         let mut pool = vec![None];
         //check the root exists
@@ -537,6 +539,7 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
     }
 
     ///Creates a new [`Generator`].
+    #[must_use]
     pub fn new(base_expressions: Vec<T>) -> Generator<'src, T> {
         let mut contexts = IndexSet::new();
         contexts.insert(Context::Empty);

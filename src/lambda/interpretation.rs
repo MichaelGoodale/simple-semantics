@@ -73,6 +73,7 @@ impl Display for Literal<'_> {
 
 impl<'src> Literal<'src> {
     ///Converts the literal into an [`Vec<Actor>`]. Returns `None` if not a set of [`Actor`].
+    #[must_use]
     pub fn into_actor_set(self) -> Option<Vec<Actor<'src>>> {
         let Literal::ActorSet(x) = self else {
             return None;
@@ -81,6 +82,7 @@ impl<'src> Literal<'src> {
     }
 
     ///Converts the literal into an [`Vec<Event>`]. Returns `None` if not a set of [`Event`].
+    #[must_use]
     pub fn into_event_set(self) -> Option<Vec<Event>> {
         let Literal::EventSet(x) = self else {
             return None;
@@ -89,6 +91,7 @@ impl<'src> Literal<'src> {
     }
 
     ///Whether a type can be expressed as a [`Literal`].
+    #[must_use]
     pub fn has_literal(typ: &LambdaType) -> bool {
         !typ.is_function() || typ.is_one_place_function()
     }
@@ -140,6 +143,7 @@ impl<'src> Literal<'src> {
     }
 
     ///Get the type of the literal.
+    #[must_use]
     pub fn typ(&self) -> &LambdaType {
         match self {
             Literal::Bool(_) => &LambdaType::T,
@@ -163,6 +167,7 @@ impl<'src> Literal<'src> {
     }
 
     ///Converts the literal into a `bool`. Returns `None` if not a `bool`.
+    #[must_use]
     pub fn as_bool(&self) -> Option<bool> {
         if let Literal::Bool(b) = self {
             Some(*b)
@@ -172,6 +177,7 @@ impl<'src> Literal<'src> {
     }
 
     ///Converts the literal into an [`Entity`]. Returns `None` if not an [`Entity`].
+    #[must_use]
     pub fn as_entity(&self) -> Option<Entity<'src>> {
         match self {
             Literal::Actor(a) => Some(Entity::Actor(a)),
@@ -181,6 +187,7 @@ impl<'src> Literal<'src> {
     }
 
     ///Converts the literal into an [`Actor`]. Returns `None` if not an [`Actor`].
+    #[must_use]
     pub fn as_actor(&self) -> Option<Actor<'src>> {
         match self {
             Literal::Actor(a) => Some(a),
@@ -231,6 +238,7 @@ impl<'src> Value<'src, Expr<'src>> {
     }
 
     ///Convert the value into a [`Literal`], if possible.
+    #[must_use]
     pub fn into_base_value(self) -> Option<Literal<'src>> {
         if let Value::Base(b) = self {
             Some(b)
@@ -273,7 +281,7 @@ impl<'src> Expr<'src> {
         match self {
             Expr::Quantifier { .. } => arguments.iter().all(|x| matches!(x, Value::Base(_))),
             Expr::Binary(_) => arguments.iter().all(|x| matches!(x, Value::Base(_))),
-            Expr::Unary(MonOp::Not) | Expr::Unary(MonOp::Iota(_)) => {
+            Expr::Unary(MonOp::Not | MonOp::Iota(_)) => {
                 matches!(arguments.first().unwrap(), Value::Base(_))
             }
             Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) => true,
@@ -454,7 +462,7 @@ impl<'src> Value<'src, Expr<'src>> {
                 arguments.reverse();
                 return Some((x, arguments));
             }
-            self = *x
+            self = *x;
         }
         None
     }
@@ -538,7 +546,7 @@ impl<'src> Value<'src, Expr<'src>> {
             } else if matches!(s, Value::Function(..)) {
                 d += 1;
             }
-            stack.extend(s.children().map(|x| (x, d)))
+            stack.extend(s.children().map(|x| (x, d)));
         }
         false
     }
@@ -552,12 +560,12 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
         &self,
         scenario: &Scenario<'src>,
     ) -> Result<Value<'src, Expr<'src>>, UndefinedExpression> {
-        let expression: Cow<Self> = if !self.is_reduced() {
+        let expression: Cow<Self> = if self.is_reduced() {
+            Cow::Borrowed(self)
+        } else {
             let mut x = self.clone();
             x.reduce().expect("Can't reduce :(");
             Cow::Owned(x)
-        } else {
-            Cow::Borrowed(self)
         };
         expression.interp_inner(expression.root, vec![], scenario)
     }

@@ -9,7 +9,7 @@ use crate::{
     language::Constant,
 };
 
-impl<'a> LambdaLanguageOfThought for Expr<'a> {
+impl LambdaLanguageOfThought for Expr<'_> {
     fn var_type(&self) -> Option<&LambdaType> {
         match self {
             Expr::Quantifier { var_type, .. } | Expr::Unary(MonOp::Iota(var_type)) => {
@@ -65,12 +65,13 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
                 BinOp::And | BinOp::Or => LambdaType::ttt(),
             },
             Expr::Unary(MonOp::Not) => LambdaType::tt(),
-            Expr::Constant(Constant::Everyone) => LambdaType::at(),
-            Expr::Constant(Constant::EveryEvent) => LambdaType::et(),
-            Expr::Constant(Constant::Tautology) => &LambdaType::T,
-            Expr::Constant(Constant::Contradiction) => &LambdaType::T,
-            Expr::Constant(Constant::Property(_, ActorOrEvent::Actor)) => LambdaType::at(),
-            Expr::Constant(Constant::Property(_, ActorOrEvent::Event)) => LambdaType::et(),
+            Expr::Constant(Constant::Everyone)
+            | Expr::Constant(Constant::Property(_, ActorOrEvent::Actor)) => LambdaType::at(),
+            Expr::Constant(Constant::EveryEvent)
+            | Expr::Constant(Constant::Property(_, ActorOrEvent::Event)) => LambdaType::et(),
+            Expr::Constant(Constant::Tautology) | Expr::Constant(Constant::Contradiction) => {
+                &LambdaType::T
+            }
         }
     }
 }

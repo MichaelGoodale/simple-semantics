@@ -120,7 +120,7 @@ impl<'src, T: LambdaLanguageOfThought + ParseLot<'src> + PartialEq> RootedLambda
                                 v.extend(arg_v);
                                 v.push(BindingToken::Token(Token::CloseDelim));
                             }
-                        };
+                        }
 
                         return AssociativityData::Var;
                     }

@@ -153,6 +153,7 @@ pub enum Expr<'a> {
 
 impl<'src> Expr<'src> {
     ///All the basic operations that don't depend on any scenario for naming.
+    #[must_use]
     pub fn basic_ops() -> &'static [Expr<'src>] {
         &[
             Expr::Quantifier {
@@ -187,10 +188,11 @@ impl<'src> Expr<'src> {
 }
 
 impl<'src> Scenario<'src> {
-    ///Gets the [`Expr] that are specifically valid in this [`Scenario`]. Doesn't include events.
+    ///Gets the [`Expr`] that are specifically valid in this [`Scenario`]. Doesn't include events.
+    #[must_use]
     pub fn scenario_ops(&self) -> Vec<Expr<'src>> {
         let mut v: Vec<_> = self.actors.iter().map(|x| Expr::Actor(x)).collect();
-        for (k, prop) in self.properties.iter() {
+        for (k, prop) in &self.properties {
             if prop.iter().any(|x| matches!(x, Entity::Actor(_))) {
                 v.push(Expr::Constant(Constant::Property(k, ActorOrEvent::Actor)));
             }

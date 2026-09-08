@@ -404,6 +404,7 @@ impl<T: LambdaLanguageOfThought + Hash> Hash for RootedLambdaPool<'_, T> {
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     ///The length of the expression, excluding the number of [`LambdaExpr::Application`].
     ///Corresponds better to human intuitions about length.
+    #[must_use]
     pub fn appless_len(&self) -> usize {
         self.pool
             .bfs_from(self.root)
@@ -412,6 +413,7 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     }
 
     ///Check if the expression is fully reduced or not.
+    #[must_use]
     pub fn is_reduced(&self) -> bool {
         self.pool.get_next_app(self.root).is_none()
     }
@@ -695,19 +697,18 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
 
     pub(crate) fn get_children(&self) -> impl Iterator<Item = LambdaExprRef> {
         match self {
-            LambdaExpr::Lambda(x, _) => Either::Left([x].into_iter().copied()),
+            LambdaExpr::Lambda(x, _)
+            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(x)) => {
+                Either::Left([x].into_iter().copied())
+            }
             LambdaExpr::Application {
                 subformula,
                 argument,
             } => Either::Right(Either::Left([subformula, argument].into_iter().copied())),
-            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => {
+            LambdaExpr::BoundVariable(..)
+            | LambdaExpr::FreeVariable(..)
+            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => {
                 Either::Right(Either::Right(std::iter::empty()))
-            }
-            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => {
-                Either::Right(Either::Right(std::iter::empty()))
-            }
-            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(x)) => {
-                Either::Left([x].into_iter().copied())
             }
             LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(a, b)) => {
                 Either::Right(Either::Left([a, b].into_iter().copied()))
@@ -893,7 +894,7 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
         };
         if !matches!(self.get(*argument), LambdaExpr::BoundVariable(0, _)) {
             return false;
-        };
+        }
 
         let uses_variable_in_body = self
             .bfs_from(*subformula)
@@ -1156,9 +1157,9 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
 
     fn remap_refs(&mut self, remap: &[u32]) {
         match self {
-            LambdaExpr::Lambda(x, _) => {
-                *x = LambdaExprRef(remap[x.0 as usize]);
-            }
+            LambdaExpr::BoundVariable(..)
+            | LambdaExpr::FreeVariable(..)
+            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => (),
             LambdaExpr::Application {
                 subformula,
                 argument,
@@ -1166,10 +1167,8 @@ impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
                 *subformula = LambdaExprRef(remap[subformula.0 as usize]);
                 *argument = LambdaExprRef(remap[argument.0 as usize]);
             }
-            LambdaExpr::BoundVariable(..)
-            | LambdaExpr::FreeVariable(..)
-            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => (),
-            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(x)) => {
+            LambdaExpr::Lambda(x, _)
+            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(x)) => {
                 *x = LambdaExprRef(remap[x.0 as usize]);
             }
             LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(x, y)) => {

@@ -237,7 +237,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
                     beta: arg_span,
                     alpha_type: f,
                     beta_type: arg,
-                })
+                });
             }
 
             LambdaExpr::Application {
@@ -287,7 +287,7 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
                     },
                     second_body_span: None,
                     is_double: false,
-                })
+                });
             }
 
             variable_names.unbind(var);
@@ -392,9 +392,9 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
     Some(pool.add(expr))
 }
 
-fn into_pool<'src, T: LambdaLanguageOfThought + Debug>(
-    ast: Spanned<ParseTree<'src, T>>,
-) -> Result<RootedLambdaPool<'src, T>, Vec<OwnedParseError>> {
+fn into_pool<T: LambdaLanguageOfThought + Debug>(
+    ast: Spanned<ParseTree<'_, T>>,
+) -> Result<RootedLambdaPool<'_, T>, Vec<OwnedParseError>> {
     let mut pool = LambdaPool::new();
 
     let mut var_labels = VariableContext::default();

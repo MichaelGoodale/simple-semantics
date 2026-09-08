@@ -86,8 +86,8 @@ impl<'a> VarContext<'a> {
     }
 }
 
-impl<'a, T: LambdaLanguageOfThought + Display + PartialEq> std::fmt::Display
-    for RootedLambdaPool<'a, T>
+impl<T: LambdaLanguageOfThought + Display + PartialEq> std::fmt::Display
+    for RootedLambdaPool<'_, T>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (string, _) = self.string(self.root(), VarContext::default(), false);
@@ -111,7 +111,7 @@ pub(super) enum AssociativityData<'a, T> {
     Prefix,
 }
 
-impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'src, T> {
+impl<T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'_, T> {
     fn string<'a>(
         &'a self,
         expr: LambdaExprRef,
@@ -223,14 +223,14 @@ impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'s
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> Display for Value<'src, T> {
+impl<T: LambdaLanguageOfThought + Display + PartialEq> Display for Value<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (string, _) = self.string(VarContext::default(), false);
         f.write_str(string.as_str())
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Display + PartialEq> Value<'src, T> {
+impl<T: LambdaLanguageOfThought + Display + PartialEq> Value<'_, T> {
     fn string<'a>(
         &'a self,
         c: VarContext,
