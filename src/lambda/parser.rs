@@ -205,6 +205,9 @@ where
     ///```
     ///
     ///This provides nice error messages thanks to [chumsky](https://crates.io/crates/chumsky) and [ariadne](https://crates.io/crates/ariadne) that you can print if you have invalid input.
+    ///
+    ///# Errors
+    /// Produces a [`LambdaParseError`] which catalogues any mistaken types or parsing failures.
     pub fn parse(s: &'src str) -> Result<RootedLambdaPool<'src, T>, LambdaParseError> {
         parse_lot(s)
     }

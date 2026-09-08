@@ -686,12 +686,14 @@ pub(crate) struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
 impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
     pub(crate) fn n_children(&self) -> usize {
         match self {
-            LambdaExpr::BoundVariable(..) | LambdaExpr::FreeVariable(..) => 0,
-            LambdaExpr::Lambda(..) => 1,
-            LambdaExpr::Application { .. } => 2,
-            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => 0,
-            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(_)) => 1,
-            LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(..)) => 2,
+            LambdaExpr::BoundVariable(..)
+            | LambdaExpr::FreeVariable(..)
+            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::NoVar) => 0,
+            LambdaExpr::Lambda(..) | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVar(_)) => {
+                1
+            }
+            LambdaExpr::Application { .. }
+            | LambdaExpr::LanguageOfThoughtExpr(_, ExprType::BindVarTwoBodies(..)) => 2,
         }
     }
 

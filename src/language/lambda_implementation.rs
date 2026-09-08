@@ -65,11 +65,11 @@ impl LambdaLanguageOfThought for Expr<'_> {
                 BinOp::And | BinOp::Or => LambdaType::ttt(),
             },
             Expr::Unary(MonOp::Not) => LambdaType::tt(),
-            Expr::Constant(Constant::Everyone)
-            | Expr::Constant(Constant::Property(_, ActorOrEvent::Actor)) => LambdaType::at(),
-            Expr::Constant(Constant::EveryEvent)
-            | Expr::Constant(Constant::Property(_, ActorOrEvent::Event)) => LambdaType::et(),
-            Expr::Constant(Constant::Tautology) | Expr::Constant(Constant::Contradiction) => {
+            Expr::Constant(Constant::Everyone |
+Constant::Property(_, ActorOrEvent::Actor)) => LambdaType::at(),
+            Expr::Constant(Constant::EveryEvent |
+Constant::Property(_, ActorOrEvent::Event)) => LambdaType::et(),
+            Expr::Constant(Constant::Tautology | Constant::Contradiction) => {
                 &LambdaType::T
             }
         }

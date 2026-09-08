@@ -138,7 +138,9 @@ impl<'src> Literal<'src> {
                 }
                 Literal::EventSet(set)
             }
-            _ => panic!("Cannot make something with var_type={var_type} a literal"),
+            LambdaType::Composition(..) => {
+                panic!("Cannot make something with var_type={var_type} a literal")
+            }
         }
     }
 
@@ -270,10 +272,9 @@ impl<'src> TryFrom<Value<'src, Expr<'src>>> for bool {
 impl<'src> Expr<'src> {
     fn n_arguments(&self) -> usize {
         match self {
-            Expr::Quantifier { .. } => 2,
-            Expr::Binary(_) => 2,
-            Expr::Unary(_) => 1,
             Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) => 0,
+            Expr::Unary(_) => 1,
+            Expr::Quantifier { .. } | Expr::Binary(_) => 2,
         }
     }
 
