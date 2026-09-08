@@ -34,6 +34,10 @@ impl<'a> LambdaLanguageOfThought for Expr<'a> {
         matches!(self, Expr::Unary(MonOp::Not))
     }
 
+    fn involutory(&self) -> bool {
+        matches!(self, Expr::Unary(MonOp::Not))
+    }
+
     fn bind_vars(&self) -> PrimitiveVarType {
         match self {
             Expr::Quantifier { .. } => PrimitiveVarType::BindVarTwoBodies,

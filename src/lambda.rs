@@ -137,6 +137,12 @@ pub trait LambdaLanguageOfThought {
         false
     }
 
+    ///Checks whether an expression is *involutory*, e.g. has the property f(f(x)) = x.
+    ///Negation is one example.
+    fn involutory(&self) -> bool {
+        false
+    }
+
     ///Checks whether an expression is commutative
     fn commutative(&self) -> bool {
         false

@@ -16,7 +16,6 @@ use chumsky::{
     span::{SimpleSpan, Spanned},
     text::{inline_whitespace, int},
 };
-use serde::Serialize;
 use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
