@@ -101,19 +101,19 @@ impl<'src> Literal<'src> {
         var_type: &LambdaType,
         expr_type: &LambdaType,
         scenario: &Scenario<'src>,
-    ) -> Literal<'src> {
+    ) -> Result<Literal<'src>, UndefinedExpression> {
         //This is a closed expression that can be turned into a literal (check for neutral too)
 
         let f = Value::Function(Box::new(body), var_type.clone(), expr_type.clone());
         let bool_apply = |f: Value<'src, Expr<'src>>, x| {
-            let v = f.apply(Value::Base(x), vec![], scenario).unwrap();
-            v.into_base_value().unwrap().as_bool().unwrap()
+            let v = f.apply(Value::Base(x), vec![], scenario)?;
+            Ok(v.into_base_value().unwrap().as_bool().unwrap())
         };
 
-        match var_type {
+        Ok(match var_type {
             LambdaType::T => Literal::TruthTable(
-                bool_apply(f.clone(), Literal::Bool(true)),
-                bool_apply(f, Literal::Bool(false)),
+                bool_apply(f.clone(), Literal::Bool(true))?,
+                bool_apply(f, Literal::Bool(false))?,
             ),
             LambdaType::A => {
                 let mut set = vec![];
@@ -123,7 +123,7 @@ impl<'src> Literal<'src> {
                     .copied()
                     .zip(repeat_n(f, scenario.actors.len()))
                 {
-                    if bool_apply(f.clone(), Literal::Actor(actor)) {
+                    if bool_apply(f.clone(), Literal::Actor(actor))? {
                         set.push(actor);
                     }
                 }
@@ -132,7 +132,7 @@ impl<'src> Literal<'src> {
             LambdaType::E => {
                 let mut set = vec![];
                 for (event, f) in scenario.events().zip(repeat_n(f, scenario.events().len())) {
-                    if bool_apply(f.clone(), Literal::Event(event)) {
+                    if bool_apply(f.clone(), Literal::Event(event))? {
                         set.push(event);
                     }
                 }
@@ -141,7 +141,7 @@ impl<'src> Literal<'src> {
             LambdaType::Composition(..) => {
                 panic!("Cannot make something with var_type={var_type} a literal")
             }
-        }
+        })
     }
 
     ///Get the type of the literal.
@@ -477,10 +477,11 @@ impl<'src> Value<'src, Expr<'src>> {
             Value::Function(body, var_type, expr_type) => {
                 variables.push(None);
                 let body = body.reduce(variables, scenario)?;
+
                 if Literal::has_literal(&expr_type) && !body.open_var() {
                     Ok(Value::Base(Literal::make_function_literal(
                         body, &var_type, &expr_type, scenario,
-                    )))
+                    )?))
                 } else {
                     Ok(Value::Function(Box::new(body), var_type, expr_type))
                 }
@@ -586,7 +587,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
                 if Literal::has_literal(&expr_type) && !body.open_var() {
                     Ok(Value::Base(Literal::make_function_literal(
                         body, var_type, &expr_type, scenario,
-                    )))
+                    )?))
                 } else {
                     Ok(Value::Function(
                         Box::new(body),
@@ -658,9 +659,11 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    #[test]
+    use crate::lambda::enumerator::Generator;
 
+    use super::*;
+
+    #[test]
     fn basic_interp() -> anyhow::Result<()> {
         let scenario = Scenario::parse(
             "<john,mary,phil (kind);{A: john,P: mary (likes)},{A: mary},{P: phil}>",
@@ -733,6 +736,47 @@ mod test {
         let phi = RootedLambdaPool::parse("lambda a x lambda a y pa_kind(x)")?;
         let v = phi.interp(&scenario).unwrap();
         println!("{v:?}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn fancy_interp() -> anyhow::Result<()> {
+        let scenario = Scenario::parse(
+            "<john,mary,phil (kind);{A: john,P: mary (likes)},{A: mary},{P: phil}>",
+        )?;
+
+        let types = vec![
+            LambdaType::A,
+            LambdaType::E,
+            LambdaType::T,
+            LambdaType::at().clone(),
+            LambdaType::et().clone(),
+            LambdaType::from_string("<<a,t>,t>").unwrap(),
+        ];
+
+        let mut expressions = scenario.scenario_ops();
+        expressions.extend(Expr::basic_ops());
+        let mut generator: Generator<Expr> = Generator::new(expressions);
+
+        for ty in types {
+            generator.enumerate_or_generate(ty.clone(), 5);
+            let pools = generator.enumerate(&ty, 5).unwrap();
+
+            let pools = pools
+                .iter()
+                .flat_map(|x| {
+                    x.iter()
+                        .map(|x| generator.to_rooted_lambda_pool(*x).unwrap())
+                })
+                .collect::<Vec<_>>();
+
+            for phi in pools {
+                print!("[{phi}]");
+                let calculated_value = phi.interp(&scenario).map(|x| x.to_string());
+                println!("\t{calculated_value:?}");
+            }
+        }
 
         Ok(())
     }
