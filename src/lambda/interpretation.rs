@@ -765,10 +765,7 @@ mod test {
 
             let pools = pools
                 .iter()
-                .flat_map(|x| {
-                    x.iter()
-                        .map(|x| generator.to_rooted_lambda_pool(*x).unwrap())
-                })
+                .map(|x| generator.to_rooted_lambda_pool(*x).unwrap())
                 .collect::<Vec<_>>();
 
             for phi in pools {

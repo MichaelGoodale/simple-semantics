@@ -6,8 +6,7 @@ use itertools::iproduct;
 use std::{cmp::Reverse, collections::BTreeSet, fmt::Debug, hash::Hash};
 
 use crate::lambda::{
-    Bvar, ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-    types::LambdaType,
+    Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool, types::LambdaType,
 };
 
 ///A struct which is used to enumerate all expressions of a given Language of Thought.
@@ -189,18 +188,16 @@ fn possible_size_table<T>(
     let mut start = 1;
 
     let mut table = if let Some(x) = g.possible_types_memo.get(&ctx_vars) {
-        if x.len() <= max_size {
+        if x.len() < max_size {
             let mut v = g.possible_types_memo.remove(&ctx_vars).unwrap();
             start = v.len();
-            v.extend((v.len()..=max_size).map(|_| BTreeSet::new()));
+            v.extend((v.len()..max_size).map(|_| BTreeSet::new()));
             v
         } else {
-            return x[max_size].clone();
+            return x[max_size - 1].clone();
         }
     } else {
-        let mut table = (0..(max_size + 1))
-            .map(|_| BTreeSet::new())
-            .collect::<Vec<_>>();
+        let mut table = (1..=max_size).map(|_| BTreeSet::new()).collect::<Vec<_>>();
         //If there is a constant, then we can make the LHS of an app of that type with 1 expression.
         table[0] = g.constants.keys().copied().collect();
         table
@@ -208,9 +205,9 @@ fn possible_size_table<T>(
 
     let types = &mut g.types;
 
-    assert_eq!(table.len(), max_size + 1);
+    debug_assert_eq!(table.len(), max_size);
 
-    for current_size in start..=max_size {
+    for current_size in start..max_size {
         let [curr, old] = table
             .get_disjoint_mut([current_size, current_size - 1])
             .unwrap();
@@ -245,7 +242,7 @@ fn possible_size_table<T>(
         }
     }
 
-    let ret = table[max_size].clone();
+    let ret = table[max_size - 1].clone();
     g.possible_types_memo.insert(ctx_vars, table.clone());
     ret
 }
@@ -281,16 +278,16 @@ fn applications<T: Hash + Eq + LambdaLanguageOfThought>(
     exprs: &mut Vec<ExprId>,
 ) {
     //This first part finds any possible types that we can apply with.
-    let t_subformulae = possible_size_table(g, c, size - 1);
-    let t_args = possible_size_table(g, c, size - 1);
+    let types = possible_size_table(g, c, size - 1);
 
     //Must return typ and its arg must be accessible
-    let t_subformulae = t_subformulae
-        .into_iter()
+    let types = types
+        .iter()
+        .copied()
         .filter(|subformula_type| {
             if let Some((lhs, rhs)) = g.type_children_or_insert(*subformula_type)
                 && rhs == typ
-                && t_args.contains(&lhs)
+                && types.contains(&lhs)
             {
                 true
             } else {
@@ -300,11 +297,11 @@ fn applications<T: Hash + Eq + LambdaLanguageOfThought>(
         .collect::<BTreeSet<_>>();
 
     //Go over all formulae and argument combos across sizes.
-    for t in t_subformulae {
+    for t in types {
         let (lhs, _) = g.type_children_or_insert(t).unwrap();
 
-        for formula_size in 0..size {
-            let arg_size = size - formula_size - 1;
+        for formula_size in 1..size {
+            let arg_size = size - formula_size;
             let mut formulae = generate(g, c, t, formula_size);
             //App(Lambda x f(x), y) is a possible beta reduction, so we don't do it.
             formulae.retain(|x| !matches!(g.exprs[x.0], LambdaExpr::Lambda(..)));
@@ -366,15 +363,17 @@ fn generate<T: Hash + Eq + LambdaLanguageOfThought>(
         return x.clone();
     }
 
-    let exprs = if size == 0 {
+    let exprs = if size == 1 {
         single_elements(g, c, typ)
-    } else {
+    } else if size >= 2 {
         let mut exprs = vec![];
         applications(g, c, typ, size, &mut exprs);
         if let Some(lhs_rhs) = g.type_children_or_insert(typ) {
             lambda_exprs(g, c, lhs_rhs, size, &mut exprs);
         }
         exprs
+    } else {
+        vec![]
     };
 
     g.memo.insert(arg_key, exprs.clone());
@@ -480,14 +479,15 @@ impl<T> Generator<'_, T> {
     ///Gets all expressions of type `t` up to `max_size`, if it has already been computed. Use
     ///[`Generator::enumerate_or_generate`] to actually generate expressions.
     #[must_use]
-    pub fn enumerate(&self, t: &LambdaType, max_size: usize) -> Option<Vec<Vec<ExprId>>> {
+    pub fn enumerate(&self, t: &LambdaType, max_size: usize) -> Option<Vec<ExprId>> {
         if max_size == 0 {
             return Some(vec![]);
         }
         let t = self.type_id(t)?;
         (1..=max_size)
-            .map(|size| self.memo.get(&(ContextId(0), t, size - 1)).cloned())
-            .collect()
+            .map(|size| self.memo.get(&(ContextId(0), t, size)).cloned())
+            .collect::<Option<Vec<_>>>()
+            .map(|x| x.into_iter().flatten().collect())
     }
 }
 
@@ -531,12 +531,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Generator<'src, T> {
 impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
     ///Gets all expressions of type `t` up to `max_size`.
     pub fn enumerate_or_generate(&mut self, t: LambdaType, max_size: usize) -> Vec<ExprId> {
-        if max_size == 0 {
-            return vec![];
-        }
         let t = self.type_id_or_insert(t);
         let mut v = vec![];
-        for size in (0..max_size).rev() {
+        for size in (1..=max_size).rev() {
             if let Some(exprs) = self.memo.get(&(ContextId(0), t, size)) {
                 v.extend(exprs.iter().rev().cloned());
             } else {
@@ -595,22 +592,24 @@ mod test {
         expressions.extend(Expr::basic_ops());
 
         let types = vec![
-            LambdaType::A,
-            LambdaType::E,
-            LambdaType::T,
-            LambdaType::at().clone(),
-            LambdaType::et().clone(),
-            LambdaType::from_string("<<a,t>,t>").unwrap(),
+            //(LambdaType::A, 45),
+            //(LambdaType::E, 8),
+            //(LambdaType::at().clone(), 176),
+            (LambdaType::et().clone(), 52),
+            // (LambdaType::from_string("<<a,t>,t>").unwrap(), 262),
+            // (LambdaType::T, 2068),
         ];
 
         let mut generator: Generator<Expr> = Generator::new(expressions.to_vec());
-        for ty in types {
+        for (ty, count) in types {
             println!("{ty}");
             //let mut pool_set = HashSet::new();
             //let mut reduced_pool_set = HashSet::new();
 
-            let size = 5;
-            for pool in generator.enumerate_or_generate(ty.clone(), size) {
+            let size = 6;
+            let pools = generator.enumerate_or_generate(ty.clone(), size);
+            //assert_eq!(pools.len(), count);
+            for pool in pools {
                 let expr = generator.to_rooted_lambda_pool(pool).unwrap();
                 println!("\t{expr}");
                 assert!(expr.is_reduced(), "{expr} is not fully reduced");
