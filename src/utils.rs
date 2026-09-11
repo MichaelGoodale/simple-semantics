@@ -187,6 +187,7 @@ impl<'a, T: LambdaLanguageOfThought + Clone> RootedLambdaPool<'a, T> {
         )
     }
 }
+
 #[cfg(test)]
 mod test {
     use super::{BeadError, ExpressionBeadInner};
