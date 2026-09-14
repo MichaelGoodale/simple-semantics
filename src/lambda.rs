@@ -251,55 +251,61 @@ pub struct RootedLambdaPool<'src, T: LambdaLanguageOfThought> {
     pub(crate) root: LambdaExprRef,
 }
 
+fn equal_expr<T: PartialEq + LambdaLanguageOfThought>(
+    a: &LambdaPool<'_, T>,
+    a_id: LambdaExprRef,
+    b: &LambdaPool<'_, T>,
+    b_id: LambdaExprRef,
+) -> bool {
+    let mut bfs = a.bfs_from(a_id).map(|(x, _)| a.get(x));
+    let mut o_bfs = b.bfs_from(b_id).map(|(x, _)| b.get(x));
+    loop {
+        let x = bfs.next();
+        let y = o_bfs.next();
+        match (x, y) {
+            (None, None) => return true,
+            (None, Some(_)) | (Some(_), None) => return false,
+            (Some(x), Some(y)) => match (x, y) {
+                (LambdaExpr::Lambda(_, a), LambdaExpr::Lambda(_, b)) if a != b => {
+                    return false;
+                }
+                (LambdaExpr::BoundVariable(id1, typ1), LambdaExpr::BoundVariable(id2, typ2))
+                    if id1 != id2 || typ1 != typ2 =>
+                {
+                    return false;
+                }
+                (LambdaExpr::FreeVariable(var1, typ1), LambdaExpr::FreeVariable(var2, typ2))
+                    if var1 != var2 || typ1 != typ2 =>
+                {
+                    return false;
+                }
+                (
+                    LambdaExpr::LanguageOfThoughtExpr(x, expr_type1),
+                    LambdaExpr::LanguageOfThoughtExpr(y, expr_type2),
+                ) if (x != y
+                    || !matches!(
+                        (expr_type1, expr_type2),
+                        (ExprType::NoVar, ExprType::NoVar)
+                            | (ExprType::BindVar(_), ExprType::BindVar(_))
+                            | (
+                                ExprType::BindVarTwoBodies(..),
+                                ExprType::BindVarTwoBodies(..)
+                            )
+                    )) =>
+                {
+                    return false;
+                }
+                //If they have different kinds, their discriminant is different.
+                (x, y) if discriminant(x) != discriminant(y) => return false,
+                _ => (),
+            },
+        }
+    }
+}
+
 impl<T: PartialEq + LambdaLanguageOfThought> PartialEq for RootedLambdaPool<'_, T> {
     fn eq(&self, other: &Self) -> bool {
-        let mut bfs = self.pool.bfs_from(self.root).map(|(x, _)| self.pool.get(x));
-        let mut o_bfs = other
-            .pool
-            .bfs_from(other.root)
-            .map(|(x, _)| other.pool.get(x));
-        loop {
-            let x = bfs.next();
-            let y = o_bfs.next();
-            match (x, y) {
-                (None, None) => return true,
-                (None, Some(_)) | (Some(_), None) => return false,
-                (Some(x), Some(y)) => match (x, y) {
-                    (LambdaExpr::Lambda(_, a), LambdaExpr::Lambda(_, b)) if a != b => {
-                        return false;
-                    }
-                    (
-                        LambdaExpr::BoundVariable(id1, typ1),
-                        LambdaExpr::BoundVariable(id2, typ2),
-                    ) if id1 != id2 || typ1 != typ2 => {
-                        return false;
-                    }
-                    (
-                        LambdaExpr::FreeVariable(var1, typ1),
-                        LambdaExpr::FreeVariable(var2, typ2),
-                    ) if var1 != var2 || typ1 != typ2 => return false,
-                    (
-                        LambdaExpr::LanguageOfThoughtExpr(x, expr_type1),
-                        LambdaExpr::LanguageOfThoughtExpr(y, expr_type2),
-                    ) if (x != y
-                        || !matches!(
-                            (expr_type1, expr_type2),
-                            (ExprType::NoVar, ExprType::NoVar)
-                                | (ExprType::BindVar(_), ExprType::BindVar(_))
-                                | (
-                                    ExprType::BindVarTwoBodies(..),
-                                    ExprType::BindVarTwoBodies(..)
-                                )
-                        )) =>
-                    {
-                        return false;
-                    }
-                    //If they have different kinds, their discriminant is different.
-                    (x, y) if discriminant(x) != discriminant(y) => return false,
-                    _ => (),
-                },
-            }
-        }
+        equal_expr(&self.pool, self.root, &other.pool, other.root)
     }
 }
 impl<T: PartialEq + LambdaLanguageOfThought> Eq for RootedLambdaPool<'_, T> {}
@@ -310,24 +316,33 @@ impl<T: LambdaLanguageOfThought + Ord> PartialOrd for RootedLambdaPool<'_, T> {
     }
 }
 
+fn cmp_pool<T: LambdaLanguageOfThought + Ord>(
+    a: &LambdaPool<T>,
+    a_id: LambdaExprRef,
+    b: &LambdaPool<'_, T>,
+    b_id: LambdaExprRef,
+) -> std::cmp::Ordering {
+    a.appless_len(a_id).cmp(&b.appless_len(b_id)).then_with(|| {
+        let mut stack: SmallVec<[_; 2]> = smallvec![(a_id, b_id)];
+        while let Some((alpha, beta)) = stack.pop() {
+            let alpha = a.get(alpha);
+            let beta = b.get(beta);
+            match alpha.cmp_expr(beta) {
+                Ordering::Equal => alpha
+                    .get_children()
+                    .zip(beta.get_children())
+                    .for_each(|x| stack.push(x)),
+                Ordering::Less => return Ordering::Less,
+                Ordering::Greater => return Ordering::Greater,
+            }
+        }
+        Ordering::Equal
+    })
+}
+
 impl<T: LambdaLanguageOfThought + Ord> Ord for RootedLambdaPool<'_, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.appless_len().cmp(&other.appless_len()).then_with(|| {
-            let mut stack: SmallVec<[_; 2]> = smallvec![(self.root, other.root)];
-            while let Some((alpha, beta)) = stack.pop() {
-                let alpha = self.get(alpha);
-                let beta = other.get(beta);
-                match alpha.cmp_expr(beta) {
-                    Ordering::Equal => alpha
-                        .get_children()
-                        .zip(beta.get_children())
-                        .for_each(|x| stack.push(x)),
-                    Ordering::Less => return Ordering::Less,
-                    Ordering::Greater => return Ordering::Greater,
-                }
-            }
-            Ordering::Equal
-        })
+        cmp_pool(&self.pool, self.root, &other.pool, other.root)
     }
 }
 
@@ -401,15 +416,23 @@ impl<T: LambdaLanguageOfThought + Hash> Hash for RootedLambdaPool<'_, T> {
     }
 }
 
+impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
+    ///The length of the expression, excluding the number of [`LambdaExpr::Application`].
+    ///Corresponds better to human intuitions about length.
+    #[must_use]
+    pub fn appless_len(&self, id: LambdaExprRef) -> usize {
+        self.bfs_from(id)
+            .filter(|(x, _)| !matches!(self.get(*x), LambdaExpr::Application { .. }))
+            .count()
+    }
+}
+
 impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     ///The length of the expression, excluding the number of [`LambdaExpr::Application`].
     ///Corresponds better to human intuitions about length.
     #[must_use]
     pub fn appless_len(&self) -> usize {
-        self.pool
-            .bfs_from(self.root)
-            .filter(|(x, _)| !matches!(self.get(*x), LambdaExpr::Application { .. }))
-            .count()
+        self.pool.appless_len(self.root)
     }
 
     ///Check if the expression is fully reduced or not.
