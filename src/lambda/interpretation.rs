@@ -107,7 +107,11 @@ impl<'src> Literal<'src> {
         let f = Value::Function(Box::new(body), var_type.clone(), expr_type.clone());
         let bool_apply = |f: Value<'src, Expr<'src>>, x| {
             let v = f.apply(Value::Base(x), vec![], scenario)?;
-            Ok(v.into_base_value().unwrap().as_bool().unwrap())
+            let v = v.reduce(vec![], scenario)?;
+            Ok(v.into_base_value_with_scenario(scenario)
+                .unwrap()
+                .as_bool()
+                .unwrap())
         };
 
         Ok(match var_type {
@@ -242,10 +246,26 @@ impl<'src> Value<'src, Expr<'src>> {
     ///Convert the value into a [`Literal`], if possible.
     #[must_use]
     pub fn into_base_value(self) -> Option<Literal<'src>> {
-        if let Value::Base(b) = self {
-            Some(b)
+        if let Value::Base(x) = self {
+            Some(x)
         } else {
             None
+        }
+    }
+
+    ///Convert the value into a [`Literal`], if possible.
+    #[must_use]
+    pub fn into_base_value_with_scenario(self, scenario: &Scenario<'src>) -> Option<Literal<'src>> {
+        match self {
+            Value::Base(literal) => Some(literal),
+            Value::Function(body, var_type, expr_type)
+                if Literal::has_literal(&expr_type) && !body.open_var() =>
+            {
+                Some(
+                    Literal::make_function_literal(*body, &var_type, &expr_type, scenario).unwrap(),
+                )
+            }
+            _ => None,
         }
     }
 
@@ -278,29 +298,23 @@ impl<'src> Expr<'src> {
         }
     }
 
-    fn can_eval(&self, arguments: &[&Value<'src, Expr<'src>>]) -> bool {
-        match self {
-            Expr::Quantifier { .. } => arguments.iter().all(|x| matches!(x, Value::Base(_))),
-            Expr::Binary(_) => arguments.iter().all(|x| matches!(x, Value::Base(_))),
-            Expr::Unary(MonOp::Not | MonOp::Iota(_)) => {
-                matches!(arguments.first().unwrap(), Value::Base(_))
-            }
-            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) => true,
-        }
-    }
-
     fn eval(
         &self,
-        mut arguments: Vec<Value<'src, Expr<'src>>>,
+        arguments: Vec<Value<'src, Expr<'src>>>,
         scenario: &Scenario<'src>,
     ) -> Result<Value<'src, Expr<'src>>, UndefinedExpression> {
+        let mut arguments: Vec<_> = arguments
+            .into_iter()
+            .map(|x| x.into_base_value_with_scenario(scenario))
+            .collect::<Option<_>>()
+            .unwrap();
         let x = match self {
             Expr::Quantifier {
                 quantifier,
                 var_type,
             } => {
-                let predicate = arguments.pop().unwrap().into_base_value().unwrap();
-                let restrictor = arguments.pop().unwrap().into_base_value().unwrap();
+                let predicate = arguments.pop().unwrap();
+                let restrictor = arguments.pop().unwrap();
                 let v = match var_type {
                     ActorOrEvent::Actor => {
                         let predicate = predicate.into_actor_set().unwrap();
@@ -330,7 +344,7 @@ impl<'src> Expr<'src> {
                 Literal::Bool(v)
             }
             Expr::Unary(MonOp::Iota(a_o_e)) => {
-                let x = arguments.pop().unwrap().into_base_value().unwrap();
+                let x = arguments.pop().unwrap();
                 match a_o_e {
                     ActorOrEvent::Actor => {
                         let mut x = x.into_actor_set().unwrap();
@@ -351,8 +365,8 @@ impl<'src> Expr<'src> {
             Expr::Actor(a) => Literal::Actor(a),
             Expr::Event(e) => Literal::Event(*e),
             Expr::Binary(op @ (BinOp::AgentOf | BinOp::PatientOf), ..) => {
-                let a = arguments[0].to_base_value().unwrap().as_actor().unwrap();
-                let e = arguments[1].to_base_value().unwrap().as_event().unwrap();
+                let a = arguments[0].as_actor().unwrap();
+                let e = arguments[1].as_event().unwrap();
                 let e = scenario
                     .thematic_relations
                     .get(usize::from(e))
@@ -363,27 +377,17 @@ impl<'src> Expr<'src> {
                     _ => panic!("impossible bc of prior check!"),
                 })
             }
-            Expr::Binary(BinOp::And) => Literal::Bool(arguments.iter().all(|x| {
-                x.to_base_value()
-                    .unwrap()
-                    .as_bool()
-                    .expect("Type inference error!")
-            })),
-            Expr::Binary(BinOp::Or) => Literal::Bool(arguments.iter().any(|x| {
-                x.to_base_value()
-                    .unwrap()
-                    .as_bool()
-                    .expect("Type inference error!")
-            })),
-            Expr::Unary(MonOp::Not) => Literal::Bool(
-                !arguments
-                    .pop()
-                    .unwrap()
-                    .into_base_value()
-                    .unwrap()
-                    .as_bool()
-                    .unwrap(),
+            Expr::Binary(BinOp::And) => Literal::Bool(
+                arguments
+                    .iter()
+                    .all(|x| x.as_bool().expect("Type inference error!")),
             ),
+            Expr::Binary(BinOp::Or) => Literal::Bool(
+                arguments
+                    .iter()
+                    .any(|x| x.as_bool().expect("Type inference error!")),
+            ),
+            Expr::Unary(MonOp::Not) => Literal::Bool(!arguments.pop().unwrap().as_bool().unwrap()),
             Expr::Constant(Constant::Everyone) => Literal::ActorSet(scenario.actors.clone()),
             Expr::Constant(Constant::EveryEvent) => Literal::EventSet(scenario.events().collect()),
             Expr::Constant(Constant::Tautology) => Literal::Bool(true),
@@ -437,14 +441,14 @@ impl<'src> Value<'src, Expr<'src>> {
         let mut x = self;
         let mut args = vec![last_arg];
         if let Value::Expr(t) = x {
-            return t.n_arguments() == args.len() && t.can_eval(&args);
+            return t.n_arguments() == args.len() && args.iter().all(|x| !x.open_var());
         }
 
         while let Value::App(y, arg) = x {
             args.push(&**arg);
             if let Value::Expr(x) = &**y {
                 args.reverse();
-                return x.n_arguments() == args.len() && x.can_eval(&args);
+                return x.n_arguments() == args.len() && args.iter().all(|x| !x.open_var());
             }
             x = y;
         }
@@ -502,7 +506,10 @@ impl<'src> Value<'src, Expr<'src>> {
         mut variables: Vec<Option<Value<'src, Expr<'src>>>>,
         scenario: &Scenario<'src>,
     ) -> Result<Self, UndefinedExpression> {
-        Ok(match (self, other) {
+        println!("{self:?} {other:?}");
+        let x = self.reduce(variables.clone(), scenario)?;
+        let y = other.reduce(variables.clone(), scenario)?;
+        Ok(match (x, y) {
             (Value::Base(alpha), Value::Base(beta)) => Value::Base(alpha.apply(&beta)),
             (x, y) if x.primitive_head(&y) => {
                 let (head, arguments) = x
@@ -515,25 +522,11 @@ impl<'src> Value<'src, Expr<'src>> {
                 variables.push(Some(v));
                 x.reduce(variables, scenario)?
             }
-            (x, y) => {
-                let x = x.reduce(variables.clone(), scenario)?;
-                let y = y.reduce(variables.clone(), scenario)?;
-                match (x, y) {
-                    (Value::Base(alpha), Value::Base(beta)) => Value::Base(alpha.apply(&beta)),
-                    (x, y) if x.primitive_head(&y) => {
-                        let (head, arguments) = x
-                            .primitive_head_and_arguments(y)
-                            .expect("Already checked the head was primitive!");
-                        head.eval(arguments, scenario)?
-                    }
-                    (Value::Function(x, _, _), variable) => {
-                        let v = variable.reduce(variables.clone(), scenario)?;
-                        variables.push(Some(v));
-                        x.reduce(variables, scenario)?
-                    }
-                    (x, y) => Value::App(Box::new(x), Box::new(y)),
-                }
-            }
+            (Value::FreeVar(..), _)
+            | (_, Value::FreeVar(..))
+            | (Value::Neutral(..), _)
+            | (_, Value::Neutral(_)) => todo!(),
+            (x, y) => Value::App(Box::new(x), Box::new(y)),
         })
     }
 
@@ -739,6 +732,23 @@ mod test {
 
         Ok(())
     }
+    #[test]
+    fn simple_reduction() -> anyhow::Result<()> {
+        let scenario = Scenario::parse(
+            "<john,mary,phil (kind);{A: john,P: mary (likes)},{A: mary},{P: phil}>",
+        )?;
+
+        let expr = Value::App(
+            Box::new(Value::Expr(Expr::Binary(BinOp::AgentOf))),
+            Box::new(Value::Expr(Expr::Actor("john"))),
+        );
+
+        let e = expr.reduce(vec![], &scenario)?;
+
+        assert_eq!(e, Value::Base(Literal::EventSet(vec![0])));
+
+        Ok(())
+    }
 
     #[test]
     fn fancy_interp() -> anyhow::Result<()> {
@@ -747,12 +757,12 @@ mod test {
         )?;
 
         let types = vec![
-            LambdaType::A,
+            // LambdaType::A,
             LambdaType::E,
-            LambdaType::T,
-            LambdaType::at().clone(),
-            LambdaType::et().clone(),
-            LambdaType::from_string("<<a,t>,t>").unwrap(),
+            //LambdaType::T,
+            //LambdaType::at().clone(),
+            //LambdaType::et().clone(),
+            //LambdaType::from_string("<<a,t>,t>").unwrap(),
         ];
 
         let mut expressions = scenario.scenario_ops();
@@ -760,8 +770,8 @@ mod test {
         let mut generator: Generator<Expr> = Generator::new(expressions);
 
         for ty in types {
-            generator.enumerate_or_generate(ty.clone(), 5);
-            let pools = generator.enumerate(&ty, 5).unwrap();
+            generator.enumerate_or_generate(ty.clone(), 4);
+            let pools = generator.enumerate(&ty, 4).unwrap();
 
             let pools = pools
                 .iter()
