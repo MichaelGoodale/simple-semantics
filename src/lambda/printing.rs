@@ -2,10 +2,11 @@ use std::fmt::{Debug, Display};
 
 use super::interpretation::Value;
 use ahash::HashMap;
+use itertools::Itertools;
 
 use crate::lambda::{
-    ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-    types::LambdaType,
+    ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
+    printing::AssociativityData::Var, types::LambdaType,
 };
 
 static VARIABLENAMES: [&str; 26] = [
@@ -90,7 +91,7 @@ impl<T: LambdaLanguageOfThought + Display + PartialEq> std::fmt::Display
     for RootedLambdaPool<'_, T>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (string, _) = self.string(self.root(), VarContext::default(), false);
+        let (string, _) = self.pool.string(self.root(), VarContext::default(), false);
         f.write_str(string.as_str())
     }
 }
@@ -111,8 +112,8 @@ pub(super) enum AssociativityData<'a, T> {
     Prefix,
 }
 
-impl<T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'_, T> {
-    fn string<'a>(
+impl<T: LambdaLanguageOfThought + Display + PartialEq> LambdaPool<'_, T> {
+    pub(crate) fn string<'a>(
         &'a self,
         expr: LambdaExprRef,
         c: VarContext,
@@ -193,7 +194,7 @@ impl<T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'_, T> {
             LambdaExpr::FreeVariable(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Var),
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => (
                 format!("{x}"),
-                if x.commutative() & x.infix() {
+                if x.commutative() && x.infix() {
                     AssociativityData::Infix(x, InfixPosition::Op)
                 } else if x.unary_associative() {
                     AssociativityData::Prefix
@@ -223,95 +224,74 @@ impl<T: LambdaLanguageOfThought + Display + PartialEq> RootedLambdaPool<'_, T> {
     }
 }
 
-impl<T: LambdaLanguageOfThought + Display + PartialEq> Display for Value<'_, T> {
+impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Display for Value<'_, '_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (string, _) = self.string(VarContext::default(), false);
         f.write_str(string.as_str())
     }
 }
 
-impl<T: LambdaLanguageOfThought + Display + PartialEq> Value<'_, T> {
+impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Value<'_, '_, T> {
     fn string<'a>(
         &'a self,
         c: VarContext,
         parent_is_app: bool,
     ) -> (String, AssociativityData<'a, T>) {
         match self {
-            Value::Function(body, lambda_type, _) => {
-                let (c, var) = c.inc_depth(lambda_type);
-                (
-                    format!("lambda {} {} {}", lambda_type, var, body.string(c, false).0),
-                    AssociativityData::Lambda,
-                )
-            }
-            Value::App(subformula, argument) => {
-                let (sub, associative) = subformula.string(c.clone(), true);
-                let (mut arg, arg_asso) = argument.string(c, false); // false
-
-                if let AssociativityData::Infix(t1, _) = arg_asso
-                    && let AssociativityData::Infix(t2, _) = associative
-                    && t1 != t2
-                {
-                    arg = format!("({arg})");
-                }
-
-                let mut s = match associative {
-                    AssociativityData::Infix(x, InfixPosition::Op) if parent_is_app => {
-                        return (
-                            format!("{arg} {sub}"),
-                            AssociativityData::Infix(x, InfixPosition::DoneLeftOnly),
-                        );
-                    }
-                    AssociativityData::Infix(x, InfixPosition::DoneLeftOnly) => {
-                        return (
-                            format!("{sub} {arg}"),
-                            AssociativityData::Infix(x, InfixPosition::Done),
-                        );
-                    }
-                    AssociativityData::Lambda
-                    | AssociativityData::Infix(_, InfixPosition::Done) => {
-                        format!("({sub})({arg}")
-                    }
-                    AssociativityData::Prefix => {
-                        return match arg_asso {
-                            AssociativityData::App
-                            | AssociativityData::Var
-                            | AssociativityData::Prefix => {
-                                (format!("{sub}{arg}"), AssociativityData::Var)
-                            }
-                            AssociativityData::Lambda | AssociativityData::Infix(..) => {
-                                (format!("{sub}({arg})"), AssociativityData::Var)
-                            }
-                        };
-                    }
-                    AssociativityData::Var | AssociativityData::Infix(_, InfixPosition::Op) => {
-                        format!("{sub}({arg}")
-                    }
-                    AssociativityData::App => format!("{sub}{arg}"),
-                };
-
-                if parent_is_app {
-                    s.push_str(", ");
-                } else {
-                    s.push(')');
-                }
-
-                (s, AssociativityData::App)
-            }
-            Value::Var(bvar) => (c.lambda_var(*bvar), AssociativityData::Var),
-            Value::FreeVar(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Var),
-            Value::Expr(x) => (
-                format!("{x}"),
-                if x.commutative() & x.infix() {
-                    AssociativityData::Infix(x, InfixPosition::Op)
-                } else if x.unary_associative() {
-                    AssociativityData::Prefix
-                } else {
-                    AssociativityData::Var
-                },
-            ),
             Value::Base(literal) => (literal.to_string(), AssociativityData::Var),
-            Value::Neutral(x) => x.string(c, parent_is_app),
+            Value::Neutral(x) => todo!(),
+            Value::Closure {
+                pool,
+                f,
+                env,
+                arg_type,
+            } => {
+                if env.is_empty() {
+                    let (c, var) = VarContext::default().inc_depth(arg_type);
+                    let body = pool.string(*f, c, parent_is_app).0;
+                    (
+                        format!("lambda {arg_type} {var} {body}"),
+                        AssociativityData::Lambda,
+                    )
+                } else {
+                    let mut this_c = VarContext::default();
+                    let types = env.iter().map(|x| x.typ()).collect::<Vec<_>>();
+                    let mut ids = vec![];
+                    for e in &types {
+                        let (new_c, x) = this_c.inc_depth(e);
+                        this_c = new_c;
+                        ids.push(x);
+                    }
+                    let (this_c, var) = this_c.inc_depth(arg_type);
+
+                    let closure = pool.string(*f, this_c, parent_is_app).0;
+                    let mapping = env
+                        .iter()
+                        .zip(ids)
+                        .map(|(x, id)| format!("{id} = {x}"))
+                        .join(",");
+
+                    (
+                        format!("(lambda {arg_type} {var} {closure} where {})", mapping),
+                        AssociativityData::Var,
+                    )
+                }
+            }
+            Value::Primitive { expr, args } => {
+                if args.is_empty() {
+                    (expr.to_string(), AssociativityData::Var)
+                } else {
+                    (
+                        format!(
+                            "{expr}({})",
+                            args.iter()
+                                .map(|x| x.string(c.clone(), parent_is_app).0)
+                                .join(",")
+                        ),
+                        AssociativityData::Var,
+                    )
+                }
+            }
         }
     }
 }
