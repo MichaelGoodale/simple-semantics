@@ -237,62 +237,7 @@ impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Value<'_, '_, T> 
         c: VarContext,
         parent_is_app: bool,
     ) -> (String, AssociativityData<'a, T>) {
-        match self {
-            Value::Base(literal) => (literal.to_string(), AssociativityData::Var),
-            Value::Neutral(x) => todo!(),
-            Value::Closure {
-                pool,
-                f,
-                env,
-                arg_type,
-            } => {
-                if env.is_empty() {
-                    let (c, var) = VarContext::default().inc_depth(arg_type);
-                    let body = pool.string(*f, c, parent_is_app).0;
-                    (
-                        format!("lambda {arg_type} {var} {body}"),
-                        AssociativityData::Lambda,
-                    )
-                } else {
-                    let mut this_c = VarContext::default();
-                    let types = env.iter().map(|x| x.typ()).collect::<Vec<_>>();
-                    let mut ids = vec![];
-                    for e in &types {
-                        let (new_c, x) = this_c.inc_depth(e);
-                        this_c = new_c;
-                        ids.push(x);
-                    }
-                    let (this_c, var) = this_c.inc_depth(arg_type);
-
-                    let closure = pool.string(*f, this_c, parent_is_app).0;
-                    let mapping = env
-                        .iter()
-                        .zip(ids)
-                        .map(|(x, id)| format!("{id} = {x}"))
-                        .join(",");
-
-                    (
-                        format!("(lambda {arg_type} {var} {closure} where {})", mapping),
-                        AssociativityData::Var,
-                    )
-                }
-            }
-            Value::Primitive { expr, args } => {
-                if args.is_empty() {
-                    (expr.to_string(), AssociativityData::Var)
-                } else {
-                    (
-                        format!(
-                            "{expr}({})",
-                            args.iter()
-                                .map(|x| x.string(c.clone(), parent_is_app).0)
-                                .join(",")
-                        ),
-                        AssociativityData::Var,
-                    )
-                }
-            }
-        }
+        todo!()
     }
 }
 

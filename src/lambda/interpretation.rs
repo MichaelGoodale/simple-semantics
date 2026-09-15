@@ -1,10 +1,13 @@
-use std::{borrow::Cow, fmt::Display, iter::repeat_n};
+use std::{collections::BTreeMap, env::var, fmt::Display, os::unix::raw::uid_t};
 
 use crate::{
     Actor, Entity, Event, Scenario,
     lambda::{
-        Bvar, ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
-        RootedLambdaPool, equal_expr, types::LambdaType,
+        Bvar,
+        EvaluationError::{Stuck, UndefinedExpression},
+        ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
+        RootedLambdaPool, equal_expr,
+        types::LambdaType,
     },
     language::{
         ActorOrEvent::{self},
@@ -12,9 +15,8 @@ use crate::{
         Expr::{self},
         MonOp, Quantifier,
     },
-    scenario,
 };
-use chumsky::container::Seq;
+use chumsky::{container::Seq, util::Maybe::Val};
 use itertools::{Either, Itertools};
 use thiserror::Error;
 
@@ -160,21 +162,21 @@ impl<'src> Literal<'src> {
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-#[error("This expression cannot be evaluated because it returns an undefined value")]
-///An error resulting from evaluating an expression that returns undefined.
-pub struct UndefinedExpression;
+///An error resulting from evaluating an expression that returns undefined, or if an evaluation
+///can't be further reduced.
+pub enum EvaluationError {
+    #[error("This expression cannot be evaluated because it returns an undefined value")]
+    UndefinedExpression,
+    #[error("This expression cannot be evaluated further because there is something undefined")]
+    Stuck,
+}
 
 ///A value resulting from evaluating an expression.
 #[derive(Debug, Clone)]
 pub enum Value<'src, 'pool, T: LambdaLanguageOfThought + Clone> {
     ///A [`Literal`]
     Base(Literal<'src>),
-    Closure {
-        pool: &'pool LambdaPool<'src, T>,
-        arg_type: &'pool LambdaType,
-        f: LambdaExprRef,
-        env: Vec<Value<'src, 'pool, T>>,
-    },
+    Function(Box<Value<'src, 'pool, T>>, &'pool LambdaType, usize),
     Neutral(Neutral<'src, 'pool, T>),
     Primitive {
         expr: T,
@@ -186,7 +188,13 @@ pub enum Value<'src, 'pool, T: LambdaLanguageOfThought + Clone> {
 pub enum Neutral<'src, 'pool, T: LambdaLanguageOfThought + Clone> {
     FreeVar(FreeVar<'src>),
     BoundVar(Bvar, &'pool LambdaType),
-    App(Box<Neutral<'src, 'pool, T>>, Box<Value<'src, 'pool, T>>),
+    AppBoth(Box<Neutral<'src, 'pool, T>>, Box<Neutral<'src, 'pool, T>>),
+    AppHead(Box<Neutral<'src, 'pool, T>>, Box<Value<'src, 'pool, T>>),
+    AppArg(Box<Value<'src, 'pool, T>>, Box<Neutral<'src, 'pool, T>>),
+    Primitive {
+        expr: T,
+        args: Vec<Value<'src, 'pool, T>>,
+    },
 }
 
 impl<T> PartialEq for Neutral<'_, '_, T>
@@ -196,7 +204,20 @@ where
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::FreeVar(x), Self::FreeVar(y)) => x == y,
-            (Self::App(x1, x2), Self::App(y1, y2)) => x1 == y1 && x2 == y2,
+            (Self::AppBoth(x1, x2), Self::AppBoth(y1, y2)) => x1 == y1 && x2 == y2,
+            (Self::AppHead(x1, x2), Self::AppHead(y1, y2)) => x1 == y1 && x2 == y2,
+            (Self::AppArg(x1, x2), Self::AppArg(y1, y2)) => x1 == y1 && x2 == y2,
+            (Self::BoundVar(x1, x2), Self::BoundVar(y1, y2)) => x1 == y1 && x2 == y2,
+            (
+                Self::Primitive {
+                    expr: l_expr,
+                    args: l_args,
+                },
+                Self::Primitive {
+                    expr: r_expr,
+                    args: r_args,
+                },
+            ) => l_expr == r_expr && l_args == r_args,
             _ => false,
         }
     }
@@ -211,20 +232,9 @@ where
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Base(x), Self::Base(y)) => x == y,
-            (
-                Self::Closure {
-                    pool: l_pool,
-                    arg_type: l_type,
-                    f: l_f,
-                    env: l_env,
-                },
-                Self::Closure {
-                    pool: r_pool,
-                    arg_type: r_type,
-                    f: r_f,
-                    env: r_env,
-                },
-            ) => l_type == r_type && equal_expr(l_pool, *l_f, r_pool, *r_f) && l_env == r_env,
+            (Self::Function(x, x_t, x_d), Self::Function(y, y_t, y_d)) => {
+                x_t == y_t && x == y && x_d == y_d
+            }
             (Self::Neutral(x), Self::Neutral(y)) => x == y,
             (
                 Self::Primitive {
@@ -250,12 +260,9 @@ where
     pub fn typ(&self) -> LambdaType {
         match self {
             Value::Base(literal) => literal.typ().clone(),
-            Value::Closure {
-                pool, f, arg_type, ..
-            } => LambdaType::Composition(
-                Box::new((*arg_type).clone()),
-                Box::new(pool.get_type(*f).unwrap()),
-            ),
+            Value::Function(body, arg_type, _) => {
+                LambdaType::Composition(Box::new((*arg_type).clone()), Box::new(body.typ()))
+            }
             Value::Neutral(n) => n.typ().clone(),
             Value::Primitive { expr, args } => {
                 let mut t = expr.typ();
@@ -273,11 +280,20 @@ impl<'src, T> Neutral<'src, '_, T>
 where
     T: LambdaLanguageOfThought + Clone,
 {
-    pub fn typ(&self) -> &LambdaType {
+    pub fn typ(&self) -> LambdaType {
         match self {
-            Neutral::FreeVar(free_var) => todo!(),
-            Neutral::BoundVar(_, t) => *t,
-            Neutral::App(x, y) => x.typ().split().unwrap().1,
+            Neutral::FreeVar(_) => todo!(),
+            Neutral::BoundVar(_, t) => (*t).clone(),
+            Neutral::AppBoth(x, _) => x.typ().split().unwrap().1.clone(),
+            Neutral::AppHead(x, _) => x.typ().split().unwrap().1.clone(),
+            Neutral::AppArg(x, _) => x.typ().split().unwrap().1.clone(),
+            Neutral::Primitive { expr, args } => {
+                let mut t = expr.typ();
+                for _ in 0..args.len() {
+                    t = t.rhs().unwrap();
+                }
+                t.clone()
+            }
         }
     }
 }
@@ -304,16 +320,16 @@ impl<'src> Value<'src, '_, Expr<'src>> {
     pub fn into_base_value_with_scenario(
         self,
         scenario: &Scenario<'src>,
-    ) -> Result<Option<Literal<'src>>, UndefinedExpression> {
+    ) -> Result<Option<Literal<'src>>, EvaluationError> {
         Ok(match self {
             Value::Base(literal) => Some(literal),
-            func @ Value::Closure {
-                pool, f, arg_type, ..
-            } => {
+            Value::Function(body, arg_type, d) => {
                 // we can only make <e,t> <a,t> or <t,t> into base values.
-                if arg_type.is_function() || pool.get_type(f).unwrap() != LambdaType::T {
+                if arg_type.is_function() || body.typ() != LambdaType::T {
                     return Ok(None);
                 }
+
+                let func = Value::Function(body, arg_type, d);
 
                 match arg_type {
                     LambdaType::A => {
@@ -326,13 +342,17 @@ impl<'src> Value<'src, '_, Expr<'src>> {
                         {
                             let v = Value::Base(Literal::Actor(a));
                             let v = func.apply(v, scenario)?;
-                            if let Value::Base(Literal::Bool(b)) = v {
-                                if b {
-                                    actor_set.push(a);
+                            match v {
+                                Value::Base(Literal::Bool(b)) => {
+                                    if b {
+                                        actor_set.push(a);
+                                    }
                                 }
-                            } else {
-                                return Ok(None);
-                            };
+                                Value::Neutral(_) => {
+                                    return Err(EvaluationError::Stuck);
+                                }
+                                _ => todo!("Don't know how to handle {v:?} result"),
+                            }
                         }
                         Some(Literal::ActorSet(actor_set))
                     }
@@ -344,28 +364,40 @@ impl<'src> Value<'src, '_, Expr<'src>> {
                             let e = u8::try_from(e).unwrap();
                             let v = Value::Base(Literal::Event(e));
                             let v = func.apply(v, scenario)?;
-                            if let Value::Base(Literal::Bool(b)) = v {
-                                if b {
-                                    event_set.push(e);
+                            match v {
+                                Value::Base(Literal::Bool(b)) => {
+                                    if b {
+                                        event_set.push(e);
+                                    }
                                 }
-                            } else {
-                                return Ok(None);
-                            };
+                                Value::Neutral(_) => {
+                                    return Err(EvaluationError::Stuck);
+                                }
+                                _ => todo!("Don't know how to handle {v:?} result"),
+                            }
                         }
                         Some(Literal::EventSet(event_set))
                     }
                     LambdaType::T => {
-                        let Value::Base(Literal::Bool(on_false)) = func
+                        let on_false = match func
                             .clone()
                             .apply(Value::Base(Literal::Bool(false)), scenario)?
-                        else {
-                            return Ok(None);
+                        {
+                            Value::Base(Literal::Bool(x)) => x,
+                            Value::Neutral(_) => {
+                                return Err(EvaluationError::Stuck);
+                            }
+                            _ => todo!(),
                         };
-                        let Value::Base(Literal::Bool(on_true)) =
-                            func.apply(Value::Base(Literal::Bool(true)), scenario)?
-                        else {
-                            return Ok(None);
-                        };
+
+                        let on_true =
+                            match func.apply(Value::Base(Literal::Bool(true)), scenario)? {
+                                Value::Base(Literal::Bool(x)) => x,
+                                Value::Neutral(_) => {
+                                    return Err(EvaluationError::Stuck);
+                                }
+                                _ => todo!(),
+                            };
 
                         Some(Literal::TruthTable { on_false, on_true })
                     }
@@ -373,12 +405,11 @@ impl<'src> Value<'src, '_, Expr<'src>> {
                                                          //check
                 }
             }
-            Value::Neutral(neutral) => todo!(),
+            Value::Neutral(neutral) => return Err(Stuck),
             Value::Primitive { expr, args } => todo!(),
         })
     }
 
-    #[expect(dead_code)]
     fn is_neutral(&self) -> bool {
         matches!(&self, Value::Neutral(_))
     }
@@ -411,11 +442,11 @@ impl<'src> Expr<'src> {
         &self,
         arguments: Vec<Value<'src, 'pool, Expr<'src>>>,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, UndefinedExpression> {
-        let mut arguments: Vec<_> = arguments
+    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+        let mut arguments = arguments
             .into_iter()
             .map(|x| x.into_base_value_with_scenario(scenario))
-            .collect::<Result<Option<_>, _>>()?
+            .collect::<Result<Option<Vec<_>>, _>>()?
             .unwrap();
         let x = match self {
             Expr::Quantifier {
@@ -458,14 +489,14 @@ impl<'src> Expr<'src> {
                     ActorOrEvent::Actor => {
                         let mut x = x.into_actor_set().unwrap();
                         if x.len() != 1 {
-                            return Err(UndefinedExpression);
+                            return Err(EvaluationError::UndefinedExpression);
                         }
                         Literal::Actor(x.pop().unwrap())
                     }
                     ActorOrEvent::Event => {
                         let mut x = x.into_event_set().unwrap();
                         if x.len() != 1 {
-                            return Err(UndefinedExpression);
+                            return Err(EvaluationError::UndefinedExpression);
                         }
                         Literal::Event(x.pop().unwrap())
                     }
@@ -479,7 +510,7 @@ impl<'src> Expr<'src> {
                 let e = scenario
                     .thematic_relations
                     .get(usize::from(e))
-                    .ok_or(UndefinedExpression)?;
+                    .ok_or(EvaluationError::UndefinedExpression)?;
                 Literal::Bool(match op {
                     BinOp::AgentOf => e.agent.is_some_and(|x| x == a),
                     BinOp::PatientOf => e.patient.is_some_and(|x| x == a),
@@ -502,7 +533,10 @@ impl<'src> Expr<'src> {
             Expr::Constant(Constant::Tautology) => Literal::Bool(true),
             Expr::Constant(Constant::Contradiction) => Literal::Bool(false),
             Expr::Constant(Constant::Property(p, a_or_e)) => {
-                let x = scenario.properties.get(p).ok_or(UndefinedExpression)?;
+                let x = scenario
+                    .properties
+                    .get(p)
+                    .ok_or(EvaluationError::UndefinedExpression)?;
                 match a_or_e {
                     ActorOrEvent::Actor => Literal::ActorSet(
                         x.iter()
@@ -538,30 +572,41 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
         self,
         other: Self,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, UndefinedExpression> {
+    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
         match self {
             Value::Base(f) => match other {
                 Value::Base(a) => Ok(Value::Base(f.apply(&a))),
-                Value::Closure {
-                    pool,
-                    arg_type,
-                    f,
-                    env,
-                } => todo!(),
-                Value::Neutral(neutral) => todo!(),
-                Value::Primitive { expr, args } => todo!(),
+                Value::Neutral(x) => Ok(Value::Neutral(Neutral::AppArg(
+                    Box::new(Value::Base(f)),
+                    Box::new(x),
+                ))),
+                _ => todo!(),
             },
-            Value::Closure {
-                pool, f, mut env, ..
-            } => {
-                env.push(other);
-                pool.eval(f, env, scenario)
+            Value::Function(head, _, d) => {
+                if let Value::Neutral(arg) = other {
+                    Ok(Value::Neutral(Neutral::AppArg(head, Box::new(arg))))
+                } else {
+                    head.eval(BTreeMap::from([(d, other)]), scenario)
+                }
             }
-            Value::Neutral(neutral) => todo!(),
+            Value::Neutral(Neutral::Primitive { expr, mut args }) => {
+                args.push(other);
+                Ok(Value::Neutral(Neutral::Primitive { expr, args }))
+            }
+            Value::Neutral(head) => Ok(Value::Neutral(match other {
+                Value::Neutral(arg) => Neutral::AppBoth(Box::new(head), Box::new(arg)),
+                arg @ (Value::Primitive { .. } | Value::Base(_) | Value::Function(..)) => {
+                    Neutral::AppHead(Box::new(head), Box::new(arg))
+                }
+            })),
             Value::Primitive { expr, mut args } => {
                 args.push(other);
                 if expr.n_arguments() == args.len() {
-                    expr.eval(args, scenario)
+                    match expr.eval(args.clone(), scenario) {
+                        Ok(x) => Ok(x),
+                        Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive { expr, args })),
+                        Err(UndefinedExpression) => Err(UndefinedExpression),
+                    }
                 } else {
                     Ok(Value::Primitive { expr, args })
                 }
@@ -569,6 +614,7 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
         }
     }
 
+    /*
     fn reify_inner(
         self,
         scenario: &Scenario<'src>,
@@ -629,7 +675,7 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
                 }
             }
         }
-    }
+    }*/
 }
 
 impl<'src> Literal<'src> {
@@ -660,8 +706,89 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     pub fn interp<'pool>(
         &'pool self,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, UndefinedExpression> {
+    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
         self.pool.eval(self.root, vec![], scenario)
+    }
+}
+
+impl<'src, 'pool> Neutral<'src, 'pool, Expr<'src>> {
+    fn eval(
+        self,
+        mut variables: BTreeMap<usize, Value<'src, 'pool, Expr<'src>>>,
+        scenario: &Scenario<'src>,
+    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+        match self {
+            Neutral::FreeVar(free_var) => todo!(),
+            Neutral::BoundVar(b, lambda_type) => {
+                if let Some(x) = variables.remove(&b) {
+                    Ok(x)
+                } else {
+                    Ok(Value::Neutral(Neutral::BoundVar(b, lambda_type)))
+                }
+            }
+            Neutral::AppBoth(head, arg) => {
+                let head = head.eval(variables.clone(), scenario)?;
+                let arg = arg.eval(variables, scenario)?;
+                head.apply(arg, scenario)
+            }
+            Neutral::AppHead(head, arg) => {
+                let head = head.eval(variables, scenario)?;
+                head.apply(*arg, scenario)
+            }
+            Neutral::AppArg(head, arg) => {
+                let arg = arg.eval(variables, scenario)?;
+                head.apply(arg, scenario)
+            }
+            Neutral::Primitive { expr, args } => {
+                let args: Vec<_> = args
+                    .into_iter()
+                    .map(|x| x.eval(variables.clone(), scenario))
+                    .collect::<Result<_, _>>()?;
+
+                if expr.n_arguments() == args.len() {
+                    match expr.eval(args.clone(), scenario) {
+                        Ok(x) => Ok(x),
+                        Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive { expr, args })),
+                        Err(UndefinedExpression) => Err(UndefinedExpression),
+                    }
+                } else {
+                    todo!()
+                }
+            }
+        }
+    }
+}
+
+impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
+    fn eval(
+        self,
+        mut variables: BTreeMap<usize, Value<'src, 'pool, Expr<'src>>>,
+        scenario: &Scenario<'src>,
+    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+        match self {
+            Value::Function(body, arg_type, d) => {
+                variables.insert(d, Value::Neutral(Neutral::BoundVar(d, arg_type)));
+                let body = body.eval(variables, scenario)?;
+                Ok(Value::Function(Box::new(body), arg_type, d))
+            }
+            Value::Primitive { expr, args } => {
+                let arguments = args
+                    .into_iter()
+                    .map(|x| Value::eval(x, variables.clone(), scenario))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                if arguments.iter().all(|x| !x.is_neutral()) {
+                    expr.eval(arguments, scenario)
+                } else {
+                    Ok(Value::Primitive {
+                        expr,
+                        args: arguments,
+                    })
+                }
+            }
+            Value::Base(literal) => Ok(Value::Base(literal)),
+            Value::Neutral(x) => x.eval(variables, scenario),
+        }
     }
 }
 
@@ -669,16 +796,16 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
     fn eval<'pool>(
         &'pool self,
         index: LambdaExprRef,
-        variables: Vec<Value<'src, 'pool, Expr<'src>>>,
+        mut variables: Vec<Value<'src, 'pool, Expr<'src>>>,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, UndefinedExpression> {
+    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
         match self.get(index) {
-            LambdaExpr::Lambda(body, arg_type) => Ok(Value::Closure {
-                pool: self,
-                arg_type,
-                f: *body,
-                env: variables.clone(),
-            }),
+            LambdaExpr::Lambda(body, arg_type) => {
+                let d = variables.len();
+                variables.push(Value::Neutral(Neutral::BoundVar(variables.len(), arg_type)));
+                let body = self.eval(*body, variables, scenario)?;
+                Ok(Value::Function(Box::new(body), arg_type, d))
+            }
             LambdaExpr::BoundVariable(x, _) => Ok(variables[variables.len() - 1 - *x].clone()),
             LambdaExpr::FreeVariable(..) => {
                 todo!("No support for free variables yet.")
@@ -801,6 +928,11 @@ mod test {
 
             let phi = RootedLambdaPool::parse(phi)?;
             let calculated_value = phi.interp(&scenario)?;
+            assert!(
+                !matches!(calculated_value, Value::Neutral(_)),
+                "{calculated_value:#?}"
+            );
+            /*
             if calculated_value.to_string() != val {
                 println!("❌");
                 assert_eq!(
@@ -808,9 +940,9 @@ mod test {
                     val,
                     "{calculated_value} != {val} \n ({calculated_value:#?}"
                 );
-            }
+            }*/
 
-            println!("✅");
+            println!("✅ {calculated_value:?}");
         }
 
         let phi = RootedLambdaPool::parse("lambda a x pa_kind(x)")?;

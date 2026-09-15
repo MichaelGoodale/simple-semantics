@@ -232,7 +232,7 @@ pub use lambda_implementation::ConjoiningError;
 mod tests {
     use crate::{
         Entity, Scenario, ScenarioDataset,
-        lambda::{Literal, RootedLambdaPool, UndefinedExpression},
+        lambda::{EvaluationError, Literal, RootedLambdaPool},
     };
     use std::collections::BTreeMap;
 
@@ -463,7 +463,7 @@ mod tests {
             }],
             properties: vec![("0", vec![Entity::Event(0)])].into_iter().collect(),
         };
-        assert_eq!(expr.interp(&b), Err(UndefinedExpression));
+        assert_eq!(expr.interp(&b), Err(EvaluationError::UndefinedExpression));
         expr.interp(&a)?;
 
         Ok(())
@@ -533,8 +533,14 @@ mod tests {
             "every_e(x, pe_dance(x), AgentOf(iota(y, pa_man(y)), x))"
         );
         assert!(bool::try_from(a.interp(scenario)?)?);
-        assert_eq!(b.interp(scenario), Err(UndefinedExpression));
-        assert_eq!(c.interp(scenario), Err(UndefinedExpression));
+        assert_eq!(
+            b.interp(scenario),
+            Err(EvaluationError::UndefinedExpression)
+        );
+        assert_eq!(
+            c.interp(scenario),
+            Err(EvaluationError::UndefinedExpression)
+        );
         assert_eq!(
             d.interp(scenario).unwrap().into_base_value().unwrap(),
             Literal::Event(0)
