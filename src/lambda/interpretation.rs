@@ -405,8 +405,7 @@ impl<'src> Value<'src, '_, Expr<'src>> {
                                                          //check
                 }
             }
-            Value::Neutral(neutral) => return Err(Stuck),
-            Value::Primitive { expr, args } => todo!(),
+            Value::Neutral(..) | Value::Primitive { .. } => return Err(Stuck),
         })
     }
 
@@ -802,7 +801,7 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
         match self.get(index) {
             LambdaExpr::Lambda(body, arg_type) => {
                 let d = variables.len();
-                variables.push(Value::Neutral(Neutral::BoundVar(variables.len(), arg_type)));
+                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type)));
                 let body = self.eval(*body, variables, scenario)?;
                 Ok(Value::Function(Box::new(body), arg_type, d))
             }
@@ -830,40 +829,55 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
             }
 
             LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::BindVarTwoBodies(x, y)) => {
-                todo!()
-                /*
-                variables.push(None);
+                let d = variables.len();
+                let arg_type = expr
+                    .var_type()
+                    .expect("Expression is syncategorematic without haveing var_type");
+
+                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type)));
                 let x = Value::Function(
                     Box::new(self.eval(*x, variables.clone(), scenario)?),
-                    expr.var_type().unwrap().clone(),
-                    expr.typ().clone().lhs().unwrap().clone(),
+                    arg_type,
+                    d,
                 );
                 let y = Value::Function(
                     Box::new(self.eval(*y, variables.clone(), scenario)?),
-                    expr.var_type().unwrap().clone(),
-                    expr.typ().clone().lhs().unwrap().clone(),
+                    arg_type,
+                    d,
                 );
-                variables.pop();
 
-                Ok(Value::App(
-                    Box::new(Value::App(Box::new(Value::Expr(*expr)), Box::new(x))),
-                    Box::new(y),
-                )
-                .reduce(variables, scenario)?)*/
+                let arguments = vec![x, y];
+                match expr.eval(arguments.clone(), scenario) {
+                    Ok(x) => Ok(x),
+                    Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive {
+                        expr: *expr,
+                        args: arguments,
+                    })),
+                    Err(UndefinedExpression) => Err(UndefinedExpression),
+                }
             }
             LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::BindVar(x)) => {
-                todo!();
-                /*
-                variables.push(None);
+                let d = variables.len();
+                let arg_type = expr
+                    .var_type()
+                    .expect("Expression is syncategorematic without haveing var_type");
+
+                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type)));
                 let x = Value::Function(
                     Box::new(self.eval(*x, variables.clone(), scenario)?),
-                    expr.var_type().unwrap().clone(),
-                    expr.typ().clone().lhs().unwrap().clone(),
+                    arg_type,
+                    d,
                 );
-                variables.pop();
 
-                Ok(Value::App(Box::new(Value::Expr(*expr)), Box::new(x))
-                    .reduce(variables, scenario)?)*/
+                let arguments = vec![x];
+                match expr.eval(arguments.clone(), scenario) {
+                    Ok(x) => Ok(x),
+                    Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive {
+                        expr: *expr,
+                        args: arguments,
+                    })),
+                    Err(UndefinedExpression) => Err(UndefinedExpression),
+                }
             }
         }
     }
@@ -1001,7 +1015,7 @@ mod test {
 
             for phi in pools {
                 print!("[{phi}]");
-                let calculated_value = phi.interp(&scenario).map(|x| x.to_string());
+                let calculated_value = phi.interp(&scenario);
                 println!("\t{calculated_value:?}");
             }
         }
