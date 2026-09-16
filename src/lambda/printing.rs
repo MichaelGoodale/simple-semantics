@@ -2,12 +2,8 @@ use std::fmt::{Debug, Display};
 
 use super::interpretation::Value;
 use ahash::HashMap;
-use itertools::Itertools;
 
-use crate::lambda::{
-    ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-    interpretation::Neutral, serializations::PrintingAST, types::LambdaType,
-};
+use crate::lambda::{LambdaLanguageOfThought, RootedLambdaPool, types::LambdaType};
 
 static VARIABLENAMES: [&str; 26] = [
     "x", "y", "z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
@@ -101,105 +97,9 @@ impl<T: LambdaLanguageOfThought + Display + Clone + PartialEq> std::fmt::Display
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(super) enum InfixPosition {
-    Op,
-    DoneLeftOnly,
-    Done,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(super) enum AssociativityData<'a, T> {
-    Lambda,
-    Var,
-    App,
-    Infix(&'a T, InfixPosition),
-    Prefix,
-}
-
 impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Display for Value<'_, '_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.tokens(VarContext::default()))
-    }
-}
-
-impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Value<'_, '_, T> {
-    fn string<'a>(
-        &'a self,
-        c: VarContext,
-        parent_is_app: bool,
-    ) -> (String, AssociativityData<'a, T>) {
-        match self {
-            Value::Base(literal) => (literal.to_string(), AssociativityData::Var),
-            Value::Function(value, lambda_type, _) => {
-                let (c, x) = c.inc_depth(lambda_type);
-                let (body, _) = value.string(c, false);
-
-                (
-                    format!("lambda {lambda_type} {x} {body}"),
-                    AssociativityData::Lambda,
-                )
-            }
-            Value::Neutral(neutral) => neutral.string(c, parent_is_app),
-            Value::Primitive { expr, args } => {
-                if args.is_empty() {
-                    (expr.to_string(), AssociativityData::Var)
-                } else {
-                    (
-                        format!(
-                            "{expr}({})",
-                            args.iter()
-                                .map(|x| x.string(c.clone(), parent_is_app).0)
-                                .join(",")
-                        ),
-                        AssociativityData::Var,
-                    )
-                }
-            }
-        }
-    }
-}
-
-impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Neutral<'_, '_, T> {
-    fn string<'a>(
-        &'a self,
-        c: VarContext,
-        parent_is_app: bool,
-    ) -> (String, AssociativityData<'a, T>) {
-        match self {
-            Neutral::FreeVar(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Var),
-            Neutral::BoundVar(d, _) => (c.lambda_var_by_level(*d), AssociativityData::Var),
-            Neutral::AppBoth(head, arg) => {
-                let (head, _) = head.string(c.clone(), parent_is_app);
-                let (arg, _) = arg.string(c, parent_is_app);
-                (format!("{head}({arg})"), AssociativityData::Var)
-            }
-            Neutral::AppHead(head, arg) => {
-                let (head, _) = head.string(c.clone(), parent_is_app);
-                let (arg, _) = arg.string(c, parent_is_app);
-                (format!("{head}({arg})"), AssociativityData::Var)
-            }
-            Neutral::AppArg(head, arg) => {
-                let (head, _) = head.string(c.clone(), parent_is_app);
-                let (arg, _) = arg.string(c, parent_is_app);
-                (format!("{head}({arg})"), AssociativityData::Var)
-            }
-            Neutral::Primitive { expr, args } => {
-                if args.is_empty() {
-                    (expr.to_string(), AssociativityData::Var)
-                } else {
-                    (
-                        format!(
-                            "{expr}({})",
-                            args.iter()
-                                .map(|x| x.string(c.clone(), parent_is_app).0)
-                                .join(",")
-                        ),
-                        AssociativityData::Var,
-                    )
-                }
-            }
-        }
     }
 }
 

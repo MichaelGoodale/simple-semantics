@@ -37,7 +37,7 @@ where
 }
 
 #[derive(Clone)]
-enum BaseExpr<'src, T> {
+pub(super) enum BaseExpr<'src, T> {
     Variable(String, Option<LambdaType>),
     AnonymousVariable(usize, LambdaType),
     Literal(Literal<'src>),

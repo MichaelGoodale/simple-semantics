@@ -466,10 +466,6 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
         })
     }
 
-    pub(crate) fn root(&self) -> LambdaExprRef {
-        self.root
-    }
-
     ///Get the expression of a lambda term.
     pub(crate) fn get(&self, x: LambdaExprRef) -> &LambdaExpr<'src, T> {
         self.pool.get(x)
