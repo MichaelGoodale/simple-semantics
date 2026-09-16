@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, env::var, fmt::Display, os::unix::raw::uid_t};
+use std::{collections::BTreeMap, fmt::Display};
 
 use crate::{
     Actor, Entity, Event, Scenario,
@@ -17,7 +17,7 @@ use crate::{
     },
 };
 use chumsky::container::Seq;
-use itertools::{Either, Itertools};
+use itertools::Itertools;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -90,6 +90,7 @@ impl<'src> Literal<'src> {
     }
 
     ///If `self` is a constant function that always returns the same value, return that value.
+    #[must_use]
     pub fn constant_app(&self) -> Option<Literal<'src>> {
         match self {
             Literal::ActorSet(items) if items.is_empty() => Some(Literal::Bool(false)),
@@ -182,10 +183,15 @@ impl<'src> Literal<'src> {
 ///An error resulting from evaluating an expression that returns undefined, or if an evaluation
 ///can't be further reduced.
 pub enum EvaluationError {
+    ///An expression which is necessarily undefined (e.g. 1/0)
     #[error("This expression cannot be evaluated because it returns an undefined value")]
     UndefinedExpression,
+
+    ///An expression which is stuck and cannot be reduced further (e.g. 1/x).
     #[error("This expression cannot be evaluated further because there is something undefined")]
     Stuck,
+
+    ///A primitive which cannot be reduced yet.
     #[error("This expression cannot be evaluated further because it needs more applicands")]
     Unfinished,
 }
@@ -195,21 +201,35 @@ pub enum EvaluationError {
 pub enum Value<'src, 'pool, T: LambdaLanguageOfThought + Clone> {
     ///A [`Literal`]
     Base(Literal<'src>),
+    ///A lambda function
     Function(Box<Value<'src, 'pool, T>>, &'pool LambdaType, usize),
+    ///A [`Neutral`] value, e.g. a value which cannot be evaluated without more information.
     Neutral(Neutral<'src, 'pool, T>),
+
+    /// A primitive expression paired with its arguments.
     Primitive {
+        ///The primitive expression
         expr: T,
+        ///Its accumulated arguments.
         args: Vec<Value<'src, 'pool, T>>,
     },
 }
 
+///A value which cannot be evaluated yet.
 #[derive(Debug, Clone)]
 pub enum Neutral<'src, 'pool, T: LambdaLanguageOfThought + Clone> {
+    ///A free variable.
     FreeVar(FreeVar<'src>, &'pool LambdaType),
+    ///A bound variable
     BoundVar(Bvar, &'pool LambdaType),
+    ///An application where both children are [`Neutral`].
     AppBoth(Box<Neutral<'src, 'pool, T>>, Box<Neutral<'src, 'pool, T>>),
+    ///An application where only the head is neutral.
     AppHead(Box<Neutral<'src, 'pool, T>>, Box<Value<'src, 'pool, T>>),
+    //An application where only the argument is neutral.
     AppArg(Box<Value<'src, 'pool, T>>, Box<Neutral<'src, 'pool, T>>),
+
+    ///A primitive with some neutral argument.
     Primitive {
         expr: T,
         args: Vec<Value<'src, 'pool, T>>,
@@ -272,10 +292,11 @@ where
 
 impl<T> Eq for Value<'_, '_, T> where T: LambdaLanguageOfThought + Clone + Eq {}
 
-impl<'src, T> Value<'src, '_, T>
+impl<T> Value<'_, '_, T>
 where
     T: LambdaLanguageOfThought + Clone,
 {
+    ///The type of this [`Value`]
     pub fn typ(&self) -> LambdaType {
         match self {
             Value::Base(literal) => literal.typ().clone(),
@@ -295,7 +316,7 @@ where
         }
     }
 }
-impl<'src, T> Neutral<'src, '_, T>
+impl<T> Neutral<'_, '_, T>
 where
     T: LambdaLanguageOfThought + Clone,
 {
@@ -396,14 +417,6 @@ fn reduce_domain<'src>(
 }
 
 impl<'src> Value<'src, '_, Expr<'src>> {
-    fn to_base_value(&self) -> Option<&Literal<'src>> {
-        if let Value::Base(b) = self {
-            Some(b)
-        } else {
-            None
-        }
-    }
-
     ///Convert the value into a [`Literal`], if possible.
     #[must_use]
     pub fn into_base_value(self) -> Option<Literal<'src>> {
@@ -711,6 +724,7 @@ impl<'src> Expr<'src> {
 }
 
 impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
+    ///Applies a value to another.
     pub fn apply(
         self,
         other: Self,
@@ -756,27 +770,6 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
     }
 }
 
-impl<'src> Literal<'src> {
-    fn domain(
-        typ: &LambdaType,
-        scenario: &Scenario<'src>,
-    ) -> Option<impl Iterator<Item = Literal<'src>>> {
-        match typ {
-            LambdaType::A => Some(Either::Left(
-                scenario.actors.iter().copied().map(Literal::Actor),
-            )),
-            LambdaType::E => Some(Either::Right(Either::Left(
-                (0..scenario.thematic_relations.len())
-                    .map(|x| Literal::Event(u8::try_from(x).unwrap())),
-            ))),
-            LambdaType::T => Some(Either::Right(Either::Right(
-                [false, true].map(Literal::Bool).into_iter(),
-            ))),
-            LambdaType::Composition(..) => None,
-        }
-    }
-}
-
 impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
     fn reduce(
         self,
@@ -787,14 +780,15 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
             Value::Function(value, arg_type, d) => {
                 let b = value.typ();
                 if !arg_type.is_function() && b == LambdaType::T {
-                    Ok(Value::Base(
-                        Value::Function(value, arg_type, d)
-                            .into_base_value_with_scenario(scenario)?
-                            .unwrap(),
-                    ))
+                    let f = Value::Function(value, arg_type, d);
+                    if let Ok(Some(x)) = f.clone().into_base_value_with_scenario(scenario) {
+                        Ok(Value::Base(x))
+                    } else {
+                        Ok(f)
+                    }
                 } else {
                     Ok(Value::Function(
-                        Box::new(value.reduce(&scenario)?),
+                        Box::new(value.reduce(scenario)?),
                         arg_type,
                         d,
                     ))
@@ -870,14 +864,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
             .eval(self.root, vec![], scenario, None)
             .map(|(x, _)| x)?;
 
-        let t = self.get_type().unwrap();
-        if Literal::has_literal(&t) {
-            Ok(Value::Base(
-                x.into_base_value_with_scenario(scenario)?.unwrap(),
-            ))
-        } else {
-            Ok(x)
-        }
+        x.reduce(scenario)
     }
 }
 
@@ -987,7 +974,7 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
     }
 }
 
-impl<'src, 'pool> Neutral<'src, 'pool, Expr<'src>> {
+impl<'src> Neutral<'src, '_, Expr<'src>> {
     fn contains_var(&self, var: usize) -> bool {
         match self {
             Neutral::FreeVar(..) => false,

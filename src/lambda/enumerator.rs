@@ -1,7 +1,6 @@
 //! Allows for enumerating expressions up to a fixed size.
 
 use ahash::{HashMap, HashMapExt};
-use chumsky::container::Seq;
 use indexmap::IndexSet;
 use itertools::iproduct;
 use std::{
@@ -27,7 +26,6 @@ pub struct Generator<'src, T> {
     types: IndexSet<LambdaType>,
     constants: HashMap<TypeId, Vec<ExprId>>,
     memo: HashMap<(ContextId, TypeId, usize), Vec<ExprId>>,
-    possible_types_memo: HashMap<BTreeSet<TypeId>, Vec<BTreeSet<TypeId>>>,
 }
 
 ///The ID of an expression in a [`Generator`]. See [`Generator::to_rooted_lambda_pool`].
@@ -202,45 +200,6 @@ fn single_elements<T: Hash + Eq + LambdaLanguageOfThought>(
     exprs
 }
 
-///This finds all possible types that could be used to construct applications that lead to type t:
-/// {<tau, t> | s.t. an expression of size <= max_size-1 exists of type tau and an expression of
-/// size <= max_size-1 exists of type <tau, t>}.
-///
-fn possible_size_table<T>(
-    g: &mut Generator<'_, T>,
-    ctx: ContextId,
-    max_size: usize,
-) -> BTreeSet<TypeId> {
-    println!("{max_size:?}");
-    let mut c = g.id_to_context(ctx).unwrap();
-    let mut ctx_vars = BTreeSet::new();
-    while let Context::Context { typ, parent } = c {
-        ctx_vars.insert(*typ);
-        c = g.id_to_context(*parent).unwrap();
-    }
-    let mut inhabited = vec![BTreeSet::<TypeId>::new(); max_size + 1];
-    inhabited[1].extend(g.constants.keys().copied().chain(ctx_vars));
-    for i in 2..=max_size {
-        //lhs can be any type of the last row, provided it is a function. We can't introduce a
-        //lambda since we are beta-eta reduced.
-        let lhs = inhabited[i - 1]
-            .iter()
-            .copied()
-            .filter_map(|t| g.type_children_or_insert(t))
-            .collect::<Vec<_>>();
-
-        for (lhs, rhs) in lhs {
-            //If we have <x,y> and x, then we can make a term y, since we can do App(<x,y>, y).
-            if inhabited[i - 1].contains(&lhs) {
-                inhabited[i].insert(rhs);
-                continue;
-            }
-        }
-    }
-
-    todo!();
-}
-
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 enum MetaVariable {
     Known(TypeId),
@@ -258,14 +217,14 @@ struct Substitutions {
 }
 
 impl MetaVariable {
-    fn used_type_vars<'a>(&'a self) -> MetaVariableReferredVars<'a> {
+    fn used_type_vars(&self) -> MetaVariableReferredVars<'_> {
         MetaVariableReferredVars(vec![self])
     }
 }
 
 struct MetaVariableReferredVars<'a>(Vec<&'a MetaVariable>);
 
-impl<'a> Iterator for MetaVariableReferredVars<'a> {
+impl Iterator for MetaVariableReferredVars<'_> {
     type Item = TypeVar;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -447,6 +406,7 @@ fn merge<'a>(
     }
 }
 
+#[cfg(test)]
 fn to_letters(mut n: u32) -> String {
     let mut result = String::new();
 
@@ -463,6 +423,8 @@ fn to_letters(mut n: u32) -> String {
 
     result.chars().rev().collect()
 }
+
+#[cfg(test)]
 fn to_string_inner<T>(x: &MetaVariable, g: &Generator<T>, s: &mut String) {
     match x {
         MetaVariable::Known(t) => s.push_str(&g.id_to_type(*t).unwrap().to_string()),
@@ -478,6 +440,7 @@ fn to_string_inner<T>(x: &MetaVariable, g: &Generator<T>, s: &mut String) {
 }
 
 impl MetaVariable {
+    #[cfg(test)]
     fn to_string<T>(&self, g: &Generator<T>) -> String {
         let mut s = String::new();
         to_string_inner(self, g, &mut s);
@@ -551,12 +514,13 @@ impl MetaVariable {
         x.map(|x| x.normalize(subs, g))
     }
 
+    #[cfg(test)]
     fn can_unify<T>(self, other: Self, g: &mut Generator<T>) -> Option<Self> {
         let mut subs = Substitutions::new();
-
         self.unify(other, &mut subs, g)
     }
 
+    #[cfg(test)]
     fn biggest_element(&self) -> TypeVar {
         let mut fresh = 0;
         let mut stack = vec![self];
@@ -575,12 +539,13 @@ impl MetaVariable {
             MetaVariable::Known(type_id) => g
                 .type_children_or_insert(*type_id)
                 .map(|(lhs, rhs)| (MetaVariable::Known(lhs), MetaVariable::Known(rhs))),
-            MetaVariable::Unknown(type_var) => None,
+            MetaVariable::Unknown(_type_var) => None,
             MetaVariable::Function(x, y) => Some(((**x).clone(), (**y).clone())),
         }
     }
 }
 
+#[cfg(test)]
 fn possible_types<T>(
     g: &mut Generator<T>,
     t: MetaVariable,
@@ -589,7 +554,7 @@ fn possible_types<T>(
     on_app_lhs: bool,
 ) -> BTreeSet<MetaVariable> {
     let fresh = std::cmp::max(
-        c.iter().map(|x| x.biggest_element()).max().unwrap().0,
+        c.iter().map(MetaVariable::biggest_element).max().unwrap().0,
         t.biggest_element().0,
     ) + 1;
     possible_types_inner(g, t, c, size, on_app_lhs, fresh)
@@ -629,8 +594,8 @@ fn possible_types_inner<T>(
             let functions = possible_types_inner(g, f.clone(), c.clone(), i, true, fresh + 1);
             let args = possible_types_inner(g, arg.clone(), c.clone(), j, false, fresh + 1);
 
-            types.extend(
-                iproduct!(&functions, &args).filter_map(|((f, f_subs), (a, arg_subs))| {
+            types.extend(iproduct!(&functions, &args).filter_map(
+                |((f, f_subs), (a, arg_subs))| {
                     let mut subs = f_subs.clone().union(arg_subs.clone()).ok()?;
                     let f = f.clone().normalize(&mut subs, g);
                     let a = a.clone().normalize(&mut subs, g);
@@ -639,8 +604,8 @@ fn possible_types_inner<T>(
                     f.unify(function_with_arg, &mut subs, g)
                         .and_then(|x| x.split(g))
                         .map(|(_, y)| (y, subs))
-                }),
-            )
+                },
+            ));
         }
 
         if let MetaVariable::Unknown(_) = &t
@@ -655,7 +620,7 @@ fn possible_types_inner<T>(
             types.extend(new_types.into_iter().filter_map(|(found_body, mut subs)| {
                 let f = MetaVariable::Function(Box::new(arg.clone()), Box::new(found_body));
                 f.unify(t.clone(), &mut subs, g).map(|x| (x, subs))
-            }))
+            }));
         }
 
         //check if under app_lhs to remove App(lambda x, y) since that's a beta reducible thing.
@@ -669,7 +634,7 @@ fn possible_types_inner<T>(
             types.extend(new_types.into_iter().filter_map(|(found_body, mut subs)| {
                 let x = MetaVariable::Function(arg.clone(), Box::new(found_body));
                 x.unify(t.clone(), &mut subs, g).map(|x| (x, subs))
-            }))
+            }));
         }
 
         types
@@ -719,7 +684,7 @@ fn possible_application_types<T>(
                 combos.insert((t, lhs));
             } else {
                 panic!("Idk what to do if a meta variable is returned here")
-            };
+            }
         }
     }
 
@@ -977,10 +942,10 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
         let mut v = vec![];
         for size in (1..=max_size).rev() {
             if let Some(exprs) = self.memo.get(&(ContextId(0), t, size)) {
-                v.extend(exprs.iter().rev().cloned());
+                v.extend(exprs.iter().rev().copied());
             } else {
                 let exprs = generate(self, ContextId(0), t, size);
-                v.extend(exprs.into_iter().rev())
+                v.extend(exprs.into_iter().rev());
             }
         }
         v.reverse();
@@ -1013,7 +978,6 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
             types,
             expr_variable_usage: HashMap::new(),
             memo: HashMap::new(),
-            possible_types_memo: HashMap::new(),
         }
     }
 }
@@ -1171,7 +1135,7 @@ mod test {
         ];
 
         let mut generator: Generator<Expr> = Generator::new(expressions.to_vec());
-        for (ty, count) in types {
+        for (ty, _) in types {
             println!("{ty}");
             //let mut pool_set = HashSet::new();
             //let mut reduced_pool_set = HashSet::new();

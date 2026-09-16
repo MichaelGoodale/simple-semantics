@@ -472,8 +472,9 @@ pub struct LambdaTypeIter {
 }
 
 impl LambdaType {
-    ///Returns a [`LambdaTypeIter`] to iterate over all LambdaTypes. (Note that this iterator is
+    ///Returns a [`LambdaTypeIter`] to iterate over all `LambdaTypes`. (Note that this iterator is
     ///infinite!)
+    #[must_use]
     pub fn all() -> LambdaTypeIter {
         LambdaTypeIter {
             levels: vec![vec![LambdaType::A, LambdaType::E, LambdaType::T]],
@@ -495,8 +496,8 @@ impl LambdaTypeIter {
                 continue;
             }
 
-            for left in self.levels[left_size - 1].iter() {
-                for right in self.levels[right_size - 1].iter() {
+            for left in &self.levels[left_size - 1] {
+                for right in &self.levels[right_size - 1] {
                     level.push(LambdaType::Composition(
                         Box::new(left.clone()),
                         Box::new(right.clone()),

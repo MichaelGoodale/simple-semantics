@@ -6,7 +6,7 @@ use itertools::Itertools;
 
 use crate::lambda::{
     ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-    interpretation::Neutral, printing::AssociativityData::Var, types::LambdaType,
+    interpretation::Neutral, types::LambdaType,
 };
 
 static VARIABLENAMES: [&str; 26] = [

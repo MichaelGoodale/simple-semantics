@@ -416,7 +416,7 @@ impl<T: LambdaLanguageOfThought + Hash> Hash for RootedLambdaPool<'_, T> {
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
+impl<T: LambdaLanguageOfThought> LambdaPool<'_, T> {
     ///The length of the expression, excluding the number of [`LambdaExpr::Application`].
     ///Corresponds better to human intuitions about length.
     #[must_use]
