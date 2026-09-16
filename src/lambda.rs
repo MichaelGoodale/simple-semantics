@@ -141,6 +141,11 @@ pub trait LambdaLanguageOfThought {
     fn commutative(&self) -> bool {
         false
     }
+
+    ///Checks whether an expression is commutative
+    fn associative(&self) -> bool {
+        false
+    }
 }
 
 impl LambdaLanguageOfThought for () {

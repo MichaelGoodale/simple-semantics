@@ -6,7 +6,7 @@ use crate::lambda::types::LambdaType;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
 ///All binary operations
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize)]
 pub enum BinOp {
     ///<a,<e,t>> function that returns whether the first argument is the agent of the second
     ///argument.
@@ -35,7 +35,7 @@ impl Display for BinOp {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize)]
 ///All unary operations
 pub enum MonOp {
     ///Logical not
@@ -56,7 +56,7 @@ impl Display for MonOp {
 }
 
 ///Whether something refers to an actor or event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[allow(missing_docs)]
 pub enum ActorOrEvent {
     Actor,
@@ -82,7 +82,7 @@ impl From<ActorOrEvent> for LambdaType {
 }
 
 ///Any valid constant in the language.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub enum Constant<'a> {
     ///The set of all actors in the [`Scenario`].
     Everyone,
@@ -110,7 +110,7 @@ impl Display for Constant<'_> {
 }
 
 ///An enum which represents all possible quantifiers in the language.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize)]
 pub enum Quantifier {
     ///Universal Quantification
     Universal,
@@ -130,7 +130,7 @@ impl Display for Quantifier {
 ///The basic expression type of the language of thought.
 ///Note that it *does not* include free variables or any of the machinery of the lambda calculus
 ///which is handled elsewhere.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize)]
 pub enum Expr<'a> {
     ///A quantified expression. Variables are implemented with `DeBruijn` indices.
     Quantifier {
@@ -144,9 +144,12 @@ pub enum Expr<'a> {
     ///See [`Event`]. Written `e_N` where `N` is an integer.
     Event(Event),
     ///Any binary function.
+    #[serde(untagged)]
     Binary(BinOp),
     ///Any unary function.
+    #[serde(untagged)]
     Unary(MonOp),
+    #[serde(untagged)]
     ///All constants.
     Constant(Constant<'a>),
 }
@@ -227,6 +230,7 @@ impl Display for Expr<'_> {
 
 mod lambda_implementation;
 pub use lambda_implementation::ConjoiningError;
+use serde::Serialize;
 
 #[cfg(test)]
 mod tests {

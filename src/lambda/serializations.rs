@@ -1,17 +1,14 @@
-use std::borrow::Cow;
 use std::fmt::{Debug, Display};
 
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use crate::lambda::ExprType;
-use crate::lambda::parser::{ExprToken, ParseLot, Token};
+use crate::lambda::parser::ParseLot;
 use crate::lambda::types::LambdaType;
-use crate::lambda::{
-    LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
-    printing::AssociativityData,
-};
+use crate::lambda::{ExprType, FreeVar};
+use crate::lambda::{LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool};
 
-use crate::lambda::printing::{InfixPosition, VarContext};
+use crate::lambda::printing::VarContext;
 
 impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src> + PartialEq> Serialize
     for RootedLambdaPool<'src, T>
@@ -38,279 +35,301 @@ where
     }
 }
 
-enum BindingToken<'src, T: ParseLot<'src>> {
-    Token(Token<'src, T>),
-    BindingToken {
-        expr: T::Token,
-        var_name: String,
-        var_type: LambdaType,
-    },
+#[derive(Clone)]
+enum BaseExpr<T> {
+    Variable(String, Option<LambdaType>),
+    AnonymousVariable(usize, LambdaType),
+    Expr(T),
 }
 
-impl<'src, T: LambdaLanguageOfThought + ParseLot<'src> + PartialEq> RootedLambdaPool<'src, T> {
-    fn tokens<'a>(
-        &'a self,
-        expr: LambdaExprRef,
-        c: VarContext,
-        v: &mut Vec<BindingToken<'src, T>>,
-        parent_is_app: bool,
-    ) -> AssociativityData<'a, T> {
+impl<T: LambdaLanguageOfThought> BaseExpr<T> {
+    fn infix(&self) -> bool {
+        if let BaseExpr::Expr(x) = self {
+            x.infix()
+        } else {
+            false
+        }
+    }
+}
+
+impl<T: Serialize> Serialize for BaseExpr<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            BaseExpr::Variable(name, _) => {
+                serializer.serialize_newtype_variant("BaseExpr", 0, "Variable", name)
+            }
+
+            BaseExpr::AnonymousVariable(index, _) => {
+                serializer.serialize_newtype_variant("BaseExpr", 1, "AnonymousVariable", index)
+            }
+
+            BaseExpr::Expr(expr) => {
+                serializer.serialize_newtype_variant("BaseExpr", 2, "Expr", expr)
+            }
+        }
+    }
+}
+
+impl<T: Display> Display for BaseExpr<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BaseExpr::Variable(x, None) => write!(f, "{x}"),
+            BaseExpr::Variable(x, Some(t)) => write!(f, "{x}#{t}"),
+            BaseExpr::AnonymousVariable(x, t) => write!(f, "{x}#{t}"),
+            BaseExpr::Expr(x) => write!(f, "{x}"),
+        }
+    }
+}
+
+impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PrintingAST::Application {
+                head: Some(head),
+                children,
+            } if head.infix() => write!(
+                f,
+                "{}",
+                children
+                    .iter()
+                    .map(|x| x.to_string())
+                    .join(format!(" {head} ").as_str())
+            ),
+            PrintingAST::Application {
+                head: Some(head),
+                children,
+            } => write!(
+                f,
+                "{head}({})",
+                children.iter().map(|x| x.to_string()).join(", ")
+            ),
+            PrintingAST::Application {
+                head: None,
+                children,
+            } => {
+                write!(
+                    f,
+                    "({})({})",
+                    children.first().unwrap(),
+                    children[1..].iter().map(|x| x.to_string()).join(", ")
+                )
+            }
+            PrintingAST::Lambda { var, typ, body } => write!(f, "lambda {typ} {var} {body}"),
+            PrintingAST::Binder {
+                expr,
+                var_name,
+                children,
+                ..
+            } => write!(
+                f,
+                "{expr}({var_name}, {})",
+                children.iter().map(|x| x.to_string()).join(", ")
+            ),
+            PrintingAST::Expr(x) => write!(f, "{x}"),
+        }
+    }
+}
+
+#[derive(Serialize)]
+enum PrintingAST<T> {
+    Application {
+        head: Option<BaseExpr<T>>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        children: Vec<PrintingAST<T>>,
+    },
+    Lambda {
+        var: String,
+        typ: LambdaType,
+        body: Box<PrintingAST<T>>,
+    },
+    Binder {
+        expr: T,
+        var_name: String,
+        var_type: LambdaType,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        children: Vec<PrintingAST<T>>,
+    },
+    #[serde(untagged)]
+    Expr(BaseExpr<T>),
+}
+
+impl<T> PrintingAST<T>
+where
+    T: Clone,
+{
+    fn token(&self) -> Option<BaseExpr<T>> {
+        match self {
+            PrintingAST::Application { head, .. } => head.clone(),
+            PrintingAST::Expr(head) => Some(head.clone()),
+            PrintingAST::Binder { expr, .. } => Some(BaseExpr::Expr(expr.clone())),
+            PrintingAST::Lambda { .. } => None,
+        }
+    }
+
+    fn children(self) -> Vec<PrintingAST<T>> {
+        match self {
+            PrintingAST::Application { children, .. } | PrintingAST::Binder { children, .. } => {
+                children
+            }
+            PrintingAST::Lambda { body, .. } => vec![*body],
+            PrintingAST::Expr(_) => vec![],
+        }
+    }
+
+    fn steal_children(self, other: Self) -> Self {
+        match self {
+            PrintingAST::Application { head, mut children } => {
+                children.extend(other.children());
+                PrintingAST::Application { head, children }
+            }
+            PrintingAST::Expr(head) => PrintingAST::Application {
+                head: Some(head),
+                children: other.children(),
+            },
+            PrintingAST::Binder {
+                expr,
+                var_name,
+                var_type,
+                mut children,
+            } => {
+                children.extend(other.children());
+                PrintingAST::Binder {
+                    expr,
+                    var_name,
+                    var_type,
+                    children,
+                }
+            }
+            PrintingAST::Lambda { .. } => panic!("No way to add new children to a lambda"),
+        }
+    }
+
+    fn add_child(self, child: Self) -> Self {
+        match self {
+            PrintingAST::Application { head, mut children } => {
+                children.push(child);
+                PrintingAST::Application { head, children }
+            }
+            PrintingAST::Binder {
+                expr,
+                var_name,
+                var_type,
+                mut children,
+            } => {
+                children.push(child);
+                PrintingAST::Binder {
+                    expr,
+                    var_name,
+                    var_type,
+                    children,
+                }
+            }
+            PrintingAST::Expr(head) => PrintingAST::Application {
+                head: Some(head),
+                children: vec![child],
+            },
+            l @ PrintingAST::Lambda { .. } => PrintingAST::Application {
+                head: None,
+                children: vec![l, child],
+            },
+        }
+    }
+}
+
+impl<'src, T> RootedLambdaPool<'src, T>
+where
+    T: Clone + LambdaLanguageOfThought + PartialEq,
+{
+    fn tokens(&self, expr: LambdaExprRef, c: VarContext) -> PrintingAST<T> {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
                 let (c, var) = c.inc_depth(lambda_type);
-                v.push(BindingToken::Token(Token::Lambda(
-                    lambda_type.clone(),
-                    Cow::Owned(var),
-                )));
-
-                self.tokens(*child, c, v, false);
-                AssociativityData::Lambda
+                PrintingAST::Lambda {
+                    var,
+                    typ: lambda_type.clone(),
+                    body: Box::new(self.tokens(*child, c)),
+                }
             }
             LambdaExpr::BoundVariable(bvar, _) => {
-                v.push(BindingToken::Token(Token::Variable(Cow::Owned(
-                    c.lambda_var(*bvar),
-                ))));
-                AssociativityData::Var
+                PrintingAST::Expr(BaseExpr::Variable(c.lambda_var(*bvar), None))
             }
-            LambdaExpr::FreeVariable(fvar, t) => {
-                v.push(BindingToken::Token(Token::FreeVariable(*fvar, t.clone())));
-                AssociativityData::Var
+
+            LambdaExpr::FreeVariable(FreeVar::Named(s), t) => {
+                PrintingAST::Expr(BaseExpr::Variable(s.to_string(), Some(t.clone())))
+            }
+            LambdaExpr::FreeVariable(FreeVar::Anonymous(n), t) => {
+                PrintingAST::Expr(BaseExpr::AnonymousVariable(*n, t.clone()))
             }
 
             LambdaExpr::Application {
                 subformula,
                 argument,
             } => {
-                let mut f_v = vec![];
-                let mut arg_v = vec![];
-
-                let f_asso = self.tokens(*subformula, c.clone(), &mut f_v, true);
-                let arg_asso = self.tokens(*argument, c.clone(), &mut arg_v, false);
-
-                if let AssociativityData::Infix(t1, _) = arg_asso
-                    && let AssociativityData::Infix(t2, _) = f_asso
-                    && t1 != t2
-                {
-                    arg_v.insert(0, BindingToken::Token(Token::OpenDelim));
-                    arg_v.push(BindingToken::Token(Token::CloseDelim));
-                }
-
-                match f_asso {
-                    AssociativityData::Infix(x, InfixPosition::Op) if parent_is_app => {
-                        v.extend(arg_v);
-                        v.extend(f_v);
-                        return AssociativityData::Infix(x, InfixPosition::DoneLeftOnly);
-                    }
-                    AssociativityData::Infix(x, InfixPosition::DoneLeftOnly) => {
-                        v.extend(f_v);
-                        v.extend(arg_v);
-                        return AssociativityData::Infix(x, InfixPosition::Done);
-                    }
-                    AssociativityData::Prefix => {
-                        match arg_asso {
-                            AssociativityData::App
-                            | AssociativityData::Var
-                            | AssociativityData::Prefix => {
-                                v.extend(f_v);
-                                v.extend(arg_v);
-                            }
-                            AssociativityData::Lambda | AssociativityData::Infix(..) => {
-                                v.extend(f_v);
-                                v.push(BindingToken::Token(Token::OpenDelim));
-                                v.extend(arg_v);
-                                v.push(BindingToken::Token(Token::CloseDelim));
-                            }
+                let f = self.tokens(*subformula, c.clone());
+                let arg = self.tokens(*argument, c.clone());
+                match (f.token(), arg.token()) {
+                    (Some(BaseExpr::Expr(x)), Some(BaseExpr::Expr(y))) => {
+                        if x.commutative() && x.associative() && x == y {
+                            f.steal_children(arg)
+                        } else {
+                            f.add_child(arg)
                         }
-
-                        return AssociativityData::Var;
                     }
-                    AssociativityData::Lambda
-                    | AssociativityData::Infix(_, InfixPosition::Done) => {
-                        v.push(BindingToken::Token(Token::OpenDelim));
-                        v.extend(f_v);
-                        v.extend([Token::CloseDelim, Token::OpenDelim].map(BindingToken::Token));
-                        v.extend(arg_v);
-                    }
-                    AssociativityData::Var | AssociativityData::Infix(_, InfixPosition::Op) => {
-                        v.extend(f_v);
-                        v.push(BindingToken::Token(Token::OpenDelim));
-                        v.extend(arg_v);
-                    }
-                    AssociativityData::App => {
-                        v.extend(f_v);
-                        v.extend(arg_v);
-                    }
+                    (_, _) => f.add_child(arg),
                 }
-
-                v.push(BindingToken::Token(if parent_is_app {
-                    Token::ArgSep
-                } else {
-                    Token::CloseDelim
-                }));
-                AssociativityData::App
             }
             LambdaExpr::LanguageOfThoughtExpr(x, super::ExprType::NoVar) => {
-                v.push(BindingToken::Token(Token::LanguageOfThought(x.as_token())));
-                if x.commutative() & x.infix() {
-                    AssociativityData::Infix(x, InfixPosition::Op)
-                } else if x.unary_associative() {
-                    AssociativityData::Prefix
-                } else {
-                    AssociativityData::Var
-                }
+                PrintingAST::Expr(BaseExpr::Expr(x.clone()))
             }
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVar(body)) => {
                 let (c, var_string) = c.inc_depth(x.var_type().expect(
                     "Implementation error, if you bind a var, the expression must bind vars!",
                 ));
 
-                v.push(BindingToken::BindingToken {
-                    expr: x.as_token(),
+                PrintingAST::Binder {
+                    expr: x.clone(),
                     var_name: var_string,
                     var_type: x.var_type().unwrap().clone(),
-                });
-                v.push(BindingToken::Token(Token::OpenDelim));
-                self.tokens(*body, c, v, false);
-                v.push(BindingToken::Token(Token::CloseDelim));
-                AssociativityData::Var
+                    children: vec![self.tokens(*body, c)],
+                }
             }
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVarTwoBodies(l, r)) => {
                 let (c, var_string) = c.inc_depth(x.var_type().expect(
                     "Implementation error, if you bind a var, the expression must bind vars!",
                 ));
-                v.push(BindingToken::BindingToken {
-                    expr: x.as_token(),
+                PrintingAST::Binder {
+                    expr: x.clone(),
                     var_name: var_string,
                     var_type: x.var_type().unwrap().clone(),
-                });
-
-                v.push(BindingToken::Token(Token::OpenDelim));
-                self.tokens(*l, c.clone(), v, false);
-                v.push(BindingToken::Token(Token::ArgSep));
-                self.tokens(*r, c, v, false);
-                v.push(BindingToken::Token(Token::CloseDelim));
-                AssociativityData::Var
+                    children: vec![self.tokens(*l, c.clone()), self.tokens(*r, c)],
+                }
             }
-        }
-    }
-}
-
-impl<'src, T> serde::Serialize for BindingToken<'src, T>
-where
-    T: ParseLot<'src>,
-    T::Token: serde::Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStructVariant;
-
-        match self {
-            Self::Token(token) => token.serialize(serializer),
-            Self::BindingToken {
-                expr,
-                var_name,
-                var_type,
-            } => {
-                let mut state =
-                    serializer.serialize_struct_variant("BindingToken", 0, "BindingToken", 3)?;
-
-                state.serialize_field("expr", expr)?;
-                state.serialize_field("var_name", var_name)?;
-                state.serialize_field("var_type", var_type)?;
-
-                state.end()
-            }
-        }
-    }
-}
-
-impl<'src, T> serde::Serialize for Token<'src, T>
-where
-    T: ParseLot<'src>,
-    T::Token: serde::Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::OpenDelim => serializer.serialize_unit_variant("Token", 0, "OpenDelim"),
-            Self::ArgSep => serializer.serialize_unit_variant("Token", 1, "ArgSep"),
-            Self::CloseDelim => serializer.serialize_unit_variant("Token", 2, "CloseDelim"),
-
-            Self::Lambda(ty, var) => {
-                serializer.serialize_newtype_variant("Token", 3, "Lambda", &(var, ty))
-            }
-
-            Self::Variable(var) => {
-                serializer.serialize_newtype_variant("Token", 4, "Variable", var)
-            }
-
-            Self::FreeVariable(var, ty) => {
-                serializer.serialize_newtype_variant("Token", 5, "FreeVariable", &(var, ty))
-            }
-
-            Self::LanguageOfThought(token) => token.serialize(serializer),
-        }
-    }
-}
-
-impl Serialize for ExprToken<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            ExprToken::Constant(crate::language::Constant::Property(p, _)) => {
-                serializer.serialize_newtype_variant("Expr", 1, "Func", p)
-            }
-            ExprToken::Constant(constant) => {
-                serializer.serialize_newtype_variant("Expr", 0, "Const", &constant.to_string())
-            }
-            ExprToken::BinOp(f) => {
-                serializer.serialize_newtype_variant("Expr", 1, "Func", &f.to_string())
-            }
-            ExprToken::MonOp(f) => {
-                serializer.serialize_newtype_variant("Expr", 1, "Func", &f.to_string())
-            }
-            ExprToken::Actor(a) => serializer.serialize_newtype_variant("Expr", 2, "Actor", &a),
-            ExprToken::Event(e) => serializer.serialize_newtype_variant("Expr", 3, "Event", e),
-            ExprToken::Iota(actor_or_event) => {
-                serializer.serialize_newtype_variant("Expr", 3, "Iota", &actor_or_event.to_string())
-            }
-
-            ExprToken::Quantifier(quantifier, _) => serializer.serialize_newtype_variant(
-                "Expr",
-                4,
-                "Quantifier",
-                &quantifier.to_string(),
-            ),
         }
     }
 }
 
 ///A special kind of `RootedLambdaPool` that should be used to display in fancy math modes, e.g. with
 ///Typst or (potentially) LaTeX.
-pub struct MathModeExpression<'src, T: ParseLot<'src>>(Vec<BindingToken<'src, T>>);
+pub struct MathModeExpression<T>(PrintingAST<T>);
 
 impl<'src, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq> RootedLambdaPool<'src, T>
 where
-    T::Token: Serialize,
+    T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq,
+    T::Token: Clone,
 {
     ///Get a [`MathModeExpression`] to be serialized for documents.
     #[must_use]
-    pub fn for_document(&self) -> MathModeExpression<'src, T> {
-        let mut v: Vec<BindingToken<'src, T>> = vec![];
-        self.tokens(self.root, VarContext::default(), &mut v, false);
-        MathModeExpression(v)
+    pub fn for_document(&self) -> MathModeExpression<T> {
+        MathModeExpression(self.tokens(self.root, VarContext::default()))
     }
 }
 
-impl<'src, T: ParseLot<'src>> Serialize for MathModeExpression<'src, T>
+impl<T> Serialize for MathModeExpression<T>
 where
-    T::Token: Serialize,
+    T: Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -344,27 +363,27 @@ mod test {
     fn serializing() -> anyhow::Result<()> {
         for (statement, json) in [
             (
-                "~(AgentOf(a_John,e_0))",
-                "[{\"Func\":\"~\"},{\"Func\":\"AgentOf\"},\"OpenDelim\",{\"Actor\":\"John\"},\"ArgSep\",{\"Event\":0},\"CloseDelim\"]",
+                "~(AgentOf(a_John, e_0))",
+                "{\"Application\":{\"head\":{\"Expr\":\"Not\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":\"AgentOf\"},\"children\":[{\"Expr\":{\"Actor\":\"John\"}},{\"Expr\":{\"Event\":0}}]}}]}}",
             ),
             (
-                "(pa_Red(a_John) & ~(pa_Red(a_Mary)))",
-                "[{\"Func\":\"Red\"},\"OpenDelim\",{\"Actor\":\"John\"},\"CloseDelim\",{\"Func\":\"&\"},{\"Func\":\"~\"},{\"Func\":\"Red\"},\"OpenDelim\",{\"Actor\":\"Mary\"},\"CloseDelim\"]",
+                "pa_Red(a_John) & ~(pa_Red(a_Mary))",
+                "{\"Application\":{\"head\":{\"Expr\":\"And\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}},{\"Application\":{\"head\":{\"Expr\":\"Not\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}}]}}]}}]}}",
             ),
             (
-                "every(x,all_a(x),pa_Blue(x))",
-                "[{\"BindingToken\":{\"expr\":{\"Quantifier\":\"every\"},\"var_name\":\"x\",\"var_type\":\"a\"}},\"OpenDelim\",{\"Const\":\"all_a\"},\"OpenDelim\",{\"Variable\":\"x\"},\"CloseDelim\",\"ArgSep\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Variable\":\"x\"},\"CloseDelim\",\"CloseDelim\"]",
+                "every(x, all_a(x), pa_Blue(x))",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Expr\":\"Everyone\"},\"children\":[{\"Variable\":\"x\"}]}},{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}},\"children\":[{\"Variable\":\"x\"}]}}]}}",
             ),
             (
-                "every(x,pa_Blue(x),pa_Blue(x))",
-                "[{\"BindingToken\":{\"expr\":{\"Quantifier\":\"every\"},\"var_name\":\"x\",\"var_type\":\"a\"}},\"OpenDelim\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Variable\":\"x\"},\"CloseDelim\",\"ArgSep\",{\"Func\":\"Blue\"},\"OpenDelim\",{\"Variable\":\"x\"},\"CloseDelim\",\"CloseDelim\"]",
+                "every(x, pa_Blue(x), pa_Blue(x))",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}},\"children\":[{\"Variable\":\"x\"}]}},{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}},\"children\":[{\"Variable\":\"x\"}]}}]}}",
             ),
             (
-                "every(x,pa_5(x),pa_10(a_59))",
-                "[{\"BindingToken\":{\"expr\":{\"Quantifier\":\"every\"},\"var_name\":\"x\",\"var_type\":\"a\"}},\"OpenDelim\",{\"Func\":\"5\"},\"OpenDelim\",{\"Variable\":\"x\"},\"CloseDelim\",\"ArgSep\",{\"Func\":\"10\"},\"OpenDelim\",{\"Actor\":\"59\"},\"CloseDelim\",\"CloseDelim\"]",
+                "every(x, pa_5(x), pa_10(a_59))",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"5\",\"Actor\"]}},\"children\":[{\"Variable\":\"x\"}]}},{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"10\",\"Actor\"]}},\"children\":[{\"Expr\":{\"Actor\":\"59\"}}]}}]}}",
             ),
             (
-                "every_e(x,all_e(x),PatientOf(a_Mary,x))",
+                "every_e(x, all_e(x), PatientOf(a_Mary, x))",
                 "[{\"BindingToken\":{\"expr\":{\"Quantifier\":\"every\"},\"var_name\":\"x\",\"var_type\":\"e\"}},\"OpenDelim\",{\"Const\":\"all_e\"},\"OpenDelim\",{\"Variable\":\"x\"},\"CloseDelim\",\"ArgSep\",{\"Func\":\"PatientOf\"},\"OpenDelim\",{\"Actor\":\"Mary\"},\"ArgSep\",{\"Variable\":\"x\"},\"CloseDelim\",\"CloseDelim\"]",
             ),
             (
@@ -397,7 +416,9 @@ mod test {
             ),
         ] {
             let expression = RootedLambdaPool::<Expr>::parse(statement)?;
-            assert_eq!(json, serde_json::to_string(&expression.for_document())?);
+            let doc = expression.for_document();
+            assert_eq!(doc.0.to_string(), statement);
+            assert_eq!(json, serde_json::to_string(&doc)?);
         }
 
         Ok(())

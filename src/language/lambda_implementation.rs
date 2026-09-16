@@ -26,6 +26,10 @@ impl LambdaLanguageOfThought for Expr<'_> {
         matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
     }
 
+    fn associative(&self) -> bool {
+        matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
+    }
+
     fn infix(&self) -> bool {
         matches!(self, Expr::Binary(BinOp::And | BinOp::Or, ..))
     }
@@ -65,13 +69,13 @@ impl LambdaLanguageOfThought for Expr<'_> {
                 BinOp::And | BinOp::Or => LambdaType::ttt(),
             },
             Expr::Unary(MonOp::Not) => LambdaType::tt(),
-            Expr::Constant(Constant::Everyone |
-Constant::Property(_, ActorOrEvent::Actor)) => LambdaType::at(),
-            Expr::Constant(Constant::EveryEvent |
-Constant::Property(_, ActorOrEvent::Event)) => LambdaType::et(),
-            Expr::Constant(Constant::Tautology | Constant::Contradiction) => {
-                &LambdaType::T
+            Expr::Constant(Constant::Everyone | Constant::Property(_, ActorOrEvent::Actor)) => {
+                LambdaType::at()
             }
+            Expr::Constant(Constant::EveryEvent | Constant::Property(_, ActorOrEvent::Event)) => {
+                LambdaType::et()
+            }
+            Expr::Constant(Constant::Tautology | Constant::Contradiction) => &LambdaType::T,
         }
     }
 }
