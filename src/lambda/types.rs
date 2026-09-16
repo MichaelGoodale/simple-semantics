@@ -464,6 +464,73 @@ impl LambdaType {
     }
 }
 
+///Iterator over all types.
+pub struct LambdaTypeIter {
+    levels: Vec<Vec<LambdaType>>,
+    size: usize,
+    index: usize,
+}
+
+impl LambdaType {
+    ///Returns a [`LambdaTypeIter`] to iterate over all LambdaTypes. (Note that this iterator is
+    ///infinite!)
+    pub fn all() -> LambdaTypeIter {
+        LambdaTypeIter {
+            levels: vec![vec![LambdaType::A, LambdaType::E, LambdaType::T]],
+            size: 1,
+            index: 0,
+        }
+    }
+}
+
+impl LambdaTypeIter {
+    fn generate_level(&mut self, size: usize) {
+        let mut level = Vec::new();
+
+        // Composition(a, b) has size 1 + size(a) + size(b).
+        for left_size in 1..size {
+            let right_size = size - 1 - left_size;
+
+            if right_size == 0 {
+                continue;
+            }
+
+            for left in self.levels[left_size - 1].iter() {
+                for right in self.levels[right_size - 1].iter() {
+                    level.push(LambdaType::Composition(
+                        Box::new(left.clone()),
+                        Box::new(right.clone()),
+                    ));
+                }
+            }
+        }
+
+        self.levels.push(level);
+    }
+}
+
+impl Iterator for LambdaTypeIter {
+    type Item = LambdaType;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.index < self.levels[self.size - 1].len() {
+                let result = self.levels[self.size - 1][self.index].clone();
+                self.index += 1;
+                return Some(result);
+            }
+
+            // Finished this size; move to the next.
+            self.size += 1;
+            self.index = 0;
+
+            if self.levels.len() < self.size {
+                self.generate_level(self.size);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
 
@@ -546,6 +613,25 @@ mod test {
             assert!(lifted.is_lifted_type_of(&base_type));
             assert_eq!(base_type.lift_type(), lifted);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn types_are_enumerated_in_order() -> anyhow::Result<()> {
+        let expected = [
+            "a", "e", "t", "<a,a>", "<a,e>", "<a,t>", "<e,a>", "<e,e>", "<e,t>", "<t,a>", "<t,e>",
+            "<t,t>",
+        ];
+
+        let actual: Vec<_> = LambdaType::all().take(expected.len()).collect();
+
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(LambdaType::from_string)
+            .collect::<Result<_, _>>()?;
+
+        assert_eq!(actual, expected);
 
         Ok(())
     }

@@ -6,7 +6,7 @@ use itertools::Itertools;
 
 use crate::lambda::{
     ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-    printing::AssociativityData::Var, types::LambdaType,
+    interpretation::Neutral, printing::AssociativityData::Var, types::LambdaType,
 };
 
 static VARIABLENAMES: [&str; 26] = [
@@ -71,6 +71,11 @@ impl<'a> VarContext<'a> {
         (self, to_var(n_var, Some(t)))
     }
 
+    pub(super) fn lambda_var_by_level(&self, bvar: usize) -> String {
+        let t = self.lambdas[bvar];
+        to_var(*self.get_map(Some(t)).get(&(bvar)).unwrap(), Some(t))
+    }
+
     pub(super) fn lambda_var(&self, bvar: usize) -> String {
         let t = self.lambdas[self.depth() - bvar - 1];
         to_var(
@@ -113,7 +118,7 @@ pub(super) enum AssociativityData<'a, T> {
 }
 
 impl<T: LambdaLanguageOfThought + Display + PartialEq> LambdaPool<'_, T> {
-    pub(crate) fn string<'a>(
+    pub(super) fn string<'a>(
         &'a self,
         expr: LambdaExprRef,
         c: VarContext,
@@ -237,7 +242,77 @@ impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Value<'_, '_, T> 
         c: VarContext,
         parent_is_app: bool,
     ) -> (String, AssociativityData<'a, T>) {
-        todo!()
+        match self {
+            Value::Base(literal) => (literal.to_string(), AssociativityData::Var),
+            Value::Function(value, lambda_type, _) => {
+                let (c, x) = c.inc_depth(lambda_type);
+                let (body, _) = value.string(c, false);
+
+                (
+                    format!("lambda {lambda_type} {x} {body}"),
+                    AssociativityData::Lambda,
+                )
+            }
+            Value::Neutral(neutral) => neutral.string(c, parent_is_app),
+            Value::Primitive { expr, args } => {
+                if args.is_empty() {
+                    (expr.to_string(), AssociativityData::Var)
+                } else {
+                    (
+                        format!(
+                            "{expr}({})",
+                            args.iter()
+                                .map(|x| x.string(c.clone(), parent_is_app).0)
+                                .join(",")
+                        ),
+                        AssociativityData::Var,
+                    )
+                }
+            }
+        }
+    }
+}
+
+impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Neutral<'_, '_, T> {
+    fn string<'a>(
+        &'a self,
+        c: VarContext,
+        parent_is_app: bool,
+    ) -> (String, AssociativityData<'a, T>) {
+        match self {
+            Neutral::FreeVar(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Var),
+            Neutral::BoundVar(d, _) => (c.lambda_var_by_level(*d), AssociativityData::Var),
+            Neutral::AppBoth(head, arg) => {
+                let (head, _) = head.string(c.clone(), parent_is_app);
+                let (arg, _) = arg.string(c, parent_is_app);
+                (format!("{head}({arg})"), AssociativityData::Var)
+            }
+            Neutral::AppHead(head, arg) => {
+                let (head, _) = head.string(c.clone(), parent_is_app);
+                let (arg, _) = arg.string(c, parent_is_app);
+                (format!("{head}({arg})"), AssociativityData::Var)
+            }
+            Neutral::AppArg(head, arg) => {
+                let (head, _) = head.string(c.clone(), parent_is_app);
+                let (arg, _) = arg.string(c, parent_is_app);
+                (format!("{head}({arg})"), AssociativityData::Var)
+            }
+            Neutral::Primitive { expr, args } => {
+                if args.is_empty() {
+                    (expr.to_string(), AssociativityData::Var)
+                } else {
+                    (
+                        format!(
+                            "{expr}({})",
+                            args.iter()
+                                .map(|x| x.string(c.clone(), parent_is_app).0)
+                                .join(",")
+                        ),
+                        AssociativityData::Var,
+                    )
+                }
+            }
+        }
     }
 }
 
