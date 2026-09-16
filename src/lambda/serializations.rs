@@ -3,14 +3,15 @@ use std::fmt::{Debug, Display};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
+use crate::lambda::interpretation::Neutral;
 use crate::lambda::parser::ParseLot;
 use crate::lambda::types::LambdaType;
-use crate::lambda::{ExprType, FreeVar};
+use crate::lambda::{ExprType, FreeVar, Literal, Value};
 use crate::lambda::{LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool};
 
 use crate::lambda::printing::VarContext;
 
-impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src> + PartialEq> Serialize
+impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src> + PartialEq + Clone> Serialize
     for RootedLambdaPool<'src, T>
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -36,13 +37,14 @@ where
 }
 
 #[derive(Clone)]
-enum BaseExpr<T> {
+enum BaseExpr<'src, T> {
     Variable(String, Option<LambdaType>),
     AnonymousVariable(usize, LambdaType),
+    Literal(Literal<'src>),
     Expr(T),
 }
 
-impl<T: LambdaLanguageOfThought> BaseExpr<T> {
+impl<T: LambdaLanguageOfThought> BaseExpr<'_, T> {
     fn infix(&self) -> bool {
         if let BaseExpr::Expr(x) = self {
             x.infix()
@@ -50,9 +52,17 @@ impl<T: LambdaLanguageOfThought> BaseExpr<T> {
             false
         }
     }
+
+    fn unary_associative(&self) -> bool {
+        if let BaseExpr::Expr(x) = self {
+            x.unary_associative()
+        } else {
+            false
+        }
+    }
 }
 
-impl<T: Serialize> Serialize for BaseExpr<T> {
+impl<'src, T: Serialize> Serialize for BaseExpr<'src, T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -69,22 +79,26 @@ impl<T: Serialize> Serialize for BaseExpr<T> {
             BaseExpr::Expr(expr) => {
                 serializer.serialize_newtype_variant("BaseExpr", 2, "Expr", expr)
             }
+            BaseExpr::Literal(literal) => {
+                serializer.serialize_newtype_variant("BaseExpr", 3, "Literal", literal)
+            }
         }
     }
 }
 
-impl<T: Display> Display for BaseExpr<T> {
+impl<T: Display> Display for BaseExpr<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BaseExpr::Variable(x, None) => write!(f, "{x}"),
             BaseExpr::Variable(x, Some(t)) => write!(f, "{x}#{t}"),
             BaseExpr::AnonymousVariable(x, t) => write!(f, "{x}#{t}"),
             BaseExpr::Expr(x) => write!(f, "{x}"),
+            BaseExpr::Literal(x) => write!(f, "{x}"),
         }
     }
 }
 
-impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<T> {
+impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PrintingAST::Application {
@@ -102,6 +116,22 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<T> {
                     })
                     .join(format!(" {head} ").as_str())
             ),
+            PrintingAST::Application {
+                head: Some(head),
+                children,
+            } if children.len() == 1 && head.unary_associative() => {
+                write!(
+                    f,
+                    "{}{}",
+                    head,
+                    if children[0].needs_parens() {
+                        format!("({})", children[0])
+                    } else {
+                        children[0].to_string()
+                    }
+                )
+            }
+
             PrintingAST::Application {
                 head: Some(head),
                 children,
@@ -138,28 +168,28 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<T> {
 }
 
 #[derive(Serialize)]
-enum PrintingAST<T> {
+pub(super) enum PrintingAST<'src, T> {
     Application {
-        head: Option<BaseExpr<T>>,
+        head: Option<BaseExpr<'src, T>>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
-        children: Vec<PrintingAST<T>>,
+        children: Vec<PrintingAST<'src, T>>,
     },
     Lambda {
         var: String,
         typ: LambdaType,
-        body: Box<PrintingAST<T>>,
+        body: Box<PrintingAST<'src, T>>,
     },
     Binder {
         expr: T,
         var_name: String,
         var_type: LambdaType,
         #[serde(skip_serializing_if = "Vec::is_empty")]
-        children: Vec<PrintingAST<T>>,
+        children: Vec<PrintingAST<'src, T>>,
     },
     #[serde(untagged)]
-    Expr(BaseExpr<T>),
+    Expr(BaseExpr<'src, T>),
 }
-impl<T> PrintingAST<T>
+impl<T> PrintingAST<'_, T>
 where
     T: LambdaLanguageOfThought,
 {
@@ -176,20 +206,20 @@ where
         }
     }
 }
-impl<T> PrintingAST<T>
-where
-    T: Clone,
-{
-    fn token(&self) -> Option<BaseExpr<T>> {
+impl<'src, T> PrintingAST<'src, T> {
+    fn token(&self) -> Option<&T> {
         match self {
-            PrintingAST::Application { head, .. } => head.clone(),
-            PrintingAST::Expr(head) => Some(head.clone()),
-            PrintingAST::Binder { expr, .. } => Some(BaseExpr::Expr(expr.clone())),
-            PrintingAST::Lambda { .. } => None,
+            PrintingAST::Expr(BaseExpr::Expr(expr))
+            | PrintingAST::Application {
+                head: Some(BaseExpr::Expr(expr)),
+                ..
+            }
+            | PrintingAST::Binder { expr, .. } => Some(expr),
+            _ => None,
         }
     }
 
-    fn children(self) -> Vec<PrintingAST<T>> {
+    fn children(self) -> Vec<PrintingAST<'src, T>> {
         match self {
             PrintingAST::Application { children, .. } | PrintingAST::Binder { children, .. } => {
                 children
@@ -261,9 +291,9 @@ where
 
 impl<'src, T> RootedLambdaPool<'src, T>
 where
-    T: Clone + LambdaLanguageOfThought + PartialEq,
+    T: LambdaLanguageOfThought + PartialEq + Clone,
 {
-    fn tokens(&self, expr: LambdaExprRef, c: VarContext) -> PrintingAST<T> {
+    pub(super) fn tokens(&self, expr: LambdaExprRef, c: VarContext) -> PrintingAST<'src, T> {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
                 let (c, var) = c.inc_depth(lambda_type);
@@ -291,7 +321,7 @@ where
                 let f = self.tokens(*subformula, c.clone());
                 let arg = self.tokens(*argument, c.clone());
                 match (f.token(), arg.token()) {
-                    (Some(BaseExpr::Expr(x)), Some(BaseExpr::Expr(y))) => {
+                    (Some(x), Some(y)) => {
                         if x.commutative() && x.associative() && x == y {
                             f.steal_children(arg)
                         } else {
@@ -331,9 +361,76 @@ where
     }
 }
 
+impl<'src, 'pool, T> Value<'src, 'pool, T>
+where
+    T: LambdaLanguageOfThought + PartialEq + Clone,
+{
+    pub(super) fn tokens(&self, c: VarContext) -> PrintingAST<'src, T> {
+        match self {
+            Value::Base(literal) => PrintingAST::Expr(BaseExpr::Literal(literal.clone())),
+            Value::Function(body, lambda_type, _) => {
+                let (c, var) = c.inc_depth(lambda_type);
+                PrintingAST::Lambda {
+                    var,
+                    typ: (*lambda_type).clone(),
+                    body: Box::new(body.tokens(c)),
+                }
+            }
+            Value::Neutral(x) => x.tokens(c),
+            Value::Primitive { expr, args } => PrintingAST::Application {
+                //TODO: Peel off children so that commutative expressions are flattened.
+                head: Some(BaseExpr::Expr(expr.clone())),
+                children: args.iter().map(|x| x.tokens(c.clone())).collect(),
+            },
+        }
+    }
+}
+
+impl<'src, 'pool, T> Neutral<'src, 'pool, T>
+where
+    T: LambdaLanguageOfThought + PartialEq + Clone,
+{
+    pub(super) fn tokens(&self, c: VarContext) -> PrintingAST<'src, T> {
+        let (f, arg) = match self {
+            Neutral::FreeVar(FreeVar::Anonymous(x), lambda_type) => {
+                return PrintingAST::Expr(BaseExpr::AnonymousVariable(*x, (*lambda_type).clone()));
+            }
+            Neutral::FreeVar(FreeVar::Named(x), lambda_type) => {
+                return PrintingAST::Expr(BaseExpr::Variable(
+                    x.to_string(),
+                    Some((*lambda_type).clone()),
+                ));
+            }
+            Neutral::BoundVar(d, _) => {
+                return PrintingAST::Expr(BaseExpr::Variable(c.lambda_var_by_level(*d), None));
+            }
+            Neutral::Primitive { expr, args } => {
+                return PrintingAST::Application {
+                    //TODO: Peel off children so that commutative expressions are flattened.
+                    head: Some(BaseExpr::Expr(expr.clone())),
+                    children: args.iter().map(|x| x.tokens(c.clone())).collect(),
+                };
+            }
+            Neutral::AppBoth(head, arg) => (head.tokens(c.clone()), arg.tokens(c)),
+            Neutral::AppHead(head, arg) => (head.tokens(c.clone()), arg.tokens(c)),
+            Neutral::AppArg(head, arg) => (head.tokens(c.clone()), arg.tokens(c)),
+        };
+        match (f.token(), arg.token()) {
+            (Some(x), Some(y)) => {
+                if x.commutative() && x.associative() && x == y {
+                    f.steal_children(arg)
+                } else {
+                    f.add_child(arg)
+                }
+            }
+            (_, _) => f.add_child(arg),
+        }
+    }
+}
+
 ///A special kind of `RootedLambdaPool` that should be used to display in fancy math modes, e.g. with
 ///Typst or (potentially) LaTeX.
-pub struct MathModeExpression<T>(PrintingAST<T>);
+pub struct MathModeExpression<'src, T>(PrintingAST<'src, T>);
 
 impl<'src, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq> RootedLambdaPool<'src, T>
 where
@@ -342,12 +439,12 @@ where
 {
     ///Get a [`MathModeExpression`] to be serialized for documents.
     #[must_use]
-    pub fn for_document(&self) -> MathModeExpression<T> {
+    pub fn for_document(&self) -> MathModeExpression<'src, T> {
         MathModeExpression(self.tokens(self.root, VarContext::default()))
     }
 }
 
-impl<T> Serialize for MathModeExpression<T>
+impl<T> Serialize for MathModeExpression<'_, T>
 where
     T: Serialize,
 {
@@ -383,11 +480,11 @@ mod test {
     fn serializing() -> anyhow::Result<()> {
         for (statement, json) in [
             (
-                "~(AgentOf(a_John, e_0))",
+                "~AgentOf(a_John, e_0)",
                 "{\"Application\":{\"head\":{\"Expr\":\"Not\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":\"AgentOf\"},\"children\":[{\"Expr\":{\"Actor\":\"John\"}},{\"Expr\":{\"Event\":0}}]}}]}}",
             ),
             (
-                "pa_Red(a_John) & ~(pa_Red(a_Mary))",
+                "pa_Red(a_John) & ~pa_Red(a_Mary)",
                 "{\"Application\":{\"head\":{\"Expr\":\"And\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}},{\"Application\":{\"head\":{\"Expr\":\"Not\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}}]}}]}}]}}",
             ),
             (

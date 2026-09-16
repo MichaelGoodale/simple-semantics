@@ -6,7 +6,7 @@ use itertools::Itertools;
 
 use crate::lambda::{
     ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, RootedLambdaPool,
-    interpretation::Neutral, types::LambdaType,
+    interpretation::Neutral, serializations::PrintingAST, types::LambdaType,
 };
 
 static VARIABLENAMES: [&str; 26] = [
@@ -92,12 +92,12 @@ impl<'a> VarContext<'a> {
     }
 }
 
-impl<T: LambdaLanguageOfThought + Display + PartialEq> std::fmt::Display
+impl<T: LambdaLanguageOfThought + Display + Clone + PartialEq> std::fmt::Display
     for RootedLambdaPool<'_, T>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (string, _) = self.pool.string(self.root(), VarContext::default(), false);
-        f.write_str(string.as_str())
+        let x = self.tokens(self.root, VarContext::default());
+        write!(f, "{x}")
     }
 }
 
@@ -117,122 +117,9 @@ pub(super) enum AssociativityData<'a, T> {
     Prefix,
 }
 
-impl<T: LambdaLanguageOfThought + Display + PartialEq> LambdaPool<'_, T> {
-    pub(super) fn string<'a>(
-        &'a self,
-        expr: LambdaExprRef,
-        c: VarContext,
-        parent_is_app: bool,
-    ) -> (String, AssociativityData<'a, T>) {
-        match self.get(expr) {
-            LambdaExpr::Lambda(child, lambda_type) => {
-                let (c, var) = c.inc_depth(lambda_type);
-                (
-                    format!(
-                        "lambda {} {} {}",
-                        lambda_type,
-                        var,
-                        self.string(*child, c, false).0
-                    ),
-                    AssociativityData::Lambda,
-                )
-            }
-            LambdaExpr::Application {
-                subformula,
-                argument,
-            } => {
-                let (sub, associative) = self.string(*subformula, c.clone(), true);
-                let (mut arg, arg_asso) = self.string(*argument, c, false); // false
-                // since apps only collapse if they're a left chain
-
-                if let AssociativityData::Infix(t1, _) = arg_asso
-                    && let AssociativityData::Infix(t2, _) = associative
-                    && t1 != t2
-                {
-                    arg = format!("({arg})");
-                }
-
-                let mut s = match associative {
-                    AssociativityData::Infix(x, InfixPosition::Op) if parent_is_app => {
-                        return (
-                            format!("{arg} {sub}"),
-                            AssociativityData::Infix(x, InfixPosition::DoneLeftOnly),
-                        );
-                    }
-                    AssociativityData::Infix(x, InfixPosition::DoneLeftOnly) => {
-                        return (
-                            format!("{sub} {arg}"),
-                            AssociativityData::Infix(x, InfixPosition::Done),
-                        );
-                    }
-                    AssociativityData::Lambda
-                    | AssociativityData::Infix(_, InfixPosition::Done) => {
-                        format!("({sub})({arg}")
-                    }
-                    AssociativityData::Prefix => {
-                        return match arg_asso {
-                            AssociativityData::App
-                            | AssociativityData::Var
-                            | AssociativityData::Prefix => {
-                                (format!("{sub}{arg}"), AssociativityData::Var)
-                            }
-                            AssociativityData::Lambda | AssociativityData::Infix(..) => {
-                                (format!("{sub}({arg})"), AssociativityData::Var)
-                            }
-                        };
-                    }
-                    AssociativityData::Var | AssociativityData::Infix(_, InfixPosition::Op) => {
-                        format!("{sub}({arg}")
-                    }
-                    AssociativityData::App => format!("{sub}{arg}"),
-                };
-
-                if parent_is_app {
-                    s.push_str(", ");
-                } else {
-                    s.push(')');
-                }
-
-                (s, AssociativityData::App)
-            }
-            LambdaExpr::BoundVariable(bvar, _) => (c.lambda_var(*bvar), AssociativityData::Var),
-            LambdaExpr::FreeVariable(fvar, t) => (format!("{fvar}#{t}"), AssociativityData::Var),
-            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => (
-                format!("{x}"),
-                if x.commutative() && x.infix() {
-                    AssociativityData::Infix(x, InfixPosition::Op)
-                } else if x.unary_associative() {
-                    AssociativityData::Prefix
-                } else {
-                    AssociativityData::Var
-                },
-            ),
-            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVar(body)) => {
-                let (c, var_string) = c.inc_depth(x.var_type().expect(
-                    "Implementation error, if you bind a var, the expression must bind vars!",
-                ));
-                let (body, _) = self.string(*body, c.clone(), false);
-                (format!("{x}({var_string}, {body})"), AssociativityData::Var)
-            }
-            LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVarTwoBodies(l, r)) => {
-                let (c, var_string) = c.inc_depth(x.var_type().expect(
-                    "Implementation error, if you bind a var, the expression must bind vars!",
-                ));
-                let (l, _) = self.string(*l, c.clone(), false);
-                let (r, _) = self.string(*r, c, false);
-                (
-                    format!("{x}({var_string}, {l}, {r})"),
-                    AssociativityData::Var,
-                )
-            }
-        }
-    }
-}
-
 impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Display for Value<'_, '_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (string, _) = self.string(VarContext::default(), false);
-        f.write_str(string.as_str())
+        write!(f, "{}", self.tokens(VarContext::default()))
     }
 }
 

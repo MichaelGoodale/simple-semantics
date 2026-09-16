@@ -18,6 +18,7 @@ use crate::{
 };
 use chumsky::container::Seq;
 use itertools::Itertools;
+use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -30,7 +31,7 @@ impl From<ValueId> for usize {
 }
 
 ///A representation of literals of a few basic types.
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize)]
 pub enum Literal<'a> {
     ///Booleans, type: t
     Bool(bool),
@@ -1188,7 +1189,7 @@ mod test {
                 "False",
             ),
             (
-                "some_e(all_e, lambda e x some(lambda a y ~pa_kind(y), lambda a y AgentOf(y,x)))",
+                "some_e(all_e, lambda e x some(lambda a y ~pa_kind(y), lambda a y AgentOf(y, x)))",
                 "True",
             ),
             (
@@ -1203,6 +1204,10 @@ mod test {
                 "lambda a x lambda a y pa_kind(x)",
                 "lambda a x lambda a y {a_phil}(x)",
             ),
+            (
+                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
+                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
+            ),
         ];
 
         let n_width = data
@@ -1211,12 +1216,17 @@ mod test {
             .max()
             .unwrap();
 
-        for (phi, val) in data {
-            print!("[{phi}] = {val}");
-            let n_dots = n_width - phi.chars().count() - val.chars().count();
+        for (phi_s, val) in data {
+            print!("[{phi_s}] = {val}");
+            let n_dots = n_width - phi_s.chars().count() - val.chars().count();
             print!("{}", ".".repeat(n_dots));
 
-            let phi = RootedLambdaPool::parse(phi)?;
+            let phi = RootedLambdaPool::parse(phi_s)?;
+            assert_eq!(
+                phi.to_string(),
+                phi_s,
+                "Printed, parsed value {phi} != string {phi_s}"
+            );
             let calculated_value = phi.interp(&scenario)?;
             if calculated_value.to_string() != val {
                 println!("❌");
