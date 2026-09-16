@@ -95,7 +95,11 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<T> {
                 "{}",
                 children
                     .iter()
-                    .map(|x| x.to_string())
+                    .map(|x| if x.needs_parens() {
+                        format!("({x})")
+                    } else {
+                        x.to_string()
+                    })
                     .join(format!(" {head} ").as_str())
             ),
             PrintingAST::Application {
@@ -155,7 +159,23 @@ enum PrintingAST<T> {
     #[serde(untagged)]
     Expr(BaseExpr<T>),
 }
-
+impl<T> PrintingAST<T>
+where
+    T: LambdaLanguageOfThought,
+{
+    fn needs_parens(&self) -> bool {
+        match self {
+            PrintingAST::Application {
+                head: Some(head),
+                children,
+            } if head.infix() && children.len() >= 2 => true,
+            PrintingAST::Application { .. } => false,
+            PrintingAST::Lambda { .. } => true,
+            PrintingAST::Binder { .. } => false,
+            PrintingAST::Expr(_) => false,
+        }
+    }
+}
 impl<T> PrintingAST<T>
 where
     T: Clone,
@@ -384,35 +404,35 @@ mod test {
             ),
             (
                 "every_e(x, all_e(x), PatientOf(a_Mary, x))",
-                "[{\"BindingToken\":{\"expr\":{\"Quantifier\":\"every\"},\"var_name\":\"x\",\"var_type\":\"e\"}},\"OpenDelim\",{\"Const\":\"all_e\"},\"OpenDelim\",{\"Variable\":\"x\"},\"CloseDelim\",\"ArgSep\",{\"Func\":\"PatientOf\"},\"OpenDelim\",{\"Actor\":\"Mary\"},\"ArgSep\",{\"Variable\":\"x\"},\"CloseDelim\",\"CloseDelim\"]",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Event\"}},\"var_name\":\"x\",\"var_type\":\"e\",\"children\":[{\"Application\":{\"head\":{\"Expr\":\"EveryEvent\"},\"children\":[{\"Variable\":\"x\"}]}},{\"Application\":{\"head\":{\"Expr\":\"PatientOf\"},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}},{\"Variable\":\"x\"}]}}]}}",
             ),
             (
-                "(cool#<a,t>)(a_John)",
-                "[{\"FreeVariable\":[{\"Named\":\"cool\"},\"<a,t>\"]},\"OpenDelim\",{\"Actor\":\"John\"},\"CloseDelim\"]",
+                "cool#<a,t>(a_John)",
+                "{\"Application\":{\"head\":{\"Variable\":\"cool\"},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}}",
             ),
             (
-                "(bad#<a,t>)(man#a)",
-                "[{\"FreeVariable\":[{\"Named\":\"bad\"},\"<a,t>\"]},\"OpenDelim\",{\"FreeVariable\":[{\"Named\":\"man\"},\"a\"]},\"CloseDelim\"]",
+                "bad#<a,t>(man#a)",
+                "{\"Application\":{\"head\":{\"Variable\":\"bad\"},\"children\":[{\"Variable\":\"man\"}]}}",
             ),
             (
-                "((loves#<a,<a,t>>)(a_mary))(a_john)",
-                "[{\"FreeVariable\":[{\"Named\":\"loves\"},\"<a,<a,t>>\"]},\"OpenDelim\",{\"Actor\":\"mary\"},\"ArgSep\",{\"Actor\":\"john\"},\"CloseDelim\"]",
+                "loves#<a,<a,t>>(a_mary, a_john)",
+                "{\"Application\":{\"head\":{\"Variable\":\"loves\"},\"children\":[{\"Expr\":{\"Actor\":\"mary\"}},{\"Expr\":{\"Actor\":\"john\"}}]}}",
             ),
             (
                 "True | (True & False)",
-                "[{\"Const\":\"True\"},{\"Func\":\"|\"},\"OpenDelim\",{\"Const\":\"True\"},{\"Func\":\"&\"},{\"Const\":\"False\"},\"CloseDelim\"]",
+                "{\"Application\":{\"head\":{\"Expr\":\"Or\"},\"children\":[{\"Expr\":\"Tautology\"},{\"Application\":{\"head\":{\"Expr\":\"And\"},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Contradiction\"}]}}]}}",
             ),
             (
                 "(True | True) & False",
-                "[\"OpenDelim\",{\"Const\":\"True\"},{\"Func\":\"|\"},{\"Const\":\"True\"},\"CloseDelim\",{\"Func\":\"&\"},{\"Const\":\"False\"}]",
+                "{\"Application\":{\"head\":{\"Expr\":\"And\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":\"Or\"},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Tautology\"}]}},{\"Expr\":\"Contradiction\"}]}}",
             ),
             (
-                "lambda a x (lambda a y (likes#<a,<a,t>>(x))(y))",
-                "[{\"Lambda\":[\"x\",\"a\"]},{\"Lambda\":[\"y\",\"a\"]},{\"FreeVariable\":[{\"Named\":\"likes\"},\"<a,<a,t>>\"]},\"OpenDelim\",{\"Variable\":\"x\"},\"ArgSep\",{\"Variable\":\"y\"},\"CloseDelim\"]",
+                "lambda a x lambda a y likes#<a,<a,t>>(x, y)",
+                "{\"Lambda\":{\"var\":\"x\",\"typ\":\"a\",\"body\":{\"Lambda\":{\"var\":\"y\",\"typ\":\"a\",\"body\":{\"Application\":{\"head\":{\"Variable\":\"likes\"},\"children\":[{\"Variable\":\"x\"},{\"Variable\":\"y\"}]}}}}}}",
             ),
             (
                 "lambda <a,t> P iota(x, P(x))",
-                "[{\"Lambda\":[\"P\",\"<a,t>\"]},{\"BindingToken\":{\"expr\":{\"Func\":\"iota\"},\"var_name\":\"x\",\"var_type\":\"a\"}},\"OpenDelim\",{\"Variable\":\"P\"},\"OpenDelim\",{\"Variable\":\"x\"},\"CloseDelim\",\"CloseDelim\"]",
+                "{\"Lambda\":{\"var\":\"P\",\"typ\":\"<a,t>\",\"body\":{\"Binder\":{\"expr\":{\"Iota\":\"Actor\"},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Variable\":\"P\"},\"children\":[{\"Variable\":\"x\"}]}}]}}}}",
             ),
         ] {
             let expression = RootedLambdaPool::<Expr>::parse(statement)?;
