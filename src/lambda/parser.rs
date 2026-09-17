@@ -1,5 +1,5 @@
+//! Function and errors to parse [`RootedLambdaPool`] with [chumsky](https://crates.io/crates/chumsky).
 use crate::{
-    Actor, Event,
     lambda::{
         Bvar, ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
         PrimitiveVarType, RootedLambdaPool,
@@ -17,7 +17,6 @@ use chumsky::{
     text::{inline_whitespace, int},
 };
 use std::{
-    borrow::Cow,
     collections::{HashMap, VecDeque},
     fmt::{Debug, Display},
     ops::Range,
@@ -26,7 +25,7 @@ use std::{
 use thiserror::Error;
 
 ///Error in parsing a lambda expression
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub struct LambdaParseError(Vec<OwnedParseError>, String);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -35,8 +34,9 @@ struct QuantifierProblem {
     found: LambdaType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum OwnedParseError {
+    EmptyString,
     ParseError {
         message: String,
         reason: String,
@@ -81,6 +81,7 @@ impl Display for LambdaParseError {
         let mut buf = Vec::new();
         for e in &self.0 {
             match e {
+                OwnedParseError::EmptyString => return write!(f, "String is empty!"),
                 OwnedParseError::ParseError {
                     message,
                     reason,
@@ -255,7 +256,6 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
             var,
             lambda_type,
         } => {
-            let var = force_unwrap_cow(&var);
             variable_names.bind_var(var, lambda_depth + 1, lambda_type.clone());
             let body = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1)?;
             variable_names.unbind(var);
@@ -276,7 +276,6 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
                 expr.inner
             );
 
-            let var = force_unwrap_cow(&var);
             variable_names.bind_var(var, lambda_depth + 1, var_type.clone());
             let body_span = body.span.into_range();
             let body_ref = add_to_pool(*body, pool, variable_names, errors, lambda_depth + 1)?;
@@ -325,7 +324,6 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
                 expr.inner
             );
 
-            let var = force_unwrap_cow(&var);
             variable_names.bind_var(var, lambda_depth + 1, var_type.clone());
             let bodies = [*body1, *body2];
             let mut refs = [None, None];
@@ -378,7 +376,6 @@ fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
             )
         }
         ParseTree::Variable(var) => {
-            let var = force_unwrap_cow(&var);
             if let Some(x) = variable_names.to_expr(var, lambda_depth) {
                 x
             } else {
@@ -417,13 +414,6 @@ fn into_pool<T: LambdaLanguageOfThought + Debug>(
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 struct VariableContext<'src>(HashMap<&'src str, Vec<(Bvar, LambdaType)>>, u32);
 
-fn force_unwrap_cow<'b>(x: &Cow<'b, str>) -> &'b str {
-    match x {
-        Cow::Borrowed(x) => x,
-        Cow::Owned(_) => panic!("Parsing may only use borrowed strs!"),
-    }
-}
-
 impl<'src> VariableContext<'src> {
     fn to_expr<T>(&self, variable: &'src str, lambda_depth: usize) -> Option<LambdaExpr<'src, T>> {
         match self.0.get(variable) {
@@ -457,9 +447,9 @@ enum ParseTree<'src, T> {
     Lambda {
         body: Box<Spanned<ParseTree<'src, T>>>,
         lambda_type: LambdaType,
-        var: Cow<'src, str>,
+        var: &'src str,
     },
-    Variable(Cow<'src, str>),
+    Variable(&'src str),
     FreeVariable(FreeVar<'src>, LambdaType),
     Application {
         subformula: Box<Spanned<ParseTree<'src, T>>>,
@@ -469,13 +459,13 @@ enum ParseTree<'src, T> {
     LanguageOfThoughtExprBindOne {
         expr: Spanned<T>,
         body: Box<Spanned<ParseTree<'src, T>>>,
-        var: Cow<'src, str>,
+        var: &'src str,
     },
     LanguageOfThoughtExprBindTwo {
         expr: Spanned<T>,
         body1: Box<Spanned<ParseTree<'src, T>>>,
         body2: Box<Spanned<ParseTree<'src, T>>>,
-        var: Cow<'src, str>,
+        var: &'src str,
     },
 }
 
@@ -489,14 +479,27 @@ where
         .to_slice()
 }
 
+///Trait for parseable LOTs.
 pub trait ParseLot<'src> {
+    ///The representation of a token of an expression. Typically will be Self.
     type Token;
 
+    ///A chumsky parser that converts from `&str` to `Self::Token`
     fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>>;
+
+    ///Can the expression be used as an infix, like "or" or "and".
     fn is_infix(token: &Self::Token) -> bool;
+
+    ///Can the expression be used as a prefix, like `not`
     fn is_prefix(token: &Self::Token) -> bool;
+
+    ///Can the expression be used syncategorematically, e.g. a quantifier.
     fn bind_var_type(token: &Self::Token) -> PrimitiveVarType;
+
+    ///Convert from a token to `Self`. May involve cloning.
     fn into_expr(token: Self::Token) -> Self;
+
+    ///Convert an expression to a token.
     fn as_token(&self) -> Self::Token;
 }
 
@@ -526,74 +529,39 @@ impl<'src> ParseLot<'src> for () {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum ExprToken<'src> {
-    Constant(Constant<'src>),
-    BinOp(BinOp),
-    MonOp(MonOp),
-    Actor(Actor<'src>),
-    Event(Event),
-    Iota(ActorOrEvent),
-    Quantifier(Quantifier, ActorOrEvent),
-}
-
-impl Display for ExprToken<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExprToken::Actor(a) => write!(f, "a_{a}"),
-            ExprToken::Event(n) => write!(f, "e_{n}"),
-            ExprToken::BinOp(bin_op) => write!(f, "{bin_op}"),
-            ExprToken::Quantifier(quantifier, actor_or_event) => write!(
-                f,
-                "{quantifier}{}",
-                match actor_or_event {
-                    ActorOrEvent::Actor => "",
-                    ActorOrEvent::Event => "_e",
-                }
-            ),
-            ExprToken::Iota(ActorOrEvent::Event) => write!(f, "iota_e"),
-            ExprToken::Iota(ActorOrEvent::Actor) => write!(f, "iota"),
-            ExprToken::Constant(constant) => write!(f, "{constant}"),
-            ExprToken::MonOp(mon_op) => write!(f, "{mon_op}"),
-        }
-    }
-}
-
 impl<'src> ParseLot<'src> for Expr<'src> {
-    type Token = ExprToken<'src>;
+    type Token = Expr<'src>;
 
     fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>> {
         choice((
-            just("True").to(ExprToken::Constant(Constant::Tautology)),
-            just("False").to(ExprToken::Constant(Constant::Contradiction)),
-            just("all_a").to(ExprToken::Constant(Constant::Everyone)),
-            just("all_e").to(ExprToken::Constant(Constant::EveryEvent)),
-            just('&').to(ExprToken::BinOp(BinOp::And)),
-            just('|').to(ExprToken::BinOp(BinOp::Or)),
-            just('~').to(ExprToken::MonOp(MonOp::Not)),
-            just("AgentOf").to(ExprToken::BinOp(BinOp::AgentOf)),
-            just("PatientOf").to(ExprToken::BinOp(BinOp::PatientOf)),
-            just("iota_e").to(ExprToken::Iota(ActorOrEvent::Event)),
-            just("iota").to(ExprToken::Iota(ActorOrEvent::Actor)),
+            just("True").to(Expr::Constant(Constant::Tautology)),
+            just("False").to(Expr::Constant(Constant::Contradiction)),
+            just("all_a").to(Expr::Constant(Constant::Everyone)),
+            just("all_e").to(Expr::Constant(Constant::EveryEvent)),
+            just('&').to(Expr::Binary(BinOp::And)),
+            just('|').to(Expr::Binary(BinOp::Or)),
+            just('~').to(Expr::Unary(MonOp::Not)),
+            just("AgentOf").to(Expr::Binary(BinOp::AgentOf)),
+            just("PatientOf").to(Expr::Binary(BinOp::PatientOf)),
+            just("iota_e").to(Expr::Unary(MonOp::Iota(ActorOrEvent::Event))),
+            just("iota").to(Expr::Unary(MonOp::Iota(ActorOrEvent::Actor))),
             choice((
                 just("every").to(Quantifier::Universal),
                 just("some").to(Quantifier::Existential),
             ))
             .then(just("_e").or_not())
-            .map(|(q, t)| {
-                ExprToken::Quantifier(
-                    q,
-                    if t.is_some() {
-                        ActorOrEvent::Event
-                    } else {
-                        ActorOrEvent::Actor
-                    },
-                )
+            .map(|(q, t)| Expr::Quantifier {
+                quantifier: q,
+                var_type: if t.is_some() {
+                    ActorOrEvent::Event
+                } else {
+                    ActorOrEvent::Actor
+                },
             }),
-            just("a_").ignore_then(keyword()).map(ExprToken::Actor),
+            just("a_").ignore_then(keyword()).map(Expr::Actor),
             just("e_")
                 .ignore_then(text::int(10))
-                .map(|s: &str| ExprToken::Event(s.parse().unwrap())),
+                .map(|s: &str| Expr::Event(s.parse().unwrap())),
             just("p")
                 .ignore_then(
                     just("a")
@@ -602,65 +570,42 @@ impl<'src> ParseLot<'src> for Expr<'src> {
                 )
                 .then_ignore(just("_"))
                 .then(keyword())
-                .map(|(t, s)| ExprToken::Constant(Constant::Property(s, t))),
+                .map(|(t, s)| Expr::Constant(Constant::Property(s, t))),
         ))
     }
 
     fn is_infix(token: &Self::Token) -> bool {
-        matches!(token, ExprToken::BinOp(BinOp::And | BinOp::Or))
+        token.infix()
     }
 
     fn is_prefix(token: &Self::Token) -> bool {
-        matches!(token, ExprToken::MonOp(MonOp::Not))
+        token.unary_associative()
     }
 
     fn into_expr(token: Self::Token) -> Self {
-        match token {
-            ExprToken::Constant(constant) => Expr::Constant(constant),
-            ExprToken::BinOp(bin_op) => Expr::Binary(bin_op),
-            ExprToken::MonOp(mon_op) => Expr::Unary(mon_op),
-            ExprToken::Actor(a) => Expr::Actor(a),
-            ExprToken::Event(e) => Expr::Event(e),
-            ExprToken::Iota(actor_or_event) => Expr::Unary(MonOp::Iota(actor_or_event)),
-            ExprToken::Quantifier(quantifier, actor_or_event) => Expr::Quantifier {
-                quantifier,
-                var_type: actor_or_event,
-            },
-        }
+        token
     }
 
     fn bind_var_type(token: &Self::Token) -> PrimitiveVarType {
         match token {
-            ExprToken::Iota(_) => PrimitiveVarType::BindVar,
-            ExprToken::Quantifier(..) => PrimitiveVarType::BindVarTwoBodies,
+            Expr::Unary(MonOp::Iota(_)) => PrimitiveVarType::BindVar,
+            Expr::Quantifier { .. } => PrimitiveVarType::BindVarTwoBodies,
             _ => PrimitiveVarType::NoVar,
         }
     }
 
     fn as_token(&self) -> Self::Token {
-        match self {
-            Expr::Quantifier {
-                quantifier,
-                var_type,
-            } => ExprToken::Quantifier(*quantifier, *var_type),
-            Expr::Actor(a) => ExprToken::Actor(a),
-            Expr::Event(e) => ExprToken::Event(*e),
-            Expr::Binary(bin_op) => ExprToken::BinOp(*bin_op),
-            Expr::Unary(mon_op) => ExprToken::MonOp(*mon_op),
-            Expr::Constant(constant) => ExprToken::Constant(*constant),
-        }
+        *self
     }
 }
 
-//We use Cow here instead of &'src str so that Token can be re-used in fancy serialization where
-//variable names have to be invented.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) enum Token<'src, T: ParseLot<'src>> {
     OpenDelim,
     ArgSep,
     CloseDelim,
-    Lambda(LambdaType, Cow<'src, str>),
-    Variable(Cow<'src, str>),
+    Lambda(LambdaType, &'src str),
+    Variable(&'src str),
     FreeVariable(FreeVar<'src>, LambdaType),
     LanguageOfThought(T::Token),
 }
@@ -700,7 +645,7 @@ where
             .then_ignore(inline_whitespace().at_least(1))
             .then(keyword())
             .then_ignore(inline_whitespace().at_least(1))
-            .map(|(t, x)| Token::Lambda(t, Cow::Borrowed(x))),
+            .map(|(t, x)| Token::Lambda(t, x)),
         int(10)
             .then(just("#").ignore_then(core_type_parser()))
             .map(|(var, t)| {
@@ -712,7 +657,7 @@ where
                 if let Some(t) = lambda_type {
                     Token::FreeVariable(FreeVar::Named(var), t)
                 } else {
-                    Token::Variable(Cow::Borrowed(var))
+                    Token::Variable(var)
                 }
             }),
     ))
@@ -854,6 +799,10 @@ where
 }
 
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
+///
+///# Errors
+///
+///Returns a [`LambdaParseError`] if the expression is malformed. May display multiple errors at once.
 pub fn parse_lot<'src, T>(s: &'src str) -> Result<RootedLambdaPool<'src, T>, LambdaParseError>
 where
     T: ParseLot<'src> + LambdaLanguageOfThought + Clone + PartialEq + Debug,
@@ -869,7 +818,7 @@ where
             .iter()
             .map(|x| x.span)
             .reduce(|x, acc| acc.union(x))
-            .unwrap();
+            .ok_or_else(|| LambdaParseError(vec![OwnedParseError::EmptyString], String::new()))?;
         let (ast, parse_errs) = language_parser()
             .parse(tokens.as_slice().split_spanned(e))
             .into_output_errors();
@@ -924,6 +873,10 @@ mod tests {
 
     #[test]
     fn parse_lambda() -> anyhow::Result<()> {
+        assert_eq!(
+            RootedLambdaPool::<Expr>::parse("").err().unwrap(),
+            LambdaParseError(vec![OwnedParseError::EmptyString], String::new())
+        );
         check_lambdas(
             "lambda  <e,t> P  (lambda e x (P(x)))",
             "<<e,t>, <e,t>>",

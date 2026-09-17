@@ -22,9 +22,10 @@ use types::{LambdaType, TypeError};
 use crate::Scenario;
 
 pub mod enumerator;
-mod parser;
+pub mod parser;
 mod printing;
 mod serializations;
+pub use serializations::MathModeExpression;
 
 pub(crate) type Bvar = usize;
 
@@ -468,7 +469,7 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
         self.pool.get_next_app(self.root).is_none()
     }
 
-    ///Creates an anonymous free variable with [`index`] of type [`t`]
+    ///Creates an anonymous free variable with `index` of type `t`
     #[must_use]
     pub fn new_free_variable(index: usize, t: LambdaType) -> RootedLambdaPool<'src, T> {
         RootedLambdaPool {

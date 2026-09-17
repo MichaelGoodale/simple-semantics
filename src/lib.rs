@@ -197,7 +197,7 @@ impl<'a> ScenarioDataset<'a> {
     ///Empty lines are ignored
     ///
     ///# Errors
-    ///Returns a [`LambdaParseError`] if the string is malformed and doesn't represent a
+    ///Returns a [`ScenarioParsingError`] if the string is malformed and doesn't represent a
     ///[`ScenarioDataset`]
     pub fn parse(s: &'a str) -> Result<Self, ScenarioParsingError> {
         let parser = scenario::scenario_dataset_parser();
@@ -210,7 +210,7 @@ impl<'a> ScenarioDataset<'a> {
     ///Empty lines are ignored (to play nicely with [`std::str::Split`])
     ///
     ///# Errors
-    ///Returns a [`LambdaParseError`] if the string is malformed and doesn't represent a
+    ///Returns a [`ScenarioParsingError`] if the string is malformed and doesn't represent a
     ///[`ScenarioDataset`]
     #[expect(clippy::missing_panics_doc)] //ok because ScenarioDataset will panic iff scenario.len() != sentences.len()
     pub fn parse_rows<I: Iterator<Item = &'a str>>(i: I) -> Result<Self, ScenarioParsingError> {
@@ -249,7 +249,7 @@ impl Display for ScenarioParsingError {
 
 pub mod lambda;
 pub mod language;
-mod utils;
+pub mod utils;
 pub use utils::ExpressionBead;
 mod scenario;
 pub use scenario::{EventType, PossibleEvent, ScenarioIterator};

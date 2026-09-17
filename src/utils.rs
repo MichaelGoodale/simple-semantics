@@ -1,3 +1,4 @@
+//! Various helper utilities for the library
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -52,7 +53,7 @@ impl<'a, T: LambdaLanguageOfThought> RootedLambdaPool<'a, T> {
     ///
     ///# Errors
     ///
-    ///Returrns [`BeadError`] if the
+    ///Returns [`BeadError`] if the iterator doesn't make a valid thread of beads.
     pub fn from_beads(
         iter: impl IntoIterator<Item = ExpressionBead<'a, T>>,
     ) -> Result<RootedLambdaPool<'a, T>, BeadError> {
