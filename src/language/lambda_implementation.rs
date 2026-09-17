@@ -15,7 +15,6 @@ impl<'src> Constant<'src> {
     ///Gets the literal value of a constant.
     ///
     ///# Errors
-    ///
     ///[`EvaluationError::UndefinedExpression`] if a property doesn't exist in the scenario.
     pub fn eval(&self, scenario: &Scenario<'src>) -> Result<Literal<'src>, EvaluationError> {
         Ok(match self {
@@ -62,11 +61,14 @@ impl MonOp {
     ///
     ///# Errors
     ///
-    ///[`EvaluationError::UndefinedExpression`] if an iota has more than one possible value in the
-    ///scenario
-    pub fn eval<'src, 'pool>(
+    ///- [`EvaluationError::UndefinedExpression`] if an iota has more than one possible value in the scenario
+    ///- [`EvaluationError::Stuck`] if the argument cannot be converted to a [`Literal`]
+    ///
+    ///# Panics
+    /// Will panic if the value types are not correct.
+    pub fn eval<'src>(
         &self,
-        argument: Value<'src, 'pool, Expr<'src>>,
+        argument: Value<'src, '_, Expr<'src>>,
         scenario: &Scenario<'src>,
     ) -> Result<Literal<'src>, EvaluationError> {
         let argument = argument.into_base_value_with_scenario(scenario)?.unwrap();
@@ -97,7 +99,11 @@ impl BinOp {
     ///
     ///# Errors
     ///
-    ///[`EvaluationError::UndefinedExpression`] if a property doesn't exist in the scenario.
+    ///- [`EvaluationError::UndefinedExpression`] if a property doesn't exist in the scenario.
+    ///- [`EvaluationError::Stuck`] if the arguments cannot be converted to a [`Literal`]  and the value can't be determined.
+    ///
+    ///# Panics
+    /// Will panic if the value types are not correct.
     pub fn eval<'src, 'pool>(
         &self,
         x: Value<'src, 'pool, Expr<'src>>,
@@ -142,8 +148,7 @@ impl BinOp {
                         (false, true) => Ok(true),
 
                         //Need more information to know result
-                        (true, true) => Err(EvaluationError::Stuck),
-                        (false, false) => Err(EvaluationError::Stuck),
+                        (true, true) | (false, false) => Err(EvaluationError::Stuck),
                     },
                     (Err(_), Err(_)) => Err(EvaluationError::Stuck),
                 }
@@ -152,9 +157,14 @@ impl BinOp {
     }
 
     ///Evaluation if there is only a single argument!
-    pub fn partial_eval<'src, 'pool>(
+    ///
+    ///# Errors
+    ///- [`EvaluationError::Stuck`] if the argument cannot be converted to a [`Literal`]
+    ///# Panics
+    /// Will panic if the value types are not correct.
+    pub fn partial_eval<'src>(
         &self,
-        argument: Value<'src, 'pool, Expr<'src>>,
+        argument: Value<'src, '_, Expr<'src>>,
         scenario: &Scenario<'src>,
     ) -> Result<Literal<'src>, EvaluationError> {
         let arg = argument.into_base_value_with_scenario(scenario)?.unwrap();
@@ -199,6 +209,11 @@ impl BinOp {
 
 impl Quantifier {
     ///Evaluate a quantifier
+    ///# Errors
+    ///- [`EvaluationError::Stuck`] if the arguments cannot be converted to a [`Literal`]
+    ///
+    ///# Panics
+    /// Will panic if the value types are not correct.
     pub fn eval<'src, 'pool>(
         &self,
         var_type: ActorOrEvent,

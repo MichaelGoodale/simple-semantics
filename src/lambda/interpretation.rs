@@ -174,6 +174,7 @@ impl<'src> Literal<'src> {
     }
 
     ///Converts the literal into an [`Event`]. Returns `None` if not an [`Event`].
+    #[must_use]
     pub fn as_event(&self) -> Option<Event> {
         match self {
             Literal::Event(e) => Some(*e),

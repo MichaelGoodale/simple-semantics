@@ -157,6 +157,12 @@ pub trait InterpretableLOT<'src>: LambdaLanguageOfThought + Clone + Debug {
     ///Can potentially return partial answers if there are not yet enough arguments.
     ///If the arguments are ill-typed, it should panic, but if they are not yet enough to determine
     ///the value, use [`EvaluationError`]
+    ///
+    ///
+    ///# Errors
+    /// - [`EvaluationError::UndefinedExpression`] if there is an expression that is undefined (e.g. 1/0)
+    /// - [`EvaluationError::Stuck`] if a value cannt yet be evaluated due to a not yet defined variable.
+    /// - [`EvaluationError::Unfinished`] if the expression requires more arguments before any value can be returned.
     fn eval<'pool>(
         &self,
         arguments: Vec<Value<'src, 'pool, Self>>,
