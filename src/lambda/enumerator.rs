@@ -90,13 +90,13 @@ impl UsedVars {
         let mut right = other.0.iter().copied().peekable();
 
         while let (Some(a), Some(b)) = (left.peek(), right.peek()) {
-            if a < b {
-                result.push(left.next().unwrap());
-            } else if b < a {
-                result.push(right.next().unwrap());
-            } else {
-                result.push(left.next().unwrap());
-                right.next();
+            match a.cmp(b) {
+                std::cmp::Ordering::Less => result.push(left.next().unwrap()),
+                std::cmp::Ordering::Greater => result.push(right.next().unwrap()),
+                std::cmp::Ordering::Equal => {
+                    result.push(left.next().unwrap());
+                    right.next();
+                }
             }
         }
 
@@ -370,7 +370,7 @@ impl Substitutions {
             let child = std::cmp::max(root_a, root_b);
             *self.parents.get_mut(&child).unwrap() = new_root;
             self.values.remove(&child);
-            *self.values.get_mut(&new_root).unwrap() = v.clone();
+            self.values.get_mut(&new_root).unwrap().clone_from(&v);
             Ok(v.unwrap_or(MetaVariable::Unknown(new_root)))
         } else {
             Err(())
@@ -381,7 +381,7 @@ impl Substitutions {
         let root_a = self.find(a_id);
         if let Ok(v) = merge(&self.values[&root_a], &Some(b)) {
             let v = v.cloned();
-            *self.values.get_mut(&root_a).unwrap() = v.clone();
+            self.values.get_mut(&root_a).unwrap().clone_from(&v);
             Ok(v.unwrap_or(MetaVariable::Unknown(root_a)))
         } else {
             Err(())
@@ -389,6 +389,8 @@ impl Substitutions {
     }
 }
 
+//For an internal function, Option<&MetaVariable> would be more annoying
+#[expect(clippy::ref_option)]
 fn merge<'a>(
     a: &'a Option<MetaVariable>,
     b: &'a Option<MetaVariable>,
@@ -548,7 +550,7 @@ impl MetaVariable {
 #[cfg(test)]
 fn possible_types<T>(
     g: &mut Generator<T>,
-    t: MetaVariable,
+    t: &MetaVariable,
     c: BTreeSet<MetaVariable>,
     size: usize,
     on_app_lhs: bool,
@@ -563,12 +565,10 @@ fn possible_types<T>(
         .collect()
 }
 
-//need to modify it so that it returns any substitutions!
-
 fn possible_types_inner<T>(
     g: &mut Generator<T>,
-    t: MetaVariable,
-    mut c: BTreeSet<MetaVariable>,
+    desired_type: &MetaVariable,
+    mut available_constants: BTreeSet<MetaVariable>,
     size: usize,
     on_app_lhs: bool,
     fresh: u32,
@@ -576,11 +576,13 @@ fn possible_types_inner<T>(
     if size == 0 {
         BTreeSet::default()
     } else if size == 1 {
-        c.iter()
+        available_constants
+            .iter()
             .cloned()
             .filter_map(|x| {
                 let mut subs = Substitutions::new();
-                x.unify(t.clone(), &mut subs, g).map(|x| (x, subs))
+                x.unify(desired_type.clone(), &mut subs, g)
+                    .map(|x| (x, subs))
             })
             .collect()
     } else {
@@ -588,11 +590,20 @@ fn possible_types_inner<T>(
         for i in 1..size {
             let j = size - 1;
             let arg = MetaVariable::Unknown(TypeVar(fresh));
-            let f = MetaVariable::Function(Box::new(arg.clone()), Box::new(t.clone()));
+            let function =
+                MetaVariable::Function(Box::new(arg.clone()), Box::new(desired_type.clone()));
 
             //get any possible types of form <A, t> of w/ size i
-            let functions = possible_types_inner(g, f.clone(), c.clone(), i, true, fresh + 1);
-            let args = possible_types_inner(g, arg.clone(), c.clone(), j, false, fresh + 1);
+            let functions = possible_types_inner(
+                g,
+                &function,
+                available_constants.clone(),
+                i,
+                true,
+                fresh + 1,
+            );
+            let args =
+                possible_types_inner(g, &arg, available_constants.clone(), j, false, fresh + 1);
 
             types.extend(iproduct!(&functions, &args).filter_map(
                 |((f, f_subs), (a, arg_subs))| {
@@ -600,7 +611,7 @@ fn possible_types_inner<T>(
                     let f = f.clone().normalize(&mut subs, g);
                     let a = a.clone().normalize(&mut subs, g);
                     let function_with_arg =
-                        MetaVariable::Function(Box::new(a.clone()), Box::new(t.clone()));
+                        MetaVariable::Function(Box::new(a.clone()), Box::new(desired_type.clone()));
                     f.unify(function_with_arg, &mut subs, g)
                         .and_then(|x| x.split(g))
                         .map(|(_, y)| (y, subs))
@@ -608,32 +619,39 @@ fn possible_types_inner<T>(
             ));
         }
 
-        if let MetaVariable::Unknown(_) = &t
+        if let MetaVariable::Unknown(_) = &desired_type
             && !on_app_lhs
         {
             let body = MetaVariable::Unknown(TypeVar(fresh));
             let arg = MetaVariable::Unknown(TypeVar(fresh + 1));
-            let mut c = c.clone();
+            let mut c = available_constants.clone();
             c.insert(arg.clone());
-            let new_types =
-                possible_types_inner(g, body.clone(), c, size - 1, on_app_lhs, fresh + 2);
+            let new_types = possible_types_inner(g, &body, c, size - 1, on_app_lhs, fresh + 2);
             types.extend(new_types.into_iter().filter_map(|(found_body, mut subs)| {
                 let f = MetaVariable::Function(Box::new(arg.clone()), Box::new(found_body));
-                f.unify(t.clone(), &mut subs, g).map(|x| (x, subs))
+                f.unify(desired_type.clone(), &mut subs, g)
+                    .map(|x| (x, subs))
             }));
         }
 
         //check if under app_lhs to remove App(lambda x, y) since that's a beta reducible thing.
-        if let MetaVariable::Function(arg, rhs) = &t
+        if let MetaVariable::Function(arg, rhs) = &desired_type
             && !on_app_lhs
         {
-            c.insert(*arg.clone());
+            available_constants.insert(*arg.clone());
             //lhs should be added to c, but not sure how to handle meta variables where lambda x x
-            let new_types =
-                possible_types_inner(g, *rhs.clone(), c.clone(), size - 1, on_app_lhs, fresh);
+            let new_types = possible_types_inner(
+                g,
+                rhs,
+                available_constants.clone(),
+                size - 1,
+                on_app_lhs,
+                fresh,
+            );
             types.extend(new_types.into_iter().filter_map(|(found_body, mut subs)| {
                 let x = MetaVariable::Function(arg.clone(), Box::new(found_body));
-                x.unify(t.clone(), &mut subs, g).map(|x| (x, subs))
+                x.unify(desired_type.clone(), &mut subs, g)
+                    .map(|x| (x, subs))
             }));
         }
 
@@ -662,8 +680,8 @@ fn possible_application_types<T>(
     let arg = MetaVariable::Unknown(TypeVar(0));
     let f = MetaVariable::Function(Box::new(arg.clone()), Box::new(MetaVariable::Known(typ)));
 
-    let function_types = possible_types_inner(g, f, vars.clone(), formula_size, true, 1);
-    let arg_types = possible_types_inner(g, arg, vars, arg_size, true, 1);
+    let function_types = possible_types_inner(g, &f, vars.clone(), formula_size, true, 1);
+    let arg_types = possible_types_inner(g, &arg, vars, arg_size, true, 1);
 
     let mut combos = BTreeSet::new();
 
@@ -901,6 +919,8 @@ impl<T> Generator<'_, T> {
 impl<'src, T: LambdaLanguageOfThought + Clone> Generator<'src, T> {
     ///Converts an [`ExprId`] in a given [`Generator`] to a [`RootedLambdaPool<'src, T>`].
     ///Will be [`None`] if `x` is undefined.
+    ///
+    #[expect(clippy::missing_panics_doc)] //will only panic if there's an internal mistake.
     #[must_use]
     pub fn to_rooted_lambda_pool(&self, x: ExprId) -> Option<RootedLambdaPool<'src, T>> {
         let mut pool = vec![None];
@@ -957,7 +977,7 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
     pub fn new(base_expressions: Vec<T>) -> Generator<'src, T> {
         let mut contexts = IndexSet::new();
         contexts.insert(Context::Empty);
-        assert!(contexts.get_index(0).is_some());
+        debug_assert!(contexts.get_index(0).is_some());
 
         let mut constants: HashMap<_, Vec<_>> = HashMap::new();
         let mut types = IndexSet::new();
@@ -1014,7 +1034,7 @@ mod test {
                     .keys()
                     .map(|x| MetaVariable::Known(*x))
                     .collect::<BTreeSet<_>>();
-                let types = possible_types(&mut g, t.clone(), c, size, false);
+                let types = possible_types(&mut g, &t, c, size, false);
                 let t = types.iter().map(|x| x.to_string(&g)).collect::<Vec<_>>();
                 println!("{t:?}");
             }

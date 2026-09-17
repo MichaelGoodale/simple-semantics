@@ -62,7 +62,7 @@ impl<T: LambdaLanguageOfThought> BaseExpr<'_, T> {
     }
 }
 
-impl<'src, T: Serialize> Serialize for BaseExpr<'src, T> {
+impl<T: Serialize> Serialize for BaseExpr<'_, T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -138,7 +138,10 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
             } => write!(
                 f,
                 "{head}({})",
-                children.iter().map(|x| x.to_string()).join(", ")
+                children
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .join(", ")
             ),
             PrintingAST::Application {
                 head: None,
@@ -148,7 +151,10 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
                     f,
                     "({})({})",
                     children.first().unwrap(),
-                    children[1..].iter().map(|x| x.to_string()).join(", ")
+                    children[1..]
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .join(", ")
                 )
             }
             PrintingAST::Lambda { var, typ, body } => write!(f, "lambda {typ} {var} {body}"),
@@ -160,7 +166,10 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
             } => write!(
                 f,
                 "{expr}({var_name}, {})",
-                children.iter().map(|x| x.to_string()).join(", ")
+                children
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .join(", ")
             ),
             PrintingAST::Expr(x) => write!(f, "{x}"),
         }
@@ -199,10 +208,10 @@ where
                 head: Some(head),
                 children,
             } if head.infix() && children.len() >= 2 => true,
-            PrintingAST::Application { .. } => false,
             PrintingAST::Lambda { .. } => true,
-            PrintingAST::Binder { .. } => false,
-            PrintingAST::Expr(_) => false,
+            PrintingAST::Application { .. } | PrintingAST::Binder { .. } | PrintingAST::Expr(_) => {
+                false
+            }
         }
     }
 }
@@ -361,7 +370,7 @@ where
     }
 }
 
-impl<'src, 'pool, T> Value<'src, 'pool, T>
+impl<'src, T> Value<'src, '_, T>
 where
     T: LambdaLanguageOfThought + PartialEq + Clone,
 {
@@ -406,7 +415,7 @@ where
     }
 }
 
-impl<'src, 'pool, T> Neutral<'src, 'pool, T>
+impl<'src, T> Neutral<'src, '_, T>
 where
     T: LambdaLanguageOfThought + PartialEq + Clone,
 {

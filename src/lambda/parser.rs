@@ -76,6 +76,7 @@ impl From<Rich<'_, String>> for OwnedParseError {
 }
 
 impl Display for LambdaParseError {
+    #[expect(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut buf = Vec::new();
         for e in &self.0 {
@@ -213,6 +214,7 @@ where
     }
 }
 
+#[expect(clippy::too_many_lines)]
 fn add_to_pool<'src, T: LambdaLanguageOfThought + Debug>(
     ast: Spanned<ParseTree<'src, T>>,
     pool: &mut LambdaPool<'src, T>,
@@ -720,6 +722,7 @@ where
     .collect()
 }
 
+#[expect(clippy::too_many_lines)]
 fn language_parser<'tokens, 'src: 'tokens, I, T>()
 -> impl Parser<'tokens, I, Spanned<ParseTree<'src, T>>, extra::Err<Rich<'tokens, Token<'src, T>>>>
 + Clone

@@ -114,7 +114,9 @@ impl<'src> Literal<'src> {
 
     ///Whether a type can be expressed as a [`Literal`].
     #[must_use]
+    #[expect(clippy::missing_panics_doc)]
     pub fn has_literal(typ: &LambdaType) -> bool {
+        // this is fine since we check its a function before unwrapping.
         !typ.is_function() || (typ.is_one_place_function() && typ.rhs().unwrap() == &LambdaType::T)
     }
 
@@ -131,7 +133,12 @@ impl<'src> Literal<'src> {
         }
     }
 
-    fn apply(&self, other: &Literal<'src>) -> Literal<'src> {
+    ///Applies an argument to a function literal.
+    ///
+    ///# Panics
+    ///Will panic if the types are not correct.
+    #[must_use]
+    pub fn apply(&self, other: &Literal<'src>) -> Literal<'src> {
         match (self, other) {
             (Literal::ActorSet(items), Literal::Actor(a)) => Literal::Bool(items.contains(a)),
             (Literal::EventSet(items), Literal::Event(e)) => Literal::Bool(items.contains(e)),
@@ -298,6 +305,9 @@ where
     T: LambdaLanguageOfThought + Clone,
 {
     ///The type of this [`Value`]
+    ///
+    ///# Panics
+    ///May panic if there is inconsistent type definitions.
     pub fn typ(&self) -> LambdaType {
         match self {
             Value::Base(literal) => literal.typ().clone(),
@@ -323,10 +333,8 @@ where
 {
     pub fn typ(&self) -> LambdaType {
         match self {
-            Neutral::FreeVar(_, t) => (*t).clone(),
-            Neutral::BoundVar(_, t) => (*t).clone(),
-            Neutral::AppBoth(x, _) => x.typ().split().unwrap().1.clone(),
-            Neutral::AppHead(x, _) => x.typ().split().unwrap().1.clone(),
+            Neutral::FreeVar(_, t) | Neutral::BoundVar(_, t) => (*t).clone(),
+            Neutral::AppBoth(x, _) | Neutral::AppHead(x, _) => x.typ().split().unwrap().1.clone(),
             Neutral::AppArg(x, _) => x.typ().split().unwrap().1.clone(),
             Neutral::Primitive { expr, args } => {
                 let mut t = expr.typ();
@@ -428,6 +436,17 @@ impl<'src> Value<'src, '_, Expr<'src>> {
         }
     }
     ///Convert the value into a [`Literal`], if possible.
+    ///
+    ///Returns None if the type cannot be turned into a literal.
+    ///
+    ///# Errors
+    ///
+    /// - returns [`EvaluationError::UndefinedExpression`] if there is an undefined expression (e.g. 1/0)
+    /// - returns [`EvaluationError::Stuck`] if there is an undefined variable somewhere,
+    ///
+    ///# Panics
+    ///
+    ///May panic if the expression's type is incorrectly set.
     pub fn into_base_value_with_scenario(
         self,
         scenario: &Scenario<'src>,
@@ -446,7 +465,9 @@ impl<'src> Value<'src, '_, Expr<'src>> {
             Value::Primitive { expr, args } => {
                 let mut t = expr.typ();
                 for _ in 0..args.len() {
-                    t = t.rhs().unwrap();
+                    t = t
+                        .rhs()
+                        .expect("Expression has more applications than its type allows");
                 }
                 if t.is_one_place_function() && t.rhs().unwrap() == &LambdaType::T {
                     reduce_domain(Value::Primitive { expr, args }, t.lhs().unwrap(), scenario)
@@ -726,6 +747,10 @@ impl<'src> Expr<'src> {
 
 impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
     ///Applies a value to another.
+    ///
+    ///# Errors
+    ///May return a [`EvaluationError::UndefinedExpression`] if there is an undefined value in the
+    ///expression, e.g. (1/0).
     pub fn apply(
         self,
         other: Self,
@@ -760,12 +785,7 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
             })),
             Value::Primitive { expr, mut args } => {
                 args.push(other);
-                match expr.eval(args.clone(), scenario) {
-                    Ok(x) => Ok(x),
-                    Err(EvaluationError::Unfinished) => Ok(Value::Primitive { expr, args }),
-                    Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive { expr, args })),
-                    Err(UndefinedExpression) => Err(UndefinedExpression),
-                }
+                eval_expr(expr, args, scenario)
             }
         }
     }
@@ -802,12 +822,7 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
                     .map(|x| x.reduce(scenario))
                     .collect::<Result<_, _>>()?;
 
-                match expr.eval(args.clone(), scenario) {
-                    Ok(x) => Ok(x),
-                    Err(EvaluationError::Unfinished) => Ok(Value::Primitive { expr, args }),
-                    Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive { expr, args })),
-                    Err(UndefinedExpression) => Err(UndefinedExpression),
-                }
+                eval_expr(expr, args, scenario)
             }
         }
     }
@@ -824,13 +839,7 @@ impl<'src, 'pool> Neutral<'src, 'pool, Expr<'src>> {
                     .into_iter()
                     .map(|x| x.reduce(scenario))
                     .collect::<Result<_, _>>()?;
-
-                match expr.eval(args.clone(), scenario) {
-                    Ok(x) => Ok(x),
-                    Err(EvaluationError::Unfinished) => Ok(Value::Primitive { expr, args }),
-                    Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive { expr, args })),
-                    Err(UndefinedExpression) => Err(UndefinedExpression),
-                }
+                eval_expr(expr, args, scenario)
             }
             v @ (Neutral::FreeVar(..) | Neutral::BoundVar(..)) => Ok(Value::Neutral(v)),
             Neutral::AppBoth(head, arg) => {
@@ -856,6 +865,10 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     ///Interprets an expression given a particular scenario.
     ///The resulting [`Value`] may be a [`Literal`] but may also still be an unreduced function
     ///(e.g. if you have a closure or the like)
+    ///
+    ///# Errors
+    ///May return a [`EvaluationError::UndefinedExpression`] if there is an undefined value in the
+    ///expression, e.g. (1/0).
     pub fn interp<'pool>(
         &'pool self,
         scenario: &Scenario<'src>,
@@ -902,13 +915,7 @@ impl<'src, 'pool> Neutral<'src, 'pool, Expr<'src>> {
                     .into_iter()
                     .map(|x| x.eval(variables.clone(), scenario))
                     .collect::<Result<_, _>>()?;
-
-                match expr.eval(args.clone(), scenario) {
-                    Ok(x) => Ok(x),
-                    Err(EvaluationError::Unfinished) => Ok(Value::Primitive { expr, args }),
-                    Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive { expr, args })),
-                    Err(UndefinedExpression) => Err(UndefinedExpression),
-                }
+                eval_expr(expr, args, scenario)
             }
         }
     }
@@ -1120,24 +1127,7 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                 };
 
                 let arguments = vec![x, y];
-                match expr.eval(arguments.clone(), scenario) {
-                    Ok(x) => Ok((x, false)),
-                    Err(EvaluationError::Unfinished) => Ok((
-                        Value::Primitive {
-                            expr: *expr,
-                            args: arguments,
-                        },
-                        false,
-                    )),
-                    Err(Stuck) => Ok((
-                        Value::Neutral(Neutral::Primitive {
-                            expr: *expr,
-                            args: arguments,
-                        }),
-                        false,
-                    )),
-                    Err(UndefinedExpression) => Err(UndefinedExpression),
-                }
+                eval_expr(*expr, arguments, scenario).map(|x| (x, false))
             }
             LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::BindVar(x)) => {
                 let d = variables.len();
@@ -1154,24 +1144,7 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                 };
 
                 let arguments = vec![x];
-                match expr.eval(arguments.clone(), scenario) {
-                    Ok(x) => Ok((x, false)),
-                    Err(EvaluationError::Unfinished) => Ok((
-                        Value::Primitive {
-                            expr: *expr,
-                            args: arguments,
-                        },
-                        false,
-                    )),
-                    Err(Stuck) => Ok((
-                        Value::Neutral(Neutral::Primitive {
-                            expr: *expr,
-                            args: arguments,
-                        }),
-                        false,
-                    )),
-                    Err(UndefinedExpression) => Err(UndefinedExpression),
-                }
+                eval_expr(*expr, arguments, scenario).map(|x| (x, false))
             }
         };
         println!("{x:?}");
@@ -1179,6 +1152,18 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
     }
 }
 
+fn eval_expr<'src, 'pool>(
+    expr: Expr<'src>,
+    args: Vec<Value<'src, 'pool, Expr<'src>>>,
+    scenario: &Scenario<'src>,
+) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+    match expr.eval(args.clone(), scenario) {
+        Ok(x) => Ok(x),
+        Err(EvaluationError::Unfinished) => Ok(Value::Primitive { expr, args }),
+        Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive { expr, args })),
+        Err(UndefinedExpression) => Err(UndefinedExpression),
+    }
+}
 #[cfg(test)]
 mod test {
     use crate::lambda::{enumerator::Generator, printing::VarContext};
