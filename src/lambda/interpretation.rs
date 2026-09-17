@@ -973,9 +973,28 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
             Value::Primitive { args, .. } => args.iter_mut().for_each(|x| x.remove_var(var)),
         }
     }
+
+    fn primitive_application_head(&self) -> Option<&Expr<'src>> {
+        match self {
+            Value::Base(..) | Value::Function(..) => None,
+            Value::Neutral(x) => x.primitive_application_head(),
+            Value::Primitive { expr, .. } => Some(expr),
+        }
+    }
 }
 
 impl<'src> Neutral<'src, '_, Expr<'src>> {
+    fn primitive_application_head(&self) -> Option<&Expr<'src>> {
+        match self {
+            Neutral::AppBoth(head, ..) | Neutral::AppHead(head, ..) => {
+                head.primitive_application_head()
+            }
+            Neutral::AppArg(head, ..) => head.primitive_application_head(),
+            Neutral::Primitive { expr, .. } => Some(expr),
+            Neutral::FreeVar(..) | Neutral::BoundVar(..) => None,
+        }
+    }
+
     fn contains_var(&self, var: usize) -> bool {
         match self {
             Neutral::FreeVar(..) => false,
@@ -1024,7 +1043,8 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
         scenario: &Scenario<'src>,
         under_lambda: Option<usize>,
     ) -> Result<(Value<'src, 'pool, Expr<'src>>, bool), EvaluationError> {
-        match self.get(index) {
+        println!("{index:?}\t{:?}", self.get(index));
+        let x = match self.get(index) {
             LambdaExpr::Lambda(body, arg_type) => {
                 let d = variables.len();
                 variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type)));
@@ -1052,6 +1072,9 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                 //eta-reduction
                 if let Some(d) = under_lambda
                     && matches!(argument, Value::Neutral(Neutral::BoundVar(x, _)) if x == d)
+                    && subformula
+                        .primitive_application_head()
+                        .is_none_or(|x| !x.infix())
                     && !subformula.contains_var(d)
                 {
                     subformula.remove_var(d);
@@ -1150,13 +1173,15 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                     Err(UndefinedExpression) => Err(UndefinedExpression),
                 }
             }
-        }
+        };
+        println!("{x:?}");
+        x
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::lambda::enumerator::Generator;
+    use crate::lambda::{enumerator::Generator, printing::VarContext};
 
     use super::*;
 
@@ -1167,6 +1192,10 @@ mod test {
         )?;
 
         let data = [
+            (
+                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
+                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
+            ),
             ("a_john", "a_john"),
             ("pa_kind(a_john)", "False"),
             ("True | True", "True"),
@@ -1204,10 +1233,6 @@ mod test {
                 "lambda a x lambda a y pa_kind(x)",
                 "lambda a x lambda a y {a_phil}(x)",
             ),
-            (
-                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
-                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
-            ),
         ];
 
         let n_width = data
@@ -1220,8 +1245,11 @@ mod test {
             print!("[{phi_s}] = {val}");
             let n_dots = n_width - phi_s.chars().count() - val.chars().count();
             print!("{}", ".".repeat(n_dots));
-
             let phi = RootedLambdaPool::parse(phi_s)?;
+            let mut alt_phi = phi.clone();
+            alt_phi.reduce()?;
+            println!("alt_phi={alt_phi}");
+            println!("{:#?}", phi.tokens(phi.root, VarContext::default()));
             assert_eq!(
                 phi.to_string(),
                 phi_s,

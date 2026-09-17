@@ -921,6 +921,15 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
         if !matches!(self.get(*argument), LambdaExpr::BoundVariable(0, _)) {
             return false;
         }
+        let mut head = *subformula;
+        while let LambdaExpr::Application { subformula, .. } = self.get(head) {
+            head = *subformula;
+        }
+
+        //Don't eta reduce infixes, lambda t x lambda t y y & x doesn't become lambda t y y &
+        if matches!(self.get(head), LambdaExpr::LanguageOfThoughtExpr(x, _) if x.infix()) {
+            return false;
+        }
 
         let uses_variable_in_body = self
             .bfs_from(*subformula)

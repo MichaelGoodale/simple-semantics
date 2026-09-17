@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use serde::{Deserialize, Serialize};
 
 use crate::lambda::interpretation::Neutral;
@@ -36,7 +36,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) enum BaseExpr<'src, T> {
     Variable(String, Option<LambdaType>),
     AnonymousVariable(usize, LambdaType),
@@ -167,7 +167,7 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Debug)]
 pub(super) enum PrintingAST<'src, T> {
     Application {
         head: Option<BaseExpr<'src, T>>,
@@ -377,11 +377,31 @@ where
                 }
             }
             Value::Neutral(x) => x.tokens(c),
-            Value::Primitive { expr, args } => PrintingAST::Application {
-                //TODO: Peel off children so that commutative expressions are flattened.
-                head: Some(BaseExpr::Expr(expr.clone())),
-                children: args.iter().map(|x| x.tokens(c.clone())).collect(),
-            },
+            Value::Primitive { expr, args } => {
+                let children = if expr.commutative() && expr.associative() {
+                    args.iter()
+                        .flat_map(|x| match x {
+                            Value::Primitive {
+                                expr: child_expr,
+                                args,
+                            }
+                            | Value::Neutral(Neutral::Primitive {
+                                expr: child_expr,
+                                args,
+                            }) if child_expr == expr => Either::Right(args.iter()),
+                            v => Either::Left(std::iter::once(v)),
+                        })
+                        .map(|x| x.tokens(c.clone()))
+                        .collect::<Vec<_>>()
+                } else {
+                    args.iter().map(|x| x.tokens(c.clone())).collect()
+                };
+
+                PrintingAST::Application {
+                    head: Some(BaseExpr::Expr(expr.clone())),
+                    children,
+                }
+            }
         }
     }
 }
@@ -405,10 +425,27 @@ where
                 return PrintingAST::Expr(BaseExpr::Variable(c.lambda_var_by_level(*d), None));
             }
             Neutral::Primitive { expr, args } => {
+                let children = if expr.commutative() && expr.associative() {
+                    args.iter()
+                        .flat_map(|x| match x {
+                            Value::Primitive {
+                                expr: child_expr,
+                                args,
+                            }
+                            | Value::Neutral(Neutral::Primitive {
+                                expr: child_expr,
+                                args,
+                            }) if child_expr == expr => Either::Right(args.iter()),
+                            v => Either::Left(std::iter::once(v)),
+                        })
+                        .map(|x| x.tokens(c.clone()))
+                        .collect::<Vec<_>>()
+                } else {
+                    args.iter().map(|x| x.tokens(c.clone())).collect()
+                };
                 return PrintingAST::Application {
-                    //TODO: Peel off children so that commutative expressions are flattened.
                     head: Some(BaseExpr::Expr(expr.clone())),
-                    children: args.iter().map(|x| x.tokens(c.clone())).collect(),
+                    children,
                 };
             }
             Neutral::AppBoth(head, arg) => (head.tokens(c.clone()), arg.tokens(c)),
