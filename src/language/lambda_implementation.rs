@@ -2,12 +2,273 @@ use thiserror::Error;
 
 use super::{ActorOrEvent, BinOp, Expr, MonOp};
 use crate::{
+    Entity, Scenario,
     lambda::{
-        ExprType, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool, PrimitiveVarType,
-        ReductionError, RootedLambdaPool, types::LambdaType,
+        EvaluationError, ExprType, InterpretableLOT, LambdaExpr, LambdaExprRef,
+        LambdaLanguageOfThought, LambdaPool, Literal, PrimitiveVarType, ReductionError,
+        RootedLambdaPool, Value, types::LambdaType,
     },
-    language::Constant,
+    language::{Constant, Quantifier},
 };
+
+impl<'src> Constant<'src> {
+    ///Gets the literal value of a constant.
+    ///
+    ///# Errors
+    ///
+    ///[`EvaluationError::UndefinedExpression`] if a property doesn't exist in the scenario.
+    pub fn eval(&self, scenario: &Scenario<'src>) -> Result<Literal<'src>, EvaluationError> {
+        Ok(match self {
+            Constant::Everyone => Literal::ActorSet(scenario.actors.clone()),
+            Constant::EveryEvent => Literal::EventSet(scenario.events().collect()),
+            Constant::Tautology => Literal::Bool(true),
+            Constant::Contradiction => Literal::Bool(false),
+            Constant::Property(p, a_or_e) => {
+                let x = scenario
+                    .properties
+                    .get(p)
+                    .ok_or(EvaluationError::UndefinedExpression)?;
+                match a_or_e {
+                    ActorOrEvent::Actor => Literal::ActorSet(
+                        x.iter()
+                            .filter_map(|x| {
+                                if let Entity::Actor(x) = x {
+                                    Some(*x)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect(),
+                    ),
+                    ActorOrEvent::Event => Literal::EventSet(
+                        x.iter()
+                            .filter_map(|x| {
+                                if let Entity::Event(x) = x {
+                                    Some(*x)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect(),
+                    ),
+                }
+            }
+        })
+    }
+}
+
+impl MonOp {
+    ///Gets the value of a unary operator.
+    ///
+    ///# Errors
+    ///
+    ///[`EvaluationError::UndefinedExpression`] if an iota has more than one possible value in the
+    ///scenario
+    pub fn eval<'src, 'pool>(
+        &self,
+        argument: Value<'src, 'pool, Expr<'src>>,
+        scenario: &Scenario<'src>,
+    ) -> Result<Literal<'src>, EvaluationError> {
+        let argument = argument.into_base_value_with_scenario(scenario)?.unwrap();
+        Ok(match self {
+            MonOp::Not => Literal::Bool(!argument.as_bool().unwrap()),
+            MonOp::Iota(a_o_e) => match a_o_e {
+                ActorOrEvent::Actor => {
+                    let mut x = argument.into_actor_set().unwrap();
+                    if x.len() != 1 {
+                        return Err(EvaluationError::UndefinedExpression);
+                    }
+                    Literal::Actor(x.pop().unwrap())
+                }
+                ActorOrEvent::Event => {
+                    let mut x = argument.into_event_set().unwrap();
+                    if x.len() != 1 {
+                        return Err(EvaluationError::UndefinedExpression);
+                    }
+                    Literal::Event(x.pop().unwrap())
+                }
+            },
+        })
+    }
+}
+
+impl BinOp {
+    ///Gets the value of a binary operator.
+    ///
+    ///# Errors
+    ///
+    ///[`EvaluationError::UndefinedExpression`] if a property doesn't exist in the scenario.
+    pub fn eval<'src, 'pool>(
+        &self,
+        x: Value<'src, 'pool, Expr<'src>>,
+        y: Value<'src, 'pool, Expr<'src>>,
+        scenario: &Scenario<'src>,
+    ) -> Result<bool, EvaluationError> {
+        match self {
+            BinOp::AgentOf | BinOp::PatientOf => {
+                let a = x
+                    .into_base_value_with_scenario(scenario)?
+                    .unwrap()
+                    .as_actor()
+                    .unwrap();
+                let e = y
+                    .into_base_value_with_scenario(scenario)?
+                    .unwrap()
+                    .as_event()
+                    .unwrap();
+                let e = scenario
+                    .thematic_relations
+                    .get(usize::from(e))
+                    .ok_or(EvaluationError::UndefinedExpression)?;
+                Ok(match self {
+                    BinOp::AgentOf => e.agent.is_some_and(|x| x == a),
+                    BinOp::PatientOf => e.patient.is_some_and(|x| x == a),
+                    _ => panic!("impossible bc of prior check!"),
+                })
+            }
+            BinOp::And | BinOp::Or => {
+                let is_and = matches!(self, BinOp::And);
+
+                match (
+                    x.into_base_value_with_scenario(scenario)
+                        .map(|x| x.unwrap().as_bool().unwrap()),
+                    y.into_base_value_with_scenario(scenario)
+                        .map(|x| x.unwrap().as_bool().unwrap()),
+                ) {
+                    (Ok(x), Ok(y)) => Ok(if is_and { x && y } else { x || y }),
+                    (Ok(x), Err(_)) | (Err(_), Ok(x)) => match (is_and, x) {
+                        //Don't need to evaluate other operand to get result.
+                        (true, false) => Ok(false),
+                        (false, true) => Ok(true),
+
+                        //Need more information to know result
+                        (true, true) => Err(EvaluationError::Stuck),
+                        (false, false) => Err(EvaluationError::Stuck),
+                    },
+                    (Err(_), Err(_)) => Err(EvaluationError::Stuck),
+                }
+            }
+        }
+    }
+
+    ///Evaluation if there is only a single argument!
+    pub fn partial_eval<'src, 'pool>(
+        &self,
+        argument: Value<'src, 'pool, Expr<'src>>,
+        scenario: &Scenario<'src>,
+    ) -> Result<Literal<'src>, EvaluationError> {
+        let arg = argument.into_base_value_with_scenario(scenario)?.unwrap();
+        Ok(match self {
+            BinOp::AgentOf | BinOp::PatientOf => {
+                let a = arg.as_actor().unwrap();
+                let events = scenario
+                    .thematic_relations
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, e)| match self {
+                        BinOp::AgentOf => e.agent.and_then(|x| {
+                            if x == a {
+                                Some(u8::try_from(i).unwrap())
+                            } else {
+                                None
+                            }
+                        }),
+                        BinOp::PatientOf => e.patient.and_then(|x| {
+                            if x == a {
+                                Some(u8::try_from(i).unwrap())
+                            } else {
+                                None
+                            }
+                        }),
+                        _ => panic!("impossible bc of prior check!"),
+                    })
+                    .collect();
+                Literal::EventSet(events)
+            }
+            BinOp::And => Literal::TruthTable {
+                on_false: false,
+                on_true: arg.as_bool().unwrap(),
+            },
+            BinOp::Or => Literal::TruthTable {
+                on_false: arg.as_bool().unwrap(),
+                on_true: true,
+            },
+        })
+    }
+}
+
+impl Quantifier {
+    ///Evaluate a quantifier
+    pub fn eval<'src, 'pool>(
+        &self,
+        var_type: ActorOrEvent,
+        restrictor: Value<'src, 'pool, Expr<'src>>,
+        predicate: Value<'src, 'pool, Expr<'src>>,
+        scenario: &Scenario<'src>,
+    ) -> Result<bool, EvaluationError> {
+        let restrictor = restrictor.into_base_value_with_scenario(scenario)?.unwrap();
+        let predicate = predicate.into_base_value_with_scenario(scenario)?.unwrap();
+        let v = match var_type {
+            ActorOrEvent::Actor => {
+                let predicate = predicate.into_actor_set().unwrap();
+                let restrictor = restrictor.into_actor_set().unwrap();
+                match self {
+                    Quantifier::Universal => restrictor.iter().all(|x| predicate.contains(x)),
+                    Quantifier::Existential => restrictor.iter().any(|x| predicate.contains(x)),
+                }
+            }
+            ActorOrEvent::Event => {
+                let predicate = predicate.into_event_set().unwrap();
+                let restrictor = restrictor.into_event_set().unwrap();
+                match self {
+                    Quantifier::Universal => restrictor.iter().all(|x| predicate.contains(x)),
+                    Quantifier::Existential => restrictor.iter().any(|x| predicate.contains(x)),
+                }
+            }
+        };
+        Ok(v)
+    }
+}
+
+impl<'src> InterpretableLOT<'src> for Expr<'src> {
+    fn eval<'pool>(
+        &self,
+        mut arguments: Vec<Value<'src, 'pool, Expr<'src>>>,
+        scenario: &Scenario<'src>,
+    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+        Ok(Value::Base(match self {
+            Expr::Quantifier {
+                quantifier,
+                var_type,
+            } => match arguments.len() {
+                0 | 1 => return Err(EvaluationError::Unfinished),
+                2 => {
+                    let [restrictor, predicate] = arguments.try_into().unwrap();
+                    Literal::Bool(quantifier.eval(*var_type, restrictor, predicate, scenario)?)
+                }
+                n => panic!("Quantifier expression has {n} applicands!"),
+            },
+            Expr::Binary(op) => match arguments.len() {
+                0 => return Err(EvaluationError::Unfinished),
+                1 => op.partial_eval(arguments.pop().unwrap(), scenario)?,
+                2 => {
+                    let [x, y] = arguments.try_into().unwrap();
+                    Literal::Bool(op.eval(x, y, scenario)?)
+                }
+                n => panic!("Binary expression has {n} applicands!"),
+            },
+
+            Expr::Unary(x) => match arguments.len() {
+                0 => return Err(EvaluationError::Unfinished),
+                1 => x.eval(arguments.pop().unwrap(), scenario)?,
+                n => panic!("Unary expression has {n} applicands!"),
+            },
+            Expr::Constant(c) => c.eval(scenario)?,
+            Expr::Actor(a) => Literal::Actor(a),
+            Expr::Event(e) => Literal::Event(*e),
+        }))
+    }
+}
 
 impl LambdaLanguageOfThought for Expr<'_> {
     fn var_type(&self) -> Option<&LambdaType> {

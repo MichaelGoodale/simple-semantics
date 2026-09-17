@@ -4,17 +4,12 @@ use crate::{
     Actor, Entity, Event, Scenario,
     lambda::{
         Bvar,
-        EvaluationError::{Stuck, UndefinedExpression, Unfinished},
-        ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
-        RootedLambdaPool,
+        EvaluationError::{Stuck, UndefinedExpression},
+        ExprType, FreeVar, InterpretableLOT, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought,
+        LambdaPool, RootedLambdaPool,
         types::LambdaType,
     },
-    language::{
-        ActorOrEvent::{self},
-        BinOp, Constant,
-        Expr::{self},
-        MonOp, Quantifier,
-    },
+    language::Expr,
 };
 use chumsky::container::Seq;
 use itertools::Itertools;
@@ -179,7 +174,7 @@ impl<'src> Literal<'src> {
     }
 
     ///Converts the literal into an [`Event`]. Returns `None` if not an [`Event`].
-    fn as_event(&self) -> Option<Event> {
+    pub fn as_event(&self) -> Option<Event> {
         match self {
             Literal::Event(e) => Some(*e),
             _ => None,
@@ -347,11 +342,14 @@ where
     }
 }
 
-fn reduce_domain<'src>(
-    func: Value<'src, '_, Expr<'src>>,
+fn reduce_domain<'src, T>(
+    func: Value<'src, '_, T>,
     arg_type: &LambdaType,
     scenario: &Scenario<'src>,
-) -> Result<Literal<'src>, EvaluationError> {
+) -> Result<Literal<'src>, EvaluationError>
+where
+    T: InterpretableLOT<'src>,
+{
     Ok(match arg_type {
         LambdaType::A => {
             let mut actor_set = vec![];
@@ -425,7 +423,10 @@ fn reduce_domain<'src>(
     })
 }
 
-impl<'src> Value<'src, '_, Expr<'src>> {
+impl<'src, T> Value<'src, '_, T>
+where
+    T: InterpretableLOT<'src>,
+{
     ///Convert the value into a [`Literal`], if possible.
     #[must_use]
     pub fn into_base_value(self) -> Option<Literal<'src>> {
@@ -470,8 +471,8 @@ impl<'src> Value<'src, '_, Expr<'src>> {
                         .expect("Expression has more applications than its type allows");
                 }
                 if t.is_one_place_function() && t.rhs().unwrap() == &LambdaType::T {
-                    reduce_domain(Value::Primitive { expr, args }, t.lhs().unwrap(), scenario)
-                        .map(Some)
+                    let arg_type = t.lhs().unwrap().clone();
+                    reduce_domain(Value::Primitive { expr, args }, &arg_type, scenario).map(Some)
                 } else {
                     Ok(None)
                 }
@@ -499,253 +500,10 @@ impl<'src> TryFrom<Value<'src, '_, Expr<'src>>> for bool {
     }
 }
 
-impl<'src> Expr<'src> {
-    fn n_arguments(&self) -> usize {
-        match self {
-            Expr::Constant(_) | Expr::Actor(_) | Expr::Event(_) => 0,
-            Expr::Unary(_) => 1,
-            Expr::Quantifier { .. } | Expr::Binary(_) => 2,
-        }
-    }
-
-    fn eval<'pool>(
-        &self,
-        mut arguments: Vec<Value<'src, 'pool, Expr<'src>>>,
-        scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
-        let x = match self {
-            Expr::Quantifier {
-                quantifier,
-                var_type,
-            } => {
-                if arguments.len() < 2 {
-                    return Err(EvaluationError::Unfinished);
-                }
-                let mut arguments = arguments
-                    .into_iter()
-                    .map(|x| x.into_base_value_with_scenario(scenario))
-                    .collect::<Result<Option<Vec<_>>, _>>()?
-                    .unwrap();
-                let predicate = arguments.pop().unwrap();
-                let restrictor = arguments.pop().unwrap();
-                let v = match var_type {
-                    ActorOrEvent::Actor => {
-                        let predicate = predicate.into_actor_set().unwrap();
-                        let restrictor = restrictor.into_actor_set().unwrap();
-                        match quantifier {
-                            Quantifier::Universal => {
-                                restrictor.iter().all(|x| predicate.contains(x))
-                            }
-                            Quantifier::Existential => {
-                                restrictor.iter().any(|x| predicate.contains(x))
-                            }
-                        }
-                    }
-                    ActorOrEvent::Event => {
-                        let predicate = predicate.into_event_set().unwrap();
-                        let restrictor = restrictor.into_event_set().unwrap();
-                        match quantifier {
-                            Quantifier::Universal => {
-                                restrictor.iter().all(|x| predicate.contains(x))
-                            }
-                            Quantifier::Existential => {
-                                restrictor.iter().any(|x| predicate.contains(x))
-                            }
-                        }
-                    }
-                };
-                Literal::Bool(v)
-            }
-            Expr::Unary(MonOp::Iota(a_o_e)) => {
-                let x = arguments
-                    .pop()
-                    .unwrap()
-                    .into_base_value_with_scenario(scenario)?
-                    .unwrap();
-                match a_o_e {
-                    ActorOrEvent::Actor => {
-                        let mut x = x.into_actor_set().unwrap();
-                        if x.len() != 1 {
-                            return Err(EvaluationError::UndefinedExpression);
-                        }
-                        Literal::Actor(x.pop().unwrap())
-                    }
-                    ActorOrEvent::Event => {
-                        let mut x = x.into_event_set().unwrap();
-                        if x.len() != 1 {
-                            return Err(EvaluationError::UndefinedExpression);
-                        }
-                        Literal::Event(x.pop().unwrap())
-                    }
-                }
-            }
-            Expr::Actor(a) => Literal::Actor(a),
-            Expr::Event(e) => Literal::Event(*e),
-            Expr::Binary(op @ (BinOp::AgentOf | BinOp::PatientOf), ..) => {
-                let arguments = arguments
-                    .into_iter()
-                    .map(|x| x.into_base_value_with_scenario(scenario))
-                    .collect::<Result<Option<Vec<_>>, _>>()?
-                    .unwrap();
-                if arguments.is_empty() {
-                    return Err(EvaluationError::Unfinished);
-                } else if arguments.len() == 1 {
-                    let a = arguments[0].as_actor().unwrap();
-                    let events = scenario
-                        .thematic_relations
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, e)| match op {
-                            BinOp::AgentOf => e.agent.and_then(|x| {
-                                if x == a {
-                                    Some(u8::try_from(i).unwrap())
-                                } else {
-                                    None
-                                }
-                            }),
-                            BinOp::PatientOf => e.patient.and_then(|x| {
-                                if x == a {
-                                    Some(u8::try_from(i).unwrap())
-                                } else {
-                                    None
-                                }
-                            }),
-                            _ => panic!("impossible bc of prior check!"),
-                        })
-                        .collect();
-                    Literal::EventSet(events)
-                } else {
-                    let a = arguments[0].as_actor().unwrap();
-                    let e = arguments[1].as_event().unwrap();
-                    let e = scenario
-                        .thematic_relations
-                        .get(usize::from(e))
-                        .ok_or(EvaluationError::UndefinedExpression)?;
-                    Literal::Bool(match op {
-                        BinOp::AgentOf => e.agent.is_some_and(|x| x == a),
-                        BinOp::PatientOf => e.patient.is_some_and(|x| x == a),
-                        _ => panic!("impossible bc of prior check!"),
-                    })
-                }
-            }
-            Expr::Binary(BinOp::And) => {
-                if arguments.len() == 1 {
-                    let first_arg = arguments
-                        .pop()
-                        .unwrap()
-                        .into_base_value_with_scenario(scenario)?
-                        .unwrap()
-                        .as_bool()
-                        .unwrap();
-                    Literal::TruthTable {
-                        on_false: false,
-                        on_true: first_arg,
-                    }
-                } else {
-                    'shortcircuit: {
-                        for x in arguments {
-                            let value = x
-                                .into_base_value_with_scenario(scenario)?
-                                .unwrap()
-                                .as_bool()
-                                .expect("Type inference error!");
-
-                            if !value {
-                                break 'shortcircuit Literal::Bool(false);
-                            }
-                        }
-
-                        Literal::Bool(true)
-                    }
-                }
-            }
-
-            Expr::Binary(BinOp::Or) => {
-                if arguments.len() == 1 {
-                    let first_arg = arguments
-                        .pop()
-                        .unwrap()
-                        .into_base_value_with_scenario(scenario)?
-                        .unwrap()
-                        .as_bool()
-                        .unwrap();
-                    Literal::TruthTable {
-                        on_false: first_arg,
-                        on_true: true,
-                    }
-                } else {
-                    'shortcircuit: {
-                        for x in arguments {
-                            let value = x
-                                .into_base_value_with_scenario(scenario)?
-                                .unwrap()
-                                .as_bool()
-                                .expect("Type inference error!");
-
-                            if value {
-                                break 'shortcircuit Literal::Bool(true);
-                            }
-                        }
-
-                        Literal::Bool(false)
-                    }
-                }
-            }
-
-            Expr::Unary(MonOp::Not) => {
-                if arguments.is_empty() {
-                    return Err(Unfinished);
-                }
-                Literal::Bool(
-                    !arguments
-                        .pop()
-                        .unwrap()
-                        .into_base_value_with_scenario(scenario)?
-                        .unwrap()
-                        .as_bool()
-                        .unwrap(),
-                )
-            }
-            Expr::Constant(Constant::Everyone) => Literal::ActorSet(scenario.actors.clone()),
-            Expr::Constant(Constant::EveryEvent) => Literal::EventSet(scenario.events().collect()),
-            Expr::Constant(Constant::Tautology) => Literal::Bool(true),
-            Expr::Constant(Constant::Contradiction) => Literal::Bool(false),
-            Expr::Constant(Constant::Property(p, a_or_e)) => {
-                let x = scenario
-                    .properties
-                    .get(p)
-                    .ok_or(EvaluationError::UndefinedExpression)?;
-                match a_or_e {
-                    ActorOrEvent::Actor => Literal::ActorSet(
-                        x.iter()
-                            .filter_map(|x| {
-                                if let Entity::Actor(x) = x {
-                                    Some(*x)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect(),
-                    ),
-                    ActorOrEvent::Event => Literal::EventSet(
-                        x.iter()
-                            .filter_map(|x| {
-                                if let Entity::Event(x) = x {
-                                    Some(*x)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect(),
-                    ),
-                }
-            }
-        };
-        Ok(Value::Base(x))
-    }
-}
-
-impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
+impl<'src, 'pool, T> Value<'src, 'pool, T>
+where
+    T: InterpretableLOT<'src>,
+{
     ///Applies a value to another.
     ///
     ///# Errors
@@ -755,7 +513,7 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
         self,
         other: Self,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+    ) -> Result<Value<'src, 'pool, T>, EvaluationError> {
         match self {
             Value::Base(f) if let Some(x) = f.constant_app() => Ok(Value::Base(x)),
             Value::Base(f) => match other {
@@ -882,12 +640,15 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     }
 }
 
-impl<'src, 'pool> Neutral<'src, 'pool, Expr<'src>> {
+impl<'src, 'pool, T> Neutral<'src, 'pool, T>
+where
+    T: InterpretableLOT<'src>,
+{
     fn eval(
         self,
-        mut variables: BTreeMap<usize, Value<'src, 'pool, Expr<'src>>>,
+        mut variables: BTreeMap<usize, Value<'src, 'pool, T>>,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+    ) -> Result<Value<'src, 'pool, T>, EvaluationError> {
         match self {
             Neutral::FreeVar(..) => todo!(),
             Neutral::BoundVar(b, lambda_type) => {
@@ -921,12 +682,15 @@ impl<'src, 'pool> Neutral<'src, 'pool, Expr<'src>> {
     }
 }
 
-impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
+impl<'src, 'pool, T> Value<'src, 'pool, T>
+where
+    T: InterpretableLOT<'src>,
+{
     fn eval(
         self,
-        mut variables: BTreeMap<usize, Value<'src, 'pool, Expr<'src>>>,
+        mut variables: BTreeMap<usize, Value<'src, 'pool, T>>,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+    ) -> Result<Value<'src, 'pool, T>, EvaluationError> {
         match self {
             Value::Function(body, arg_type, d) => {
                 variables.insert(d, Value::Neutral(Neutral::BoundVar(d, arg_type)));
@@ -981,7 +745,7 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
         }
     }
 
-    fn primitive_application_head(&self) -> Option<&Expr<'src>> {
+    fn primitive_application_head(&self) -> Option<&T> {
         match self {
             Value::Base(..) | Value::Function(..) => None,
             Value::Neutral(x) => x.primitive_application_head(),
@@ -990,8 +754,11 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
     }
 }
 
-impl<'src> Neutral<'src, '_, Expr<'src>> {
-    fn primitive_application_head(&self) -> Option<&Expr<'src>> {
+impl<'src, T> Neutral<'src, '_, T>
+where
+    T: InterpretableLOT<'src>,
+{
+    fn primitive_application_head(&self) -> Option<&T> {
         match self {
             Neutral::AppBoth(head, ..) | Neutral::AppHead(head, ..) => {
                 head.primitive_application_head()
@@ -1050,8 +817,7 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
         scenario: &Scenario<'src>,
         under_lambda: Option<usize>,
     ) -> Result<(Value<'src, 'pool, Expr<'src>>, bool), EvaluationError> {
-        println!("{index:?}\t{:?}", self.get(index));
-        let x = match self.get(index) {
+        match self.get(index) {
             LambdaExpr::Lambda(body, arg_type) => {
                 let d = variables.len();
                 variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type)));
@@ -1091,17 +857,7 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                 }
             }
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => {
-                if x.n_arguments() == 0 {
-                    x.eval(vec![], scenario).map(|x| (x, false))
-                } else {
-                    Ok((
-                        Value::Primitive {
-                            expr: *x,
-                            args: vec![],
-                        },
-                        false,
-                    ))
-                }
+                eval_expr(*x, vec![], scenario).map(|x| (x, false))
             }
 
             LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::BindVarTwoBodies(x, y)) => {
@@ -1146,17 +902,15 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                 let arguments = vec![x];
                 eval_expr(*expr, arguments, scenario).map(|x| (x, false))
             }
-        };
-        println!("{x:?}");
-        x
+        }
     }
 }
 
-fn eval_expr<'src, 'pool>(
-    expr: Expr<'src>,
-    args: Vec<Value<'src, 'pool, Expr<'src>>>,
+fn eval_expr<'src, 'pool, T: InterpretableLOT<'src>>(
+    expr: T,
+    args: Vec<Value<'src, 'pool, T>>,
     scenario: &Scenario<'src>,
-) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+) -> Result<Value<'src, 'pool, T>, EvaluationError> {
     match expr.eval(args.clone(), scenario) {
         Ok(x) => Ok(x),
         Err(EvaluationError::Unfinished) => Ok(Value::Primitive { expr, args }),
@@ -1166,7 +920,7 @@ fn eval_expr<'src, 'pool>(
 }
 #[cfg(test)]
 mod test {
-    use crate::lambda::{enumerator::Generator, printing::VarContext};
+    use crate::lambda::enumerator::Generator;
 
     use super::*;
 
@@ -1231,10 +985,6 @@ mod test {
             let n_dots = n_width - phi_s.chars().count() - val.chars().count();
             print!("{}", ".".repeat(n_dots));
             let phi = RootedLambdaPool::parse(phi_s)?;
-            let mut alt_phi = phi.clone();
-            alt_phi.reduce()?;
-            println!("alt_phi={alt_phi}");
-            println!("{:#?}", phi.tokens(phi.root, VarContext::default()));
             assert_eq!(
                 phi.to_string(),
                 phi_s,

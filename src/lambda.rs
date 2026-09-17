@@ -19,6 +19,8 @@ pub use interpretation::{EvaluationError, Literal, Value};
 pub mod types;
 use types::{LambdaType, TypeError};
 
+use crate::Scenario;
+
 pub mod enumerator;
 mod parser;
 mod printing;
@@ -146,6 +148,20 @@ pub trait LambdaLanguageOfThought {
     fn associative(&self) -> bool {
         false
     }
+}
+
+///A trait for interpreting a LOT.
+pub trait InterpretableLOT<'src>: LambdaLanguageOfThought + Clone + Debug {
+    ///Returns the value of this expression given the arguments.
+    ///
+    ///Can potentially return partial answers if there are not yet enough arguments.
+    ///If the arguments are ill-typed, it should panic, but if they are not yet enough to determine
+    ///the value, use [`EvaluationError`]
+    fn eval<'pool>(
+        &self,
+        arguments: Vec<Value<'src, 'pool, Self>>,
+        scenario: &Scenario<'src>,
+    ) -> Result<Value<'src, 'pool, Self>, EvaluationError>;
 }
 
 impl LambdaLanguageOfThought for () {
