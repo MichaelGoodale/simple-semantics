@@ -27,6 +27,7 @@ num-integer = "0.1.46"
 [features]
 default = ["sampling"]
 sampling = ["dep:rand"]
+ownable = []
 
 [[bench]]
 name = "types"

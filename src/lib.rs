@@ -254,4 +254,7 @@ pub use utils::ExpressionBead;
 mod scenario;
 pub use scenario::{EventType, PossibleEvent, ScenarioIterator};
 
+#[cfg(feature = "ownable")]
+pub mod owned;
+
 use crate::scenario::string_scenario_parser;

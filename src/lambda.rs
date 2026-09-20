@@ -15,7 +15,7 @@ use std::{
 use thiserror::Error;
 
 mod interpretation;
-pub use interpretation::{EvaluationError, Literal, Value};
+pub use interpretation::{EvaluationError, Literal, Neutral, Value};
 pub mod types;
 use types::{LambdaType, TypeError};
 

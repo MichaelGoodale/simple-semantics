@@ -25,6 +25,8 @@ impl From<ValueId> for usize {
     }
 }
 
+//TODO: Wrap Value and Neutral so that their internal guts aren't visible
+
 ///A representation of literals of a few basic types.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize)]
 pub enum Literal<'a> {
@@ -230,12 +232,13 @@ pub enum Neutral<'src, 'pool, T: LambdaLanguageOfThought + Clone> {
     AppBoth(Box<Neutral<'src, 'pool, T>>, Box<Neutral<'src, 'pool, T>>),
     ///An application where only the head is neutral.
     AppHead(Box<Neutral<'src, 'pool, T>>, Box<Value<'src, 'pool, T>>),
-    //An application where only the argument is neutral.
+    ///An application where only the argument is neutral.
     AppArg(Box<Value<'src, 'pool, T>>, Box<Neutral<'src, 'pool, T>>),
-
     ///A primitive with some neutral argument.
     Primitive {
+        ///The primitive expression
         expr: T,
+        ///Its accumulated arguments.
         args: Vec<Value<'src, 'pool, T>>,
     },
 }
@@ -327,6 +330,8 @@ impl<T> Neutral<'_, '_, T>
 where
     T: LambdaLanguageOfThought + Clone,
 {
+    ///Get the type of the neutral expression
+    #[expect(clippy::missing_panics_doc)] //all left hand expressions in applications must be functions 
     pub fn typ(&self) -> LambdaType {
         match self {
             Neutral::FreeVar(_, t) | Neutral::BoundVar(_, t) => (*t).clone(),
