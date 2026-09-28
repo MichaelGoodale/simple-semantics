@@ -850,6 +850,18 @@ where
     ))
 }
 
+impl LambdaParseError {
+    ///Builds a [`LambdaParseError`] from a [`Vec`] of chumsky [`Rich`] errors.
+    pub fn from_errors(v: Vec<Rich<'_, char>>, s: &str) -> Self {
+        LambdaParseError(
+            v.into_iter()
+                .map(|e| e.map_token(|c| c.to_string()).into())
+                .collect(),
+            s.to_string(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
