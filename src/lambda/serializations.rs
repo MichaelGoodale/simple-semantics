@@ -215,7 +215,7 @@ where
     }
 }
 impl<'src, T: PartialEq + Debug + LambdaLanguageOfThought> PrintingAST<'src, T> {
-    fn apply(self, other: Self) -> Self {
+    fn apply(self, other: Self, under_app: bool) -> Self {
         match (self, other) {
             (
                 PrintingAST::Application {
@@ -244,6 +244,21 @@ impl<'src, T: PartialEq + Debug + LambdaLanguageOfThought> PrintingAST<'src, T> 
                     children,
                 }
             }
+
+            (PrintingAST::Expr(expr), r)
+                if matches!(
+                    &r,
+                    PrintingAST::Application {
+                        head: ApplicationHead::Infix(x, ..),
+                        ..
+                    } if &expr == x
+                ) && under_app =>
+            {
+                //This is when we're applying a And to and And, (or Or to Or), so we can just flatten
+                //it, but only if we know another And is coming!
+                r
+            }
+
             (
                 x @ (PrintingAST::Application {
                     head: ApplicationHead::Prefix(..),
@@ -267,7 +282,7 @@ impl<'src, T: PartialEq + Debug + LambdaLanguageOfThought> PrintingAST<'src, T> 
             }
 
             (PrintingAST::Expr(expr), y) => PrintingAST::Application {
-                head: if expr.infix() {
+                head: if expr.infix() && under_app {
                     let parens = vec![y.needs_parens() && y.head().is_none_or(|x| x != &expr)];
                     ApplicationHead::Infix(expr, parens)
                 } else if expr.unary_associative() {
@@ -300,13 +315,21 @@ where
     T: LambdaLanguageOfThought + PartialEq + Clone + Debug,
 {
     pub(super) fn tokens(&self, expr: LambdaExprRef, c: VarContext) -> PrintingAST<'src, T> {
+        self.tokens_inner(expr, c, false)
+    }
+    fn tokens_inner(
+        &self,
+        expr: LambdaExprRef,
+        c: VarContext,
+        under_app: bool,
+    ) -> PrintingAST<'src, T> {
         match self.get(expr) {
             LambdaExpr::Lambda(child, lambda_type) => {
                 let (c, var) = c.inc_depth(lambda_type);
                 PrintingAST::Lambda {
                     var,
                     typ: lambda_type.clone(),
-                    body: Box::new(self.tokens(*child, c)),
+                    body: Box::new(self.tokens_inner(*child, c, false)),
                 }
             }
             LambdaExpr::BoundVariable(bvar, t) => {
@@ -324,9 +347,9 @@ where
                 subformula,
                 argument,
             } => {
-                let f = self.tokens(*subformula, c.clone());
-                let arg = self.tokens(*argument, c.clone());
-                f.apply(arg)
+                let f = self.tokens_inner(*subformula, c.clone(), true);
+                let arg = self.tokens_inner(*argument, c.clone(), true);
+                f.apply(arg, under_app)
             }
             LambdaExpr::LanguageOfThoughtExpr(x, super::ExprType::NoVar) => {
                 PrintingAST::Expr(BaseExpr::Expr(x.clone()))
@@ -340,7 +363,7 @@ where
                     expr: x.clone(),
                     var_name: var_string,
                     var_type: x.var_type().unwrap().clone(),
-                    children: vec![self.tokens(*body, c)],
+                    children: vec![self.tokens_inner(*body, c, false)],
                 }
             }
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVarTwoBodies(l, r)) => {
@@ -351,7 +374,10 @@ where
                     expr: x.clone(),
                     var_name: var_string,
                     var_type: x.var_type().unwrap().clone(),
-                    children: vec![self.tokens(*l, c.clone()), self.tokens(*r, c)],
+                    children: vec![
+                        self.tokens_inner(*l, c.clone(), false),
+                        self.tokens_inner(*r, c, false),
+                    ],
                 }
             }
         }
@@ -476,7 +502,7 @@ where
             Neutral::AppHead(head, arg) => (head.tokens(c.clone()), arg.tokens(c)),
             Neutral::AppArg(head, arg) => (head.tokens(c.clone()), arg.tokens(c)),
         };
-        f.apply(arg)
+        f.apply(arg, false)
     }
 }
 
@@ -534,7 +560,19 @@ mod test {
             ("~", "{\"Expr\":\"Not\"}"),
             (
                 "&(x#t)",
-                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false]]},\"children\":[{\"FreeVariable\":[\"x\",\"t\"]}]}}",
+                "{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"And\"}},\"children\":[{\"FreeVariable\":[\"x\",\"t\"]}]}}",
+            ),
+            (
+                "lambda t phi &(phi & phi)",
+                "{\"Lambda\":{\"var\":\"phi\",\"typ\":\"t\",\"body\":{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"And\"}},\"children\":[{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false]]},\"children\":[{\"Variable\":[\"phi\",\"t\"]},{\"Variable\":[\"phi\",\"t\"]}]}}]}}}}",
+            ),
+            (
+                "True & True & True",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false,false]]},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Tautology\"},{\"Expr\":\"Tautology\"}]}}",
+            ),
+            (
+                "AgentOf(a_John, e_0) & PatientOf(a_Mary, e_1) & likes#<a,<a,t>>(a_Mary, a_John)",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false,false]]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"AgentOf\"}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}},{\"Expr\":{\"Event\":0}}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"PatientOf\"}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}},{\"Expr\":{\"Event\":1}}]}},{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"likes\",\"<a,<a,t>>\"]}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}},{\"Expr\":{\"Actor\":\"John\"}}]}}]}}",
             ),
             (
                 "~AgentOf(a_John, e_0)",
