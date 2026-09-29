@@ -88,7 +88,7 @@ impl<'a> VarContext<'a> {
     }
 }
 
-impl<T: LambdaLanguageOfThought + Display + Clone + PartialEq> std::fmt::Display
+impl<T: LambdaLanguageOfThought + Display + Clone + PartialEq + Debug> std::fmt::Display
     for RootedLambdaPool<'_, T>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -97,7 +97,9 @@ impl<T: LambdaLanguageOfThought + Display + Clone + PartialEq> std::fmt::Display
     }
 }
 
-impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone> Display for Value<'_, '_, T> {
+impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone + Debug> Display
+    for Value<'_, '_, T>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.tokens(VarContext::default()))
     }

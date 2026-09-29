@@ -11,8 +11,8 @@ use crate::lambda::{LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLa
 
 use crate::lambda::printing::VarContext;
 
-impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src> + PartialEq + Clone> Serialize
-    for RootedLambdaPool<'src, T>
+impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src> + PartialEq + Clone + Debug>
+    Serialize for RootedLambdaPool<'src, T>
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -36,9 +36,10 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(super) enum BaseExpr<'src, T> {
-    Variable(String, Option<LambdaType>),
+    Variable(String, LambdaType),
+    FreeVariable(String, LambdaType),
     AnonymousVariable(usize, LambdaType),
     Literal(Literal<'src>),
     Expr(T),
@@ -62,35 +63,11 @@ impl<T: LambdaLanguageOfThought> BaseExpr<'_, T> {
     }
 }
 
-impl<T: Serialize> Serialize for BaseExpr<'_, T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            BaseExpr::Variable(name, _) => {
-                serializer.serialize_newtype_variant("BaseExpr", 0, "Variable", name)
-            }
-
-            BaseExpr::AnonymousVariable(index, _) => {
-                serializer.serialize_newtype_variant("BaseExpr", 1, "AnonymousVariable", index)
-            }
-
-            BaseExpr::Expr(expr) => {
-                serializer.serialize_newtype_variant("BaseExpr", 2, "Expr", expr)
-            }
-            BaseExpr::Literal(literal) => {
-                serializer.serialize_newtype_variant("BaseExpr", 3, "Literal", literal)
-            }
-        }
-    }
-}
-
 impl<T: Display> Display for BaseExpr<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BaseExpr::Variable(x, None) => write!(f, "{x}"),
-            BaseExpr::Variable(x, Some(t)) => write!(f, "{x}#{t}"),
+            BaseExpr::Variable(x, _) => write!(f, "{x}"),
+            BaseExpr::FreeVariable(x, t) => write!(f, "{x}#{t}"),
             BaseExpr::AnonymousVariable(x, t) => write!(f, "{x}#{t}"),
             BaseExpr::Expr(x) => write!(f, "{x}"),
             BaseExpr::Literal(x) => write!(f, "{x}"),
@@ -98,33 +75,45 @@ impl<T: Display> Display for BaseExpr<'_, T> {
     }
 }
 
-impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
+impl<T: Display + LambdaLanguageOfThought + Debug> Display for PrintingAST<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PrintingAST::Application {
-                head: Some(head),
+                head: ApplicationHead::Infix(head, needs_parens),
                 children,
-            } if head.infix() => write!(
-                f,
-                "{}",
-                children
-                    .iter()
-                    .map(|x| if x.needs_parens() {
-                        format!("({x})")
-                    } else {
-                        x.to_string()
-                    })
-                    .join(format!(" {head} ").as_str())
-            ),
+            } => {
+                if children.len() < 2 {
+                    write!(
+                        f,
+                        "{head}({})",
+                        children.iter().map(|x| x.to_string()).join("")
+                    )
+                } else {
+                    write!(
+                        f,
+                        "{}",
+                        children
+                            .iter()
+                            .zip(needs_parens)
+                            .map(|(x, needs_parens)| if *needs_parens {
+                                format!("({x})")
+                            } else {
+                                x.to_string()
+                            })
+                            .join(format!(" {head} ").as_str())
+                    )
+                }
+            }
             PrintingAST::Application {
-                head: Some(head),
+                head: ApplicationHead::Prefix(head, needs_parens),
                 children,
-            } if children.len() == 1 && head.unary_associative() => {
+                ..
+            } => {
                 write!(
                     f,
                     "{}{}",
                     head,
-                    if children[0].needs_parens() {
+                    if *needs_parens {
                         format!("({})", children[0])
                     } else {
                         children[0].to_string()
@@ -133,8 +122,9 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
             }
 
             PrintingAST::Application {
-                head: Some(head),
+                head: ApplicationHead::Normal(head),
                 children,
+                ..
             } => write!(
                 f,
                 "{head}({})",
@@ -144,14 +134,14 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
                     .join(", ")
             ),
             PrintingAST::Application {
-                head: None,
+                head: ApplicationHead::ComplexFunc(head),
                 children,
+                ..
             } => {
                 write!(
                     f,
-                    "({})({})",
-                    children.first().unwrap(),
-                    children[1..]
+                    "({head})({})",
+                    children
                         .iter()
                         .map(std::string::ToString::to_string)
                         .join(", ")
@@ -177,9 +167,17 @@ impl<T: Display + LambdaLanguageOfThought> Display for PrintingAST<'_, T> {
 }
 
 #[derive(Serialize, Clone, Debug)]
+pub(super) enum ApplicationHead<'src, T> {
+    Infix(BaseExpr<'src, T>, Vec<bool>),
+    Prefix(BaseExpr<'src, T>, bool),
+    Normal(BaseExpr<'src, T>),
+    ComplexFunc(Box<PrintingAST<'src, T>>),
+}
+
+#[derive(Serialize, Clone, Debug)]
 pub(super) enum PrintingAST<'src, T> {
     Application {
-        head: Option<BaseExpr<'src, T>>,
+        head: ApplicationHead<'src, T>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         children: Vec<PrintingAST<'src, T>>,
     },
@@ -205,9 +203,10 @@ where
     fn needs_parens(&self) -> bool {
         match self {
             PrintingAST::Application {
-                head: Some(head),
+                head: ApplicationHead::Infix(head, _),
                 children,
-            } if head.infix() && children.len() >= 2 => true,
+                ..
+            } if children.len() >= 2 => true,
             PrintingAST::Lambda { .. } => true,
             PrintingAST::Application { .. } | PrintingAST::Binder { .. } | PrintingAST::Expr(_) => {
                 false
@@ -215,92 +214,90 @@ where
         }
     }
 }
-impl<'src, T> PrintingAST<'src, T> {
-    fn token(&self) -> Option<&T> {
+impl<'src, T: PartialEq + Debug + LambdaLanguageOfThought> PrintingAST<'src, T> {
+    fn apply(self, other: Self) -> Self {
+        match (self, other) {
+            (
+                PrintingAST::Application {
+                    head: ApplicationHead::Infix(x, x_parens),
+                    children: x_children,
+                },
+                PrintingAST::Application {
+                    head: ApplicationHead::Infix(y, y_parens),
+                    children: y_children,
+                },
+            ) if x == y => PrintingAST::Application {
+                head: ApplicationHead::Infix(x, x_parens.into_iter().chain(y_parens).collect()),
+                children: x_children.into_iter().chain(y_children).collect(),
+            },
+            (
+                PrintingAST::Application {
+                    head: ApplicationHead::Infix(x, mut parens),
+                    mut children,
+                },
+                y,
+            ) => {
+                parens.push(y.needs_parens() && y.head().is_none_or(|y| y != &x));
+                children.push(y);
+                PrintingAST::Application {
+                    head: ApplicationHead::Infix(x, parens),
+                    children,
+                }
+            }
+            (
+                x @ (PrintingAST::Application {
+                    head: ApplicationHead::Prefix(..),
+                    ..
+                }
+                | PrintingAST::Lambda { .. }),
+                y,
+            ) => PrintingAST::Application {
+                head: ApplicationHead::ComplexFunc(Box::new(x)),
+                children: vec![y],
+            },
+            (
+                PrintingAST::Application {
+                    head: head @ (ApplicationHead::Normal(_) | ApplicationHead::ComplexFunc(_)),
+                    mut children,
+                },
+                y,
+            ) => {
+                children.push(y);
+                PrintingAST::Application { head, children }
+            }
+
+            (PrintingAST::Expr(expr), y) => PrintingAST::Application {
+                head: if expr.infix() {
+                    let parens = vec![y.needs_parens() && y.head().is_none_or(|x| x != &expr)];
+                    ApplicationHead::Infix(expr, parens)
+                } else if expr.unary_associative() {
+                    ApplicationHead::Prefix(expr, y.needs_parens())
+                } else {
+                    ApplicationHead::Normal(expr)
+                },
+                children: vec![y],
+            },
+            (x, y) => todo!("A:\t{x:#?}\nB:\t{y:#?}"),
+        }
+    }
+
+    fn head(&self) -> Option<&BaseExpr<'src, T>> {
         match self {
-            PrintingAST::Expr(BaseExpr::Expr(expr))
-            | PrintingAST::Application {
-                head: Some(BaseExpr::Expr(expr)),
+            PrintingAST::Application {
+                head:
+                    ApplicationHead::Prefix(head, _)
+                    | ApplicationHead::Infix(head, _)
+                    | ApplicationHead::Normal(head),
                 ..
-            }
-            | PrintingAST::Binder { expr, .. } => Some(expr),
+            } => Some(head),
             _ => None,
-        }
-    }
-
-    fn children(self) -> Vec<PrintingAST<'src, T>> {
-        match self {
-            PrintingAST::Application { children, .. } | PrintingAST::Binder { children, .. } => {
-                children
-            }
-            PrintingAST::Lambda { body, .. } => vec![*body],
-            PrintingAST::Expr(_) => vec![],
-        }
-    }
-
-    fn steal_children(self, other: Self) -> Self {
-        match self {
-            PrintingAST::Application { head, mut children } => {
-                children.extend(other.children());
-                PrintingAST::Application { head, children }
-            }
-            PrintingAST::Expr(head) => PrintingAST::Application {
-                head: Some(head),
-                children: other.children(),
-            },
-            PrintingAST::Binder {
-                expr,
-                var_name,
-                var_type,
-                mut children,
-            } => {
-                children.extend(other.children());
-                PrintingAST::Binder {
-                    expr,
-                    var_name,
-                    var_type,
-                    children,
-                }
-            }
-            PrintingAST::Lambda { .. } => panic!("No way to add new children to a lambda"),
-        }
-    }
-
-    fn add_child(self, child: Self) -> Self {
-        match self {
-            PrintingAST::Application { head, mut children } => {
-                children.push(child);
-                PrintingAST::Application { head, children }
-            }
-            PrintingAST::Binder {
-                expr,
-                var_name,
-                var_type,
-                mut children,
-            } => {
-                children.push(child);
-                PrintingAST::Binder {
-                    expr,
-                    var_name,
-                    var_type,
-                    children,
-                }
-            }
-            PrintingAST::Expr(head) => PrintingAST::Application {
-                head: Some(head),
-                children: vec![child],
-            },
-            l @ PrintingAST::Lambda { .. } => PrintingAST::Application {
-                head: None,
-                children: vec![l, child],
-            },
         }
     }
 }
 
 impl<'src, T> RootedLambdaPool<'src, T>
 where
-    T: LambdaLanguageOfThought + PartialEq + Clone,
+    T: LambdaLanguageOfThought + PartialEq + Clone + Debug,
 {
     pub(super) fn tokens(&self, expr: LambdaExprRef, c: VarContext) -> PrintingAST<'src, T> {
         match self.get(expr) {
@@ -312,12 +309,12 @@ where
                     body: Box::new(self.tokens(*child, c)),
                 }
             }
-            LambdaExpr::BoundVariable(bvar, _) => {
-                PrintingAST::Expr(BaseExpr::Variable(c.lambda_var(*bvar), None))
+            LambdaExpr::BoundVariable(bvar, t) => {
+                PrintingAST::Expr(BaseExpr::Variable(c.lambda_var(*bvar), t.clone()))
             }
 
             LambdaExpr::FreeVariable(FreeVar::Named(s), t) => {
-                PrintingAST::Expr(BaseExpr::Variable(s.to_string(), Some(t.clone())))
+                PrintingAST::Expr(BaseExpr::FreeVariable(s.to_string(), t.clone()))
             }
             LambdaExpr::FreeVariable(FreeVar::Anonymous(n), t) => {
                 PrintingAST::Expr(BaseExpr::AnonymousVariable(*n, t.clone()))
@@ -329,16 +326,7 @@ where
             } => {
                 let f = self.tokens(*subformula, c.clone());
                 let arg = self.tokens(*argument, c.clone());
-                match (f.token(), arg.token()) {
-                    (Some(x), Some(y)) => {
-                        if x.commutative() && x.associative() && x == y {
-                            f.steal_children(arg)
-                        } else {
-                            f.add_child(arg)
-                        }
-                    }
-                    (_, _) => f.add_child(arg),
-                }
+                f.apply(arg)
             }
             LambdaExpr::LanguageOfThoughtExpr(x, super::ExprType::NoVar) => {
                 PrintingAST::Expr(BaseExpr::Expr(x.clone()))
@@ -372,7 +360,7 @@ where
 
 impl<'src, T> Value<'src, '_, T>
 where
-    T: LambdaLanguageOfThought + PartialEq + Clone,
+    T: LambdaLanguageOfThought + PartialEq + Clone + Debug,
 {
     pub(super) fn tokens(&self, c: VarContext) -> PrintingAST<'src, T> {
         match self {
@@ -407,7 +395,19 @@ where
                 };
 
                 PrintingAST::Application {
-                    head: Some(BaseExpr::Expr(expr.clone())),
+                    head: if expr.infix() && children.len() >= 2 {
+                        ApplicationHead::Infix(
+                            BaseExpr::Expr(expr.clone()),
+                            children.iter().map(|x| x.needs_parens()).collect(),
+                        )
+                    } else if expr.unary_associative() && !children.is_empty() {
+                        ApplicationHead::Prefix(
+                            BaseExpr::Expr(expr.clone()),
+                            children.iter().any(|x| x.needs_parens()),
+                        )
+                    } else {
+                        ApplicationHead::Normal(BaseExpr::Expr(expr.clone()))
+                    },
                     children,
                 }
             }
@@ -417,7 +417,7 @@ where
 
 impl<'src, T> Neutral<'src, '_, T>
 where
-    T: LambdaLanguageOfThought + PartialEq + Clone,
+    T: LambdaLanguageOfThought + PartialEq + Clone + Debug,
 {
     pub(super) fn tokens(&self, c: VarContext) -> PrintingAST<'src, T> {
         let (f, arg) = match self {
@@ -427,11 +427,14 @@ where
             Neutral::FreeVar(FreeVar::Named(x), lambda_type) => {
                 return PrintingAST::Expr(BaseExpr::Variable(
                     x.to_string(),
-                    Some((*lambda_type).clone()),
+                    (*lambda_type).clone(),
                 ));
             }
-            Neutral::BoundVar(d, _) => {
-                return PrintingAST::Expr(BaseExpr::Variable(c.lambda_var_by_level(*d), None));
+            Neutral::BoundVar(d, t) => {
+                return PrintingAST::Expr(BaseExpr::Variable(
+                    c.lambda_var_by_level(*d),
+                    (*t).clone(),
+                ));
             }
             Neutral::Primitive { expr, args } => {
                 let children = if expr.commutative() && expr.associative() {
@@ -453,7 +456,19 @@ where
                     args.iter().map(|x| x.tokens(c.clone())).collect()
                 };
                 return PrintingAST::Application {
-                    head: Some(BaseExpr::Expr(expr.clone())),
+                    head: if expr.infix() && children.len() >= 2 {
+                        ApplicationHead::Infix(
+                            BaseExpr::Expr(expr.clone()),
+                            children.iter().map(|x| x.needs_parens()).collect(),
+                        )
+                    } else if expr.unary_associative() && !children.is_empty() {
+                        ApplicationHead::Prefix(
+                            BaseExpr::Expr(expr.clone()),
+                            children.iter().any(|x| x.needs_parens()),
+                        )
+                    } else {
+                        ApplicationHead::Normal(BaseExpr::Expr(expr.clone()))
+                    },
                     children,
                 };
             }
@@ -461,16 +476,7 @@ where
             Neutral::AppHead(head, arg) => (head.tokens(c.clone()), arg.tokens(c)),
             Neutral::AppArg(head, arg) => (head.tokens(c.clone()), arg.tokens(c)),
         };
-        match (f.token(), arg.token()) {
-            (Some(x), Some(y)) => {
-                if x.commutative() && x.associative() && x == y {
-                    f.steal_children(arg)
-                } else {
-                    f.add_child(arg)
-                }
-            }
-            (_, _) => f.add_child(arg),
-        }
+        f.apply(arg)
     }
 }
 
@@ -480,7 +486,7 @@ pub struct MathModeExpression<'src, T>(PrintingAST<'src, T>);
 
 impl<'src, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq> RootedLambdaPool<'src, T>
 where
-    T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq,
+    T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq + Debug,
     T::Token: Clone,
 {
     ///Get a [`MathModeExpression`] to be serialized for documents.
@@ -525,57 +531,62 @@ mod test {
     #[test]
     fn serializing() -> anyhow::Result<()> {
         for (statement, json) in [
+            ("~", "{\"Expr\":\"Not\"}"),
+            (
+                "&(x#t)",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false]]},\"children\":[{\"FreeVariable\":[\"x\",\"t\"]}]}}",
+            ),
             (
                 "~AgentOf(a_John, e_0)",
-                "{\"Application\":{\"head\":{\"Expr\":\"Not\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":\"AgentOf\"},\"children\":[{\"Expr\":{\"Actor\":\"John\"}},{\"Expr\":{\"Event\":0}}]}}]}}",
+                "{\"Application\":{\"head\":{\"Prefix\":[{\"Expr\":\"Not\"},false]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"AgentOf\"}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}},{\"Expr\":{\"Event\":0}}]}}]}}",
             ),
             (
                 "pa_Red(a_John) & ~pa_Red(a_Mary)",
-                "{\"Application\":{\"head\":{\"Expr\":\"And\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}},{\"Application\":{\"head\":{\"Expr\":\"Not\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}}]}}]}}]}}",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false]]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}},{\"Application\":{\"head\":{\"Prefix\":[{\"Expr\":\"Not\"},false]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}}]}}]}}]}}",
             ),
             (
                 "every(x, all_a(x), pa_Blue(x))",
-                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Expr\":\"Everyone\"},\"children\":[{\"Variable\":\"x\"}]}},{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}},\"children\":[{\"Variable\":\"x\"}]}}]}}",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"Everyone\"}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}}]}}",
             ),
             (
                 "every(x, pa_Blue(x), pa_Blue(x))",
-                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}},\"children\":[{\"Variable\":\"x\"}]}},{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}},\"children\":[{\"Variable\":\"x\"}]}}]}}",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Blue\",\"Actor\"]}}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}}]}}",
             ),
             (
                 "every(x, pa_5(x), pa_10(a_59))",
-                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"5\",\"Actor\"]}},\"children\":[{\"Variable\":\"x\"}]}},{\"Application\":{\"head\":{\"Expr\":{\"Property\":[\"10\",\"Actor\"]}},\"children\":[{\"Expr\":{\"Actor\":\"59\"}}]}}]}}",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"5\",\"Actor\"]}}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"10\",\"Actor\"]}}},\"children\":[{\"Expr\":{\"Actor\":\"59\"}}]}}]}}",
             ),
             (
                 "every_e(x, all_e(x), PatientOf(a_Mary, x))",
-                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Event\"}},\"var_name\":\"x\",\"var_type\":\"e\",\"children\":[{\"Application\":{\"head\":{\"Expr\":\"EveryEvent\"},\"children\":[{\"Variable\":\"x\"}]}},{\"Application\":{\"head\":{\"Expr\":\"PatientOf\"},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}},{\"Variable\":\"x\"}]}}]}}",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Event\"}},\"var_name\":\"x\",\"var_type\":\"e\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"EveryEvent\"}},\"children\":[{\"Variable\":[\"x\",\"e\"]}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"PatientOf\"}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}},{\"Variable\":[\"x\",\"e\"]}]}}]}}",
             ),
             (
                 "cool#<a,t>(a_John)",
-                "{\"Application\":{\"head\":{\"Variable\":\"cool\"},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}}",
+                "{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"cool\",\"<a,t>\"]}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}}",
             ),
             (
                 "bad#<a,t>(man#a)",
-                "{\"Application\":{\"head\":{\"Variable\":\"bad\"},\"children\":[{\"Variable\":\"man\"}]}}",
+                "{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"bad\",\"<a,t>\"]}},\"children\":[{\"FreeVariable\":[\"man\",\"a\"]}]}}",
             ),
             (
                 "loves#<a,<a,t>>(a_mary, a_john)",
-                "{\"Application\":{\"head\":{\"Variable\":\"loves\"},\"children\":[{\"Expr\":{\"Actor\":\"mary\"}},{\"Expr\":{\"Actor\":\"john\"}}]}}",
+                "{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"loves\",\"<a,<a,t>>\"]}},\"children\":[{\"Expr\":{\"Actor\":\"mary\"}},{\"Expr\":{\"Actor\":\"john\"}}]}}",
             ),
             (
                 "True | (True & False)",
-                "{\"Application\":{\"head\":{\"Expr\":\"Or\"},\"children\":[{\"Expr\":\"Tautology\"},{\"Application\":{\"head\":{\"Expr\":\"And\"},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Contradiction\"}]}}]}}",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"Or\"},[false,true]]},\"children\":[{\"Expr\":\"Tautology\"},{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false]]},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Contradiction\"}]}}]}}",
             ),
             (
                 "(True | True) & False",
-                "{\"Application\":{\"head\":{\"Expr\":\"And\"},\"children\":[{\"Application\":{\"head\":{\"Expr\":\"Or\"},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Tautology\"}]}},{\"Expr\":\"Contradiction\"}]}}",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[true,false]]},\"children\":[{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"Or\"},[false,false]]},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Tautology\"}]}},{\"Expr\":\"Contradiction\"}]}}",
             ),
             (
                 "lambda a x lambda a y likes#<a,<a,t>>(x, y)",
-                "{\"Lambda\":{\"var\":\"x\",\"typ\":\"a\",\"body\":{\"Lambda\":{\"var\":\"y\",\"typ\":\"a\",\"body\":{\"Application\":{\"head\":{\"Variable\":\"likes\"},\"children\":[{\"Variable\":\"x\"},{\"Variable\":\"y\"}]}}}}}}",
+                "{\"Lambda\":{\"var\":\"x\",\"typ\":\"a\",\"body\":{\"Lambda\":{\"var\":\"y\",\"typ\":\"a\",\"body\":{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"likes\",\"<a,<a,t>>\"]}},\"children\":[{\"Variable\":[\"x\",\"a\"]},{\"Variable\":[\"y\",\"a\"]}]}}}}}}",
             ),
             (
                 "lambda <a,t> P iota(x, P(x))",
-                "{\"Lambda\":{\"var\":\"P\",\"typ\":\"<a,t>\",\"body\":{\"Binder\":{\"expr\":{\"Iota\":\"Actor\"},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Variable\":\"P\"},\"children\":[{\"Variable\":\"x\"}]}}]}}}}",
+                "{\"Lambda\":{\"var\":\"P\",\"typ\":\"<a,t>\",\"body\":{\"Binder\":{\"expr\":{\"Iota\":\"Actor\"},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Variable\":[\"P\",\"<a,t>\"]}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}}]}}}}",
             ),
         ] {
             let expression = RootedLambdaPool::<Expr>::parse(statement)?;
