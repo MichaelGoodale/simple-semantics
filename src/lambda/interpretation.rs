@@ -13,7 +13,7 @@ use crate::{
 };
 use chumsky::container::Seq;
 use itertools::Itertools;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -37,8 +37,10 @@ pub enum Literal<'a> {
     ///[`Event`], type: e
     Event(Event),
     ///A set of actors (represented as a vector), type: <a,t>
+    #[serde(serialize_with = "serialize_actor_set")]
     ActorSet(Vec<Actor<'a>>),
     ///A set of events (represented as a vector), type: <e,t>
+    #[serde(serialize_with = "serialize_event_set")]
     EventSet(Vec<Event>),
     ///A mapping from truth to truth, type: <t,t>
     TruthTable {
@@ -47,6 +49,30 @@ pub enum Literal<'a> {
         ///If the argument is true, what to do we do.
         on_true: bool,
     },
+}
+
+#[derive(Serialize)]
+enum TaggedActor<'a, 'b> {
+    Actor(&'b Actor<'a>),
+}
+
+#[derive(Serialize)]
+enum TaggedEvent<'b> {
+    Event(&'b Event),
+}
+
+fn serialize_actor_set<S>(actors: &[Actor<'_>], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.collect_seq(actors.iter().map(TaggedActor::Actor))
+}
+
+fn serialize_event_set<S>(events: &[Event], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.collect_seq(events.iter().map(TaggedEvent::Event))
 }
 
 impl Display for Literal<'_> {
@@ -929,6 +955,21 @@ mod test {
     use crate::lambda::enumerator::Generator;
 
     use super::*;
+
+    #[test]
+    fn test_literal_serialization() {
+        let actors = Literal::ActorSet(vec!["john", "mary"]);
+        let events = Literal::EventSet(vec![0, 1]);
+
+        assert_eq!(
+            serde_json::to_string(&actors).unwrap(),
+            r#"{"ActorSet":[{"Actor":"john"},{"Actor":"mary"}]}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&events).unwrap(),
+            r#"{"EventSet":[{"Event":0},{"Event":1}]}"#
+        );
+    }
 
     #[test]
     fn basic_interp() -> anyhow::Result<()> {
