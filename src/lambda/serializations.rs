@@ -506,8 +506,8 @@ where
     }
 }
 
-///A special kind of `RootedLambdaPool` that should be used to display in fancy math modes, e.g. with
-///Typst or (potentially) LaTeX.
+///A way of exporting [`RootedLambdaPool`], [`Value`], or [`Neutral`] that can be used to display in fancy math modes, e.g. with
+///Typst or (potentially) LaTeX. It's a nicer way of serializing them for fancy printing.
 pub struct MathModeExpression<'src, T>(PrintingAST<'src, T>);
 
 impl<'src, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq> RootedLambdaPool<'src, T>
@@ -519,6 +519,32 @@ where
     #[must_use]
     pub fn for_document(&self) -> MathModeExpression<'src, T> {
         MathModeExpression(self.tokens(self.root, VarContext::default()))
+    }
+}
+
+impl<'src, 'pool, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq>
+    Value<'src, 'pool, T>
+where
+    T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq + Debug,
+    T::Token: Clone,
+{
+    ///Get a [`MathModeExpression`] to be serialized for documents.
+    #[must_use]
+    pub fn for_document(&self) -> MathModeExpression<'src, T> {
+        MathModeExpression(self.tokens(VarContext::default()))
+    }
+}
+
+impl<'src, 'pool, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq>
+    Neutral<'src, 'pool, T>
+where
+    T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq + Debug,
+    T::Token: Clone,
+{
+    ///Get a [`MathModeExpression`] to be serialized for documents.
+    #[must_use]
+    pub fn for_document(&self) -> MathModeExpression<'src, T> {
+        MathModeExpression(self.tokens(VarContext::default()))
     }
 }
 
