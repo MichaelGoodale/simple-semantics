@@ -190,6 +190,11 @@ mod test {
             "every_e(x, all_e(x), some(y, all_a(y), AgentOf(y, x)))",
             "lambda e x some(y, all_a(y), AgentOf(y, x))",
             "lambda e x lambda e y some(z, all_a(z), AgentOf(z, x) & PatientOf(z, y) & pe_likes(y))",
+            "lambda a x {a_john, a_mary, a_phil}(x)",
+            "lambda t phi [False -> True, True -> True](phi)",
+            "lambda e x {e_0}(x)",
+            "lambda e x {}_e(x)",
+            "lambda a x {}_a(x)",
         ] {
             let pool = RootedLambdaPool::<Expr>::parse(phi)?;
             let s = pool.to_string();

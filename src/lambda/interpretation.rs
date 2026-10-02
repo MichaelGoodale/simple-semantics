@@ -82,25 +82,36 @@ impl Display for Literal<'_> {
             Literal::Bool(false) => f.write_str("False"),
             Literal::Actor(a) => write!(f, "a_{a}"),
             Literal::Event(e) => write!(f, "e_{e}"),
-            Literal::ActorSet(items) => {
+            Literal::ActorSet(items) if !items.is_empty() => {
                 write!(
                     f,
                     "{{{}}}",
                     items.iter().map(|x| format!("a_{x}")).join(", ")
                 )
             }
-            Literal::EventSet(items) => {
+            Literal::EventSet(items) if !items.is_empty() => {
                 write!(
                     f,
                     "{{{}}}",
                     items.iter().map(|x| format!("e_{x}")).join(", ")
                 )
             }
+            Literal::ActorSet(_) => write!(f, "{{}}_a"),
+            Literal::EventSet(_) => write!(f, "{{}}_e"),
             Literal::TruthTable { on_true, on_false } => {
-                write!(f, "False → {on_false}, True → {on_true}")
+                write!(
+                    f,
+                    "[False -> {}, True -> {}]",
+                    capitalized_bool(*on_false),
+                    capitalized_bool(*on_true)
+                )
             }
         }
     }
+}
+
+fn capitalized_bool(b: bool) -> &'static str {
+    if b { "True" } else { "False" }
 }
 
 impl<'src> Literal<'src> {

@@ -2,7 +2,7 @@
 use crate::{
     lambda::{
         Bvar, ExprType, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, LambdaPool,
-        PrimitiveVarType, RootedLambdaPool,
+        Literal, PrimitiveVarType, RootedLambdaPool,
         types::{LambdaType, core_type_parser},
     },
     language::{ActorOrEvent, BinOp, Constant, Expr, MonOp, Quantifier},
@@ -522,6 +522,76 @@ impl<'src> ParseLot<'src> for () {
     fn into_expr(_: Self::Token) -> Self {}
 }
 
+impl<'src> Literal<'src> {
+    ///Parse a potential literal:
+    ///
+    /// ```
+    /// # use simple_semantics::lambda::Literal;
+    /// assert_eq!(Literal::parse("True").unwrap(), Literal::Bool(true));
+    /// assert_eq!(Literal::parse("a_John").unwrap(), Literal::Actor("John"));
+    /// assert_eq!(Literal::parse("e_42").unwrap(), Literal::Event(42));
+    /// assert_eq!(
+    ///     Literal::parse("{a_John, a_Mary}").unwrap(),
+    ///     Literal::ActorSet(vec!["John".into(), "Mary".into()])
+    /// );
+    /// assert_eq!(Literal::parse("{}_e").unwrap(), Literal::EventSet(vec![]));
+    /// assert_eq!(Literal::parse("{}_a").unwrap(), Literal::ActorSet(vec![]));
+    /// ```
+    ///
+    ///# Errors
+    ///Will return a [`LambdaParseError`] if the [`Literal`] is malformed.
+    ///
+    pub fn parse(s: &'src str) -> Result<Self, LambdaParseError> {
+        let (x, errs) = Literal::parser().parse(s).into_output_errors();
+        if let Some(x) = x {
+            Ok(x)
+        } else {
+            Err(LambdaParseError::from_errors(errs, s))
+        }
+    }
+
+    ///A chumsky parser for [`Literal`]
+    pub fn parser() -> impl Parser<'src, &'src str, Literal<'src>, extra::Err<Rich<'src, char>>> {
+        let actor = just("a_").ignore_then(text::ascii::ident());
+
+        let event = just("e_")
+            .ignore_then(text::int(10))
+            .map(|s: &str| s.parse().unwrap());
+
+        choice((
+            just("True").to(Literal::Bool(true)),
+            just("False").to(Literal::Bool(false)),
+            actor.clone().map(Literal::Actor),
+            event.clone().map(Literal::Event),
+            actor
+                .separated_by(just(',').padded())
+                .at_least(1)
+                .collect()
+                .delimited_by(just('{').padded(), just('}').padded())
+                .map(Literal::ActorSet),
+            event
+                .separated_by(just(',').padded())
+                .at_least(1)
+                .collect()
+                .delimited_by(just('{').padded(), just('}').padded())
+                .map(Literal::EventSet),
+            just("{}_a").to(Literal::ActorSet(vec![])),
+            just("{}_e").to(Literal::EventSet(vec![])),
+            just("[")
+                .ignore_then(just("False").padded())
+                .ignore_then(just("->").padded())
+                .ignore_then(choice((just("True").to(true), just("False").to(false))))
+                .then_ignore(just(',').padded())
+                .then_ignore(just("True").padded())
+                .then_ignore(just("->").padded())
+                .then(choice((just("True").to(true), just("False").to(false))))
+                .padded()
+                .then_ignore(just("]").padded())
+                .map(|(on_false, on_true)| Literal::TruthTable { on_false, on_true }),
+        ))
+    }
+}
+
 impl<'src> ParseLot<'src> for Expr<'src> {
     type Token = Expr<'src>;
 
@@ -564,6 +634,7 @@ impl<'src> ParseLot<'src> for Expr<'src> {
                 .then_ignore(just("_"))
                 .then(keyword())
                 .map(|(t, s)| Expr::Constant(Constant::Property(s, t))),
+            Literal::parser().map(|x| Expr::Constant(Constant::Literal(x))),
         ))
     }
 
@@ -1026,6 +1097,8 @@ mod tests {
             "x",
             "lambda e x",
             "every(x, all_a(x), every(y, all_a(y)))",
+            "lambda a x {}_e(x)",
+            "lambda e x {}_a(x)",
         ] {
             println!("{statement}");
             let p = RootedLambdaPool::<Expr>::parse(statement);
@@ -1035,5 +1108,72 @@ mod tests {
             println!("__________________________________");
         }
         Ok(())
+    }
+
+    fn test_parse(src: &str) -> Literal<'_> {
+        Literal::parser().parse(src).into_result().unwrap()
+    }
+
+    #[test]
+    fn test_literals() {
+        assert_eq!(test_parse("True"), Literal::Bool(true));
+        assert_eq!(test_parse("False"), Literal::Bool(false));
+
+        assert_eq!(test_parse("a_John"), Literal::Actor("John"));
+        assert_eq!(test_parse("a_Mary_42"), Literal::Actor("Mary_42"));
+
+        assert_eq!(test_parse("e_0"), Literal::Event(0));
+        assert_eq!(test_parse("e_123"), Literal::Event(123));
+
+        assert_eq!(
+            test_parse("{a_John, a_Mary, a_Bob}"),
+            Literal::ActorSet(vec!["John", "Mary", "Bob"]),
+        );
+
+        assert_eq!(
+            test_parse("{e_1, e_2, e_42}"),
+            Literal::EventSet(vec![1, 2, 42])
+        );
+
+        assert_eq!(test_parse("{}_a"), Literal::ActorSet(vec![]));
+        assert_eq!(test_parse("{}_e"), Literal::EventSet(vec![]));
+
+        assert_eq!(
+            test_parse("[False -> False, True -> False]"),
+            Literal::TruthTable {
+                on_false: false,
+                on_true: false,
+            },
+        );
+        assert_eq!(
+            test_parse("[False -> True, True -> False]"),
+            Literal::TruthTable {
+                on_false: true,
+                on_true: false,
+            },
+        );
+        assert_eq!(
+            test_parse("[False -> False, True -> True]"),
+            Literal::TruthTable {
+                on_false: false,
+                on_true: true,
+            },
+        );
+        assert_eq!(
+            test_parse("[False -> True, True -> True]"),
+            Literal::TruthTable {
+                on_false: true,
+                on_true: true,
+            },
+        );
+    }
+
+    #[test]
+    fn test_invalid_literals() {
+        assert!(Literal::parser().parse("{}").into_result().is_err());
+        assert!(Literal::parser().parse("a_").into_result().is_err());
+        assert!(Literal::parser().parse("e_").into_result().is_err());
+        assert!(Literal::parser().parse("e_-1").into_result().is_err());
+        assert!(Literal::parser().parse("foo").into_result().is_err());
     }
 }
