@@ -240,7 +240,7 @@ pub enum EvaluationError {
 }
 
 ///A value resulting from evaluating an expression.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub enum Value<'src, T: LambdaLanguageOfThought + Clone> {
     ///A [`Literal`]
     Base(Literal<'src>),
@@ -259,7 +259,7 @@ pub enum Value<'src, T: LambdaLanguageOfThought + Clone> {
 }
 
 ///A value which cannot be evaluated yet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub enum Neutral<'src, T: LambdaLanguageOfThought + Clone> {
     ///A free variable.
     FreeVar(FreeVar<'src>, LambdaType),
@@ -279,62 +279,6 @@ pub enum Neutral<'src, T: LambdaLanguageOfThought + Clone> {
         args: Vec<Value<'src, T>>,
     },
 }
-
-impl<T> PartialEq for Neutral<'_, T>
-where
-    T: LambdaLanguageOfThought + Clone + PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::FreeVar(x, x_t), Self::FreeVar(y, y_t)) => x == y && x_t == y_t,
-            (Self::AppBoth(x1, x2), Self::AppBoth(y1, y2)) => x1 == y1 && x2 == y2,
-            (Self::AppHead(x1, x2), Self::AppHead(y1, y2)) => x1 == y1 && x2 == y2,
-            (Self::AppArg(x1, x2), Self::AppArg(y1, y2)) => x1 == y1 && x2 == y2,
-            (Self::BoundVar(x1, x2), Self::BoundVar(y1, y2)) => x1 == y1 && x2 == y2,
-            (
-                Self::Primitive {
-                    expr: l_expr,
-                    args: l_args,
-                },
-                Self::Primitive {
-                    expr: r_expr,
-                    args: r_args,
-                },
-            ) => l_expr == r_expr && l_args == r_args,
-            _ => false,
-        }
-    }
-}
-
-impl<T> Eq for Neutral<'_, T> where T: LambdaLanguageOfThought + Clone + Eq {}
-
-impl<T> PartialEq for Value<'_, T>
-where
-    T: LambdaLanguageOfThought + Clone + PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Base(x), Self::Base(y)) => x == y,
-            (Self::Function(x, x_t, x_d), Self::Function(y, y_t, y_d)) => {
-                x_t == y_t && x == y && x_d == y_d
-            }
-            (Self::Neutral(x), Self::Neutral(y)) => x == y,
-            (
-                Self::Primitive {
-                    expr: l_expr,
-                    args: l_args,
-                },
-                Self::Primitive {
-                    expr: r_expr,
-                    args: r_args,
-                },
-            ) => l_expr == r_expr && l_args == r_args,
-            _ => false,
-        }
-    }
-}
-
-impl<T> Eq for Value<'_, T> where T: LambdaLanguageOfThought + Clone + Eq {}
 
 impl<T> Value<'_, T>
 where
