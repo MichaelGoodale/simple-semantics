@@ -18,6 +18,7 @@ impl<'src> Constant<'src> {
     ///[`EvaluationError::UndefinedExpression`] if a property doesn't exist in the scenario.
     pub fn eval(&self, scenario: &Scenario<'src>) -> Result<Literal<'src>, EvaluationError> {
         Ok(match self {
+            Constant::Literal(l) => l.clone(),
             Constant::Everyone => Literal::ActorSet(scenario.actors.clone()),
             Constant::EveryEvent => Literal::EventSet(scenario.events().collect()),
             Constant::Tautology => Literal::Bool(true),
@@ -352,6 +353,7 @@ impl LambdaLanguageOfThought for Expr<'_> {
                 LambdaType::et()
             }
             Expr::Constant(Constant::Tautology | Constant::Contradiction) => &LambdaType::T,
+            Expr::Constant(Constant::Literal(l)) => l.typ(),
         }
     }
 }

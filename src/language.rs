@@ -95,9 +95,9 @@ pub enum Constant<'a> {
     Contradiction,
     ///Any predicate as a set
     Property(PropertyLabel<'a>, ActorOrEvent),
-    //A Literal representation of an [`Actor]`, [`ActorSet`], [`Event`], [`EventSet`], [`Boolean`] or a one
-    //place truth function.
-    //Literal(Literal<'a>),
+    ///A Literal representation of an [`Actor]`, [`ActorSet`], [`Event`], [`EventSet`], [`Boolean`] or a one
+    ///place truth function.
+    Literal(Literal<'a>),
 }
 
 impl Display for Constant<'_> {
@@ -109,7 +109,7 @@ impl Display for Constant<'_> {
             Constant::Contradiction => write!(f, "False"),
             Constant::Property(x, ActorOrEvent::Actor) => write!(f, "pa_{x}"),
             Constant::Property(x, ActorOrEvent::Event) => write!(f, "pe_{x}"),
-            //Constant::Literal(literal) => write!(f, "{literal}"),
+            Constant::Literal(literal) => write!(f, "{literal}"),
         }
     }
 }
