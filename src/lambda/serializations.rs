@@ -327,6 +327,7 @@ pub trait ToLiteral<'src>: Sized {
         None
     }
 
+    ///Converts from a ['Literal'] to an expression
     fn from_literal(literal: Literal<'src>) -> Option<Self>;
 }
 

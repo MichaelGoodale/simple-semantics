@@ -345,13 +345,15 @@ impl From<Literal<'_>> for OwnedLiteral {
 }
 
 impl Literal<'_> {
+    #[must_use]
     fn into_owned(self) -> OwnedLiteral {
         self.into()
     }
 }
 
 impl OwnedLiteral {
-    fn as_borrowed<'a>(&'a self) -> Literal<'a> {
+    #[must_use]
+    fn as_borrowed(&self) -> Literal<'_> {
         self.into()
     }
 }
