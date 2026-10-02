@@ -95,7 +95,7 @@ impl<T: Display + LambdaLanguageOfThought + Debug> Display for PrintingAST<'_, T
                     write!(
                         f,
                         "{head}({})",
-                        children.iter().map(|x| x.to_string()).join("")
+                        children.iter().map(std::string::ToString::to_string).join("")
                     )
                 } else {
                     write!(
@@ -466,12 +466,12 @@ where
                     head: if expr.infix() && children.len() >= 2 {
                         ApplicationHead::Infix(
                             BaseExpr::Expr(expr.clone()),
-                            children.iter().map(|x| x.needs_parens()).collect(),
+                            children.iter().map(PrintingAST::needs_parens).collect(),
                         )
                     } else if expr.unary_associative() && !children.is_empty() {
                         ApplicationHead::Prefix(
                             BaseExpr::Expr(expr.clone()),
-                            children.iter().any(|x| x.needs_parens()),
+                            children.iter().any(PrintingAST::needs_parens),
                         )
                     } else {
                         ApplicationHead::Normal(BaseExpr::Expr(expr.clone()))
@@ -527,12 +527,12 @@ where
                     head: if expr.infix() && children.len() >= 2 {
                         ApplicationHead::Infix(
                             BaseExpr::Expr(expr.clone()),
-                            children.iter().map(|x| x.needs_parens()).collect(),
+                            children.iter().map(PrintingAST::needs_parens).collect(),
                         )
                     } else if expr.unary_associative() && !children.is_empty() {
                         ApplicationHead::Prefix(
                             BaseExpr::Expr(expr.clone()),
-                            children.iter().any(|x| x.needs_parens()),
+                            children.iter().any(PrintingAST::needs_parens),
                         )
                     } else {
                         ApplicationHead::Normal(BaseExpr::Expr(expr.clone()))

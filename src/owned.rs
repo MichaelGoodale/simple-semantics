@@ -6,16 +6,16 @@
 
 use crate::lambda::{Neutral, Value};
 
-/// # fn main() -> anyhow::Result<()> {
-/// let s = "lambda <a,t> P P".to_string();
+/// # fn `main()` -> `anyhow::Result`<()> {
+/// let s = "lambda <a,t> P `P".to_string()`;
 /// //x has the lifetime of s here.
-/// let x = RootedLambdaPool::<Expr>::parse(s.as_str())?;
-/// let y = x.into_owned();
+/// let x = `RootedLambdaPool::`<Expr>`::parse(s.as_str())`?;
+/// let y = `x.into_owned()`;
 /// drop(s);
 ///
-/// assert_eq!(
-///     y.into_borrowed(),
-///     RootedLambdaPool::parse("lambda <a,t> P P")?,
+/// `assert_eq`!(
+///     `y.into_borrowed()`,
+///     `RootedLambdaPool::parse("lambda` <a,t> P P")?,
 /// );
 ///
 /// # Ok(())
@@ -40,13 +40,15 @@ pub enum OwnedFreeVar {
 
 impl OwnedFreeVar {
     ///Converts to [`FreeVar`]
-    pub fn into_borrowed<'a>(&'a self) -> FreeVar<'a> {
+    #[must_use]
+    pub fn into_borrowed(&self) -> FreeVar<'_> {
         self.into()
     }
 }
 
 impl FreeVar<'_> {
     ///Converts to [`OwnedFreeVar`]
+    #[must_use]
     pub fn into_owned(self) -> OwnedFreeVar {
         self.into()
     }
@@ -140,7 +142,7 @@ where
     LambdaExpr<'a, RefType>: From<&'a OwnedLambdaExpr<OwnedType>>,
 {
     fn from(value: &'a OwnedLambdaPool<OwnedType>) -> Self {
-        LambdaPool(value.0.iter().map(|x| x.into()).collect())
+        LambdaPool(value.0.iter().map(std::convert::Into::into).collect())
     }
 }
 
@@ -150,7 +152,7 @@ where
     OwnedLambdaExpr<OwnedType>: From<LambdaExpr<'a, RefType>>,
 {
     fn from(value: LambdaPool<'a, RefType>) -> Self {
-        OwnedLambdaPool(value.0.into_iter().map(|x| x.into()).collect())
+        OwnedLambdaPool(value.0.into_iter().map(std::convert::Into::into).collect())
     }
 }
 
@@ -268,7 +270,7 @@ pub trait IntoBorrowedLOT: Sized {
         Self: 'a;
 }
 
-impl<'a> IntoOwnedLOT for Expr<'a> {
+impl IntoOwnedLOT for Expr<'_> {
     type OwnedExpression = OwnedExpr;
 }
 
@@ -281,6 +283,7 @@ where
     T: IntoOwnedLOT,
 {
     ///Gets the owned version of [`RootedLambdaPool`]
+    #[must_use]
     pub fn into_owned(self) -> OwnedRootedLambdaPool<T::OwnedExpression> {
         self.into()
     }
@@ -291,7 +294,8 @@ where
     T: IntoBorrowedLOT,
 {
     ///Converts to the usable, version: [`RootedLambdaPool`] instead of the owned version.
-    pub fn as_borrowed<'a>(&'a self) -> RootedLambdaPool<'a, T::RefExpression<'a>> {
+    #[must_use]
+    pub fn as_borrowed(&self) -> RootedLambdaPool<'_, T::RefExpression<'_>> {
         self.into()
     }
 }

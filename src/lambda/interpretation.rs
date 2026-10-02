@@ -962,20 +962,20 @@ fn eval_expr<'src, T: InterpretableLOT<'src>>(
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone> Value<'src, T> {
+impl<T: LambdaLanguageOfThought + Clone> Value<'_, T> {
     fn n_symbols_when_pool(&self) -> usize {
         match self {
             Value::Base(_) => 1,
             Value::Function(value, _, _) => 1 + value.n_symbols_when_pool(),
             Value::Neutral(neutral) => neutral.n_symbols_when_pool(),
             Value::Primitive { args, .. } => {
-                1 + args.len() + args.iter().map(|x| x.n_symbols_when_pool()).sum::<usize>()
+                1 + args.len() + args.iter().map(Value::n_symbols_when_pool).sum::<usize>()
             }
         }
     }
 }
 
-impl<'src, T: LambdaLanguageOfThought + Clone> Neutral<'src, T> {
+impl<T: LambdaLanguageOfThought + Clone> Neutral<'_, T> {
     fn n_symbols_when_pool(&self) -> usize {
         match self {
             Neutral::FreeVar(..) | Neutral::BoundVar(..) => 1,
@@ -983,7 +983,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone> Neutral<'src, T> {
             Neutral::AppHead(f, a) => f.n_symbols_when_pool() + a.n_symbols_when_pool() + 1,
             Neutral::AppArg(f, a) => f.n_symbols_when_pool() + a.n_symbols_when_pool() + 1,
             Neutral::Primitive { args, .. } => {
-                1 + args.len() + args.iter().map(|x| x.n_symbols_when_pool()).sum::<usize>()
+                1 + args.len() + args.iter().map(Value::n_symbols_when_pool).sum::<usize>()
             }
         }
     }

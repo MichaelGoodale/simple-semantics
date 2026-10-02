@@ -561,8 +561,8 @@ impl<'src> Literal<'src> {
         choice((
             just("True").to(Literal::Bool(true)),
             just("False").to(Literal::Bool(false)),
-            actor.clone().map(Literal::Actor),
-            event.clone().map(Literal::Event),
+            actor.map(Literal::Actor),
+            event.map(Literal::Event),
             actor
                 .separated_by(just(',').padded())
                 .at_least(1)
@@ -906,6 +906,7 @@ where
 
 impl LambdaParseError {
     ///Builds a [`LambdaParseError`] from a [`Vec`] of chumsky [`Rich`] errors.
+    #[must_use]
     pub fn from_errors(v: Vec<Rich<'_, char>>, s: &str) -> Self {
         LambdaParseError(
             v.into_iter()
