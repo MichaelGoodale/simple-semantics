@@ -19,6 +19,7 @@ use crate::lambda::{
 ///It automatically normalizes expressions to their beta-eta normal form as well as simplifying
 ///repeated involutory expressions (e.g. repeated negation) and avoids degenerate functions
 ///(constant functions or functions that produce constant functions)
+#[derive(Debug, Clone)]
 pub struct Generator<'src, T> {
     exprs: IndexSet<LambdaExpr<'src, T>>,
     expr_variable_usage: HashMap<ExprId, UsedVars>,
@@ -1150,7 +1151,7 @@ mod test {
             Expr::Constant(Property("a", ActorOrEvent::Actor)),
             Expr::Constant(Property("e", ActorOrEvent::Event)),
         ];
-        expressions.extend(Expr::basic_ops().into_iter().cloned());
+        expressions.extend(Expr::basic_ops().iter().cloned());
 
         let types = vec![
             (LambdaType::A, 45),
