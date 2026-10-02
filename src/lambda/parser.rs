@@ -554,6 +554,7 @@ impl<'src> Literal<'src> {
     pub fn parser() -> impl Parser<'src, &'src str, Literal<'src>, extra::Err<Rich<'src, char>>> {
         let actor = just("a_").ignore_then(keyword());
 
+        #[expect(clippy::missing_panics_doc)]
         let event = just("e_")
             .ignore_then(text::int(10))
             .map(|s: &str| s.parse().unwrap());

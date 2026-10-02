@@ -95,7 +95,10 @@ impl<T: Display + LambdaLanguageOfThought + Debug> Display for PrintingAST<'_, T
                     write!(
                         f,
                         "{head}({})",
-                        children.iter().map(std::string::ToString::to_string).join("")
+                        children
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .join("")
                     )
                 } else {
                     write!(
@@ -327,7 +330,7 @@ pub trait ToLiteral<'src>: Sized {
         None
     }
 
-    ///Converts from a ['Literal'] to an expression
+    ///Converts from a [`Literal`] to an expression
     fn from_literal(literal: Literal<'src>) -> Option<Self>;
 }
 

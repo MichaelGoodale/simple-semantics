@@ -626,7 +626,7 @@ impl<'src> Value<'src, Expr<'src>> {
     }
 }
 
-impl<'src, 'pool> Neutral<'src, Expr<'src>> {
+impl<'src> Neutral<'src, Expr<'src>> {
     fn reduce(self, scenario: &Scenario<'src>) -> Result<Value<'src, Expr<'src>>, EvaluationError> {
         match self {
             Neutral::Primitive { expr, args } => {
@@ -719,7 +719,7 @@ where
     }
 }
 
-impl<'src, 'pool, T> Value<'src, T>
+impl<'src, T> Value<'src, T>
 where
     T: InterpretableLOT<'src>,
 {
