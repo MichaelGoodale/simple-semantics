@@ -321,14 +321,20 @@ impl<'src, T: PartialEq + Debug + LambdaLanguageOfThought> PrintingAST<'src, T> 
 
 ///A trait for converting an expression to a [`Literal`], if possible.
 ///This is necessary for printing and serialization, just return `None` if not relevant for you!
-pub trait ToLiteral<'src> {
+pub trait ToLiteral<'src>: Sized {
     ///Converts to a [`Literal`]
     fn as_literal(&self) -> Option<&Literal<'src>> {
         None
     }
+
+    fn from_literal(literal: Literal<'src>) -> Option<Self>;
 }
 
-impl<'src> ToLiteral<'src> for () {}
+impl<'src> ToLiteral<'src> for () {
+    fn from_literal(_: Literal<'src>) -> Option<()> {
+        None
+    }
+}
 
 impl<'src> ToLiteral<'src> for Expr<'src> {
     fn as_literal(&self) -> Option<&Literal<'src>> {
@@ -337,6 +343,10 @@ impl<'src> ToLiteral<'src> for Expr<'src> {
         } else {
             None
         }
+    }
+
+    fn from_literal(literal: Literal<'src>) -> Option<Expr<'src>> {
+        Some(Expr::Constant(Constant::Literal(literal)))
     }
 }
 

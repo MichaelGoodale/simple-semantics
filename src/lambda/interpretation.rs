@@ -6,7 +6,7 @@ use crate::{
         Bvar,
         EvaluationError::{Stuck, UndefinedExpression},
         ExprType, FreeVar, InterpretableLOT, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought,
-        LambdaPool, RootedLambdaPool,
+        LambdaPool, RootedLambdaPool, ToLiteral,
         types::LambdaType,
     },
     language::Expr,
@@ -961,6 +961,111 @@ fn eval_expr<'src, T: InterpretableLOT<'src>>(
         Err(UndefinedExpression) => Err(UndefinedExpression),
     }
 }
+
+impl<'src, T: LambdaLanguageOfThought + Clone> Value<'src, T> {
+    fn n_symbols_when_pool(&self) -> usize {
+        match self {
+            Value::Base(_) => 1,
+            Value::Function(value, _, _) => 1 + value.n_symbols_when_pool(),
+            Value::Neutral(neutral) => neutral.n_symbols_when_pool(),
+            Value::Primitive { args, .. } => {
+                1 + args.len() + args.iter().map(|x| x.n_symbols_when_pool()).sum::<usize>()
+            }
+        }
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + Clone> Neutral<'src, T> {
+    fn n_symbols_when_pool(&self) -> usize {
+        match self {
+            Neutral::FreeVar(..) | Neutral::BoundVar(..) => 1,
+            Neutral::AppBoth(f, a) => f.n_symbols_when_pool() + a.n_symbols_when_pool() + 1,
+            Neutral::AppHead(f, a) => f.n_symbols_when_pool() + a.n_symbols_when_pool() + 1,
+            Neutral::AppArg(f, a) => f.n_symbols_when_pool() + a.n_symbols_when_pool() + 1,
+            Neutral::Primitive { args, .. } => {
+                1 + args.len() + args.iter().map(|x| x.n_symbols_when_pool()).sum::<usize>()
+            }
+        }
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + Clone + ToLiteral<'src>> Value<'src, T> {
+    ///Converts this [`Value`] back into a [`RootedLambdaPool`].
+    pub fn into_pool(self) -> RootedLambdaPool<'src, T> {
+        let mut pool = LambdaPool(Vec::with_capacity(self.n_symbols_when_pool()));
+        let root = self.into_pool_inner(&mut pool, 0);
+        RootedLambdaPool { pool, root }
+    }
+
+    fn into_pool_inner(self, pool: &mut LambdaPool<'src, T>, depth: usize) -> LambdaExprRef {
+        match self {
+            Value::Base(literal) => {
+                let expr =
+                    T::from_literal(literal).expect("This LOT language can't represent literals!");
+                pool.add(LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::NoVar))
+            }
+            Value::Function(value, lambda_type, _) => {
+                let body = value.into_pool_inner(pool, depth + 1);
+                pool.add(LambdaExpr::Lambda(body, lambda_type))
+            }
+            Value::Neutral(neutral) => neutral.into_pool_inner(pool, depth),
+            Value::Primitive { expr, args } => {
+                let mut pos = pool.add(LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::NoVar));
+                for arg in args {
+                    let arg = arg.into_pool_inner(pool, depth);
+                    pos = pool.add(LambdaExpr::Application {
+                        subformula: pos,
+                        argument: arg,
+                    });
+                }
+                pos
+            }
+        }
+    }
+}
+
+impl<'src, T: LambdaLanguageOfThought + Clone + ToLiteral<'src>> Neutral<'src, T> {
+    fn into_pool_inner(self, pool: &mut LambdaPool<'src, T>, depth: usize) -> LambdaExprRef {
+        let (subformula, argument) = match self {
+            Neutral::FreeVar(free_var, lambda_type) => {
+                return pool.add(LambdaExpr::FreeVariable(free_var, lambda_type));
+            }
+            Neutral::BoundVar(x, lambda_type) => {
+                //convert from debruijn levels to debruijn indices
+                return pool.add(LambdaExpr::BoundVariable(depth - x - 1, lambda_type));
+            }
+            Neutral::Primitive { expr, args } => {
+                let mut pos = pool.add(LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::NoVar));
+                for arg in args {
+                    let arg = arg.into_pool_inner(pool, depth);
+                    pos = pool.add(LambdaExpr::Application {
+                        subformula: pos,
+                        argument: arg,
+                    });
+                }
+                return pos;
+            }
+            Neutral::AppBoth(f, arg) => (
+                f.into_pool_inner(pool, depth),
+                arg.into_pool_inner(pool, depth),
+            ),
+            Neutral::AppHead(f, arg) => (
+                f.into_pool_inner(pool, depth),
+                arg.into_pool_inner(pool, depth),
+            ),
+            Neutral::AppArg(f, arg) => (
+                f.into_pool_inner(pool, depth),
+                arg.into_pool_inner(pool, depth),
+            ),
+        };
+
+        pool.add(LambdaExpr::Application {
+            subformula,
+            argument,
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::lambda::enumerator::Generator;
@@ -989,10 +1094,6 @@ mod test {
         )?;
 
         let data = [
-            (
-                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
-                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
-            ),
             ("a_john", "a_john"),
             ("pa_kind(a_john)", "False"),
             ("True | True", "True"),
@@ -1030,6 +1131,10 @@ mod test {
                 "lambda a x lambda a y pa_kind(x)",
                 "lambda a x lambda a y {a_phil}(x)",
             ),
+            (
+                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
+                "lambda t phi lambda t psi lambda t phi1 phi & psi & phi1",
+            ),
         ];
 
         let n_width = data
@@ -1057,6 +1162,9 @@ mod test {
                     "{calculated_value} != {val} \n ({calculated_value:#?}"
                 );
             }
+            let pool_value = calculated_value.clone().into_pool();
+            assert_eq!(pool_value.to_string().as_str(), val);
+            assert_eq!(pool_value.interp(&scenario)?, calculated_value);
 
             println!("✅");
         }
