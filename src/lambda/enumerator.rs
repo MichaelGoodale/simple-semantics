@@ -1004,13 +1004,20 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
 #[cfg(test)]
 mod test {
 
-    use crate::language::{ActorOrEvent, Constant::Property, Expr};
+    use crate::{
+        lambda::Literal,
+        language::{
+            ActorOrEvent,
+            Constant::{self, Property},
+            Expr,
+        },
+    };
 
     use super::*;
     #[test]
     fn test_possible_types() -> anyhow::Result<()> {
         let expressions = vec![
-            Expr::Actor("John"),
+            Expr::Constant(Constant::Literal(Literal::Actor("John"))),
             Expr::Constant(Property("a", ActorOrEvent::Actor)),
             Expr::Constant(Property("e", ActorOrEvent::Event)),
         ];
@@ -1139,7 +1146,7 @@ mod test {
     #[test]
     fn new_enumerate() -> anyhow::Result<()> {
         let mut expressions = vec![
-            Expr::Actor("John"),
+            Expr::Constant(Constant::Literal(Literal::Actor("John"))),
             Expr::Constant(Property("a", ActorOrEvent::Actor)),
             Expr::Constant(Property("e", ActorOrEvent::Event)),
         ];

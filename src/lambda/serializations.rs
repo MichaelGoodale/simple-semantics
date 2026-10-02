@@ -10,9 +10,18 @@ use crate::lambda::{ExprType, FreeVar, Literal, Value};
 use crate::lambda::{LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool};
 
 use crate::lambda::printing::VarContext;
+use crate::language::{Constant, Expr};
 
-impl<'src, T: Display + LambdaLanguageOfThought + ParseLot<'src> + PartialEq + Clone + Debug>
-    Serialize for RootedLambdaPool<'src, T>
+impl<
+    'src,
+    T: Display
+        + LambdaLanguageOfThought
+        + ParseLot<'src>
+        + PartialEq
+        + Clone
+        + Debug
+        + ToLiteral<'src>,
+> Serialize for RootedLambdaPool<'src, T>
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -310,9 +319,30 @@ impl<'src, T: PartialEq + Debug + LambdaLanguageOfThought> PrintingAST<'src, T> 
     }
 }
 
+///A trait for converting an expression to a [`Literal`], if possible.
+///This is necessary for printing and serialization, just return `None` if not relevant for you!
+pub trait ToLiteral<'src> {
+    ///Converts to a [`Literal`]
+    fn as_literal(&self) -> Option<&Literal<'src>> {
+        None
+    }
+}
+
+impl<'src> ToLiteral<'src> for () {}
+
+impl<'src> ToLiteral<'src> for Expr<'src> {
+    fn as_literal(&self) -> Option<&Literal<'src>> {
+        if let Expr::Constant(Constant::Literal(l)) = self {
+            Some(l)
+        } else {
+            None
+        }
+    }
+}
+
 impl<'src, T> RootedLambdaPool<'src, T>
 where
-    T: LambdaLanguageOfThought + PartialEq + Clone + Debug,
+    T: LambdaLanguageOfThought + PartialEq + Clone + Debug + ToLiteral<'src>,
 {
     pub(super) fn tokens(&self, expr: LambdaExprRef, c: VarContext) -> PrintingAST<'src, T> {
         self.tokens_inner(expr, c, false)
@@ -351,9 +381,10 @@ where
                 let arg = self.tokens_inner(*argument, c.clone(), true);
                 f.apply(arg, under_app)
             }
-            LambdaExpr::LanguageOfThoughtExpr(x, super::ExprType::NoVar) => {
-                PrintingAST::Expr(BaseExpr::Expr(x.clone()))
-            }
+            LambdaExpr::LanguageOfThoughtExpr(x, super::ExprType::NoVar) => match x.as_literal() {
+                Some(x) => PrintingAST::Expr(BaseExpr::Literal(x.clone())),
+                None => PrintingAST::Expr(BaseExpr::Expr(x.clone())),
+            },
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::BindVar(body)) => {
                 let (c, var_string) = c.inc_depth(x.var_type().expect(
                     "Implementation error, if you bind a var, the expression must bind vars!",
@@ -512,7 +543,7 @@ pub struct MathModeExpression<'src, T>(PrintingAST<'src, T>);
 
 impl<'src, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq> RootedLambdaPool<'src, T>
 where
-    T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq + Debug,
+    T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq + Debug + ToLiteral<'src>,
     T::Token: Clone,
 {
     ///Get a [`MathModeExpression`] to be serialized for documents.
@@ -592,19 +623,19 @@ mod test {
             ),
             (
                 "True & True & True",
-                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false,false]]},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Tautology\"},{\"Expr\":\"Tautology\"}]}}",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false,false]]},\"children\":[{\"Literal\":{\"Bool\":true}},{\"Literal\":{\"Bool\":true}},{\"Literal\":{\"Bool\":true}}]}}",
             ),
             (
                 "AgentOf(a_John, e_0) & PatientOf(a_Mary, e_1) & likes#<a,<a,t>>(a_Mary, a_John)",
-                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false,false]]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"AgentOf\"}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}},{\"Expr\":{\"Event\":0}}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"PatientOf\"}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}},{\"Expr\":{\"Event\":1}}]}},{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"likes\",\"<a,<a,t>>\"]}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}},{\"Expr\":{\"Actor\":\"John\"}}]}}]}}",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false,false]]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"AgentOf\"}},\"children\":[{\"Literal\":{\"Actor\":\"John\"}},{\"Literal\":{\"Event\":0}}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"PatientOf\"}},\"children\":[{\"Literal\":{\"Actor\":\"Mary\"}},{\"Literal\":{\"Event\":1}}]}},{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"likes\",\"<a,<a,t>>\"]}},\"children\":[{\"Literal\":{\"Actor\":\"Mary\"}},{\"Literal\":{\"Actor\":\"John\"}}]}}]}}",
             ),
             (
                 "~AgentOf(a_John, e_0)",
-                "{\"Application\":{\"head\":{\"Prefix\":[{\"Expr\":\"Not\"},false]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"AgentOf\"}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}},{\"Expr\":{\"Event\":0}}]}}]}}",
+                "{\"Application\":{\"head\":{\"Prefix\":[{\"Expr\":\"Not\"},false]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"AgentOf\"}},\"children\":[{\"Literal\":{\"Actor\":\"John\"}},{\"Literal\":{\"Event\":0}}]}}]}}",
             ),
             (
                 "pa_Red(a_John) & ~pa_Red(a_Mary)",
-                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false]]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}},{\"Application\":{\"head\":{\"Prefix\":[{\"Expr\":\"Not\"},false]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}}]}}]}}]}}",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false]]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}}},\"children\":[{\"Literal\":{\"Actor\":\"John\"}}]}},{\"Application\":{\"head\":{\"Prefix\":[{\"Expr\":\"Not\"},false]},\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"Red\",\"Actor\"]}}},\"children\":[{\"Literal\":{\"Actor\":\"Mary\"}}]}}]}}]}}",
             ),
             (
                 "every(x, all_a(x), pa_Blue(x))",
@@ -616,15 +647,15 @@ mod test {
             ),
             (
                 "every(x, pa_5(x), pa_10(a_59))",
-                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"5\",\"Actor\"]}}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"10\",\"Actor\"]}}},\"children\":[{\"Expr\":{\"Actor\":\"59\"}}]}}]}}",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Actor\"}},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"5\",\"Actor\"]}}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":{\"Property\":[\"10\",\"Actor\"]}}},\"children\":[{\"Literal\":{\"Actor\":\"59\"}}]}}]}}",
             ),
             (
                 "every_e(x, all_e(x), PatientOf(a_Mary, x))",
-                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Event\"}},\"var_name\":\"x\",\"var_type\":\"e\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"EveryEvent\"}},\"children\":[{\"Variable\":[\"x\",\"e\"]}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"PatientOf\"}},\"children\":[{\"Expr\":{\"Actor\":\"Mary\"}},{\"Variable\":[\"x\",\"e\"]}]}}]}}",
+                "{\"Binder\":{\"expr\":{\"Quantifier\":{\"quantifier\":\"Universal\",\"var_type\":\"Event\"}},\"var_name\":\"x\",\"var_type\":\"e\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"EveryEvent\"}},\"children\":[{\"Variable\":[\"x\",\"e\"]}]}},{\"Application\":{\"head\":{\"Normal\":{\"Expr\":\"PatientOf\"}},\"children\":[{\"Literal\":{\"Actor\":\"Mary\"}},{\"Variable\":[\"x\",\"e\"]}]}}]}}",
             ),
             (
                 "cool#<a,t>(a_John)",
-                "{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"cool\",\"<a,t>\"]}},\"children\":[{\"Expr\":{\"Actor\":\"John\"}}]}}",
+                "{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"cool\",\"<a,t>\"]}},\"children\":[{\"Literal\":{\"Actor\":\"John\"}}]}}",
             ),
             (
                 "bad#<a,t>(man#a)",
@@ -632,15 +663,15 @@ mod test {
             ),
             (
                 "loves#<a,<a,t>>(a_mary, a_john)",
-                "{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"loves\",\"<a,<a,t>>\"]}},\"children\":[{\"Expr\":{\"Actor\":\"mary\"}},{\"Expr\":{\"Actor\":\"john\"}}]}}",
+                "{\"Application\":{\"head\":{\"Normal\":{\"FreeVariable\":[\"loves\",\"<a,<a,t>>\"]}},\"children\":[{\"Literal\":{\"Actor\":\"mary\"}},{\"Literal\":{\"Actor\":\"john\"}}]}}",
             ),
             (
                 "True | (True & False)",
-                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"Or\"},[false,true]]},\"children\":[{\"Expr\":\"Tautology\"},{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false]]},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Contradiction\"}]}}]}}",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"Or\"},[false,true]]},\"children\":[{\"Literal\":{\"Bool\":true}},{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[false,false]]},\"children\":[{\"Literal\":{\"Bool\":true}},{\"Literal\":{\"Bool\":false}}]}}]}}",
             ),
             (
                 "(True | True) & False",
-                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[true,false]]},\"children\":[{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"Or\"},[false,false]]},\"children\":[{\"Expr\":\"Tautology\"},{\"Expr\":\"Tautology\"}]}},{\"Expr\":\"Contradiction\"}]}}",
+                "{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"And\"},[true,false]]},\"children\":[{\"Application\":{\"head\":{\"Infix\":[{\"Expr\":\"Or\"},[false,false]]},\"children\":[{\"Literal\":{\"Bool\":true}},{\"Literal\":{\"Bool\":true}}]}},{\"Literal\":{\"Bool\":false}}]}}",
             ),
             (
                 "lambda a x lambda a y likes#<a,<a,t>>(x, y)",
@@ -651,6 +682,7 @@ mod test {
                 "{\"Lambda\":{\"var\":\"P\",\"typ\":\"<a,t>\",\"body\":{\"Binder\":{\"expr\":{\"Iota\":\"Actor\"},\"var_name\":\"x\",\"var_type\":\"a\",\"children\":[{\"Application\":{\"head\":{\"Normal\":{\"Variable\":[\"P\",\"<a,t>\"]}},\"children\":[{\"Variable\":[\"x\",\"a\"]}]}}]}}}}",
             ),
         ] {
+            println!("{statement}");
             let expression = RootedLambdaPool::<Expr>::parse(statement)?;
             let doc = expression.for_document();
             assert_eq!(doc.0.to_string(), statement);

@@ -552,7 +552,7 @@ impl<'src> Literal<'src> {
 
     ///A chumsky parser for [`Literal`]
     pub fn parser() -> impl Parser<'src, &'src str, Literal<'src>, extra::Err<Rich<'src, char>>> {
-        let actor = just("a_").ignore_then(text::ascii::ident());
+        let actor = just("a_").ignore_then(keyword());
 
         let event = just("e_")
             .ignore_then(text::int(10))
@@ -597,8 +597,6 @@ impl<'src> ParseLot<'src> for Expr<'src> {
 
     fn tokenizer() -> impl Parser<'src, &'src str, Self::Token, extra::Err<Rich<'src, char>>> {
         choice((
-            just("True").to(Expr::Constant(Constant::Tautology)),
-            just("False").to(Expr::Constant(Constant::Contradiction)),
             just("all_a").to(Expr::Constant(Constant::Everyone)),
             just("all_e").to(Expr::Constant(Constant::EveryEvent)),
             just('&').to(Expr::Binary(BinOp::And)),
@@ -621,10 +619,6 @@ impl<'src> ParseLot<'src> for Expr<'src> {
                     ActorOrEvent::Actor
                 },
             }),
-            just("a_").ignore_then(keyword()).map(Expr::Actor),
-            just("e_")
-                .ignore_then(text::int(10))
-                .map(|s: &str| Expr::Event(s.parse().unwrap())),
             just("p")
                 .ignore_then(
                     just("a")
@@ -1120,7 +1114,7 @@ mod tests {
         assert_eq!(test_parse("False"), Literal::Bool(false));
 
         assert_eq!(test_parse("a_John"), Literal::Actor("John"));
-        assert_eq!(test_parse("a_Mary_42"), Literal::Actor("Mary_42"));
+        assert_eq!(test_parse("a_Mary42"), Literal::Actor("Mary42"));
 
         assert_eq!(test_parse("e_0"), Literal::Event(0));
         assert_eq!(test_parse("e_123"), Literal::Event(123));

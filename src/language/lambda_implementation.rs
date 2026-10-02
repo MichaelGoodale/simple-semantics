@@ -21,8 +21,6 @@ impl<'src> Constant<'src> {
             Constant::Literal(l) => l.clone(),
             Constant::Everyone => Literal::ActorSet(scenario.actors.clone()),
             Constant::EveryEvent => Literal::EventSet(scenario.events().collect()),
-            Constant::Tautology => Literal::Bool(true),
-            Constant::Contradiction => Literal::Bool(false),
             Constant::Property(p, a_or_e) => {
                 let x = scenario
                     .properties
@@ -280,8 +278,6 @@ impl<'src> InterpretableLOT<'src> for Expr<'src> {
                 n => panic!("Unary expression has {n} applicands!"),
             },
             Expr::Constant(c) => c.eval(scenario)?,
-            Expr::Actor(a) => Literal::Actor(a),
-            Expr::Event(e) => Literal::Event(*e),
         }))
     }
 }
@@ -339,8 +335,6 @@ impl LambdaLanguageOfThought for Expr<'_> {
             } => LambdaType::gq_e(),
             Expr::Unary(MonOp::Iota(ActorOrEvent::Actor)) => LambdaType::ata(),
             Expr::Unary(MonOp::Iota(ActorOrEvent::Event)) => LambdaType::ete(),
-            Expr::Actor(_) => &LambdaType::A,
-            Expr::Event(_) => &LambdaType::E,
             Expr::Binary(bin_op) => match bin_op {
                 BinOp::AgentOf | BinOp::PatientOf => LambdaType::aet(),
                 BinOp::And | BinOp::Or => LambdaType::ttt(),
@@ -352,7 +346,6 @@ impl LambdaLanguageOfThought for Expr<'_> {
             Expr::Constant(Constant::EveryEvent | Constant::Property(_, ActorOrEvent::Event)) => {
                 LambdaType::et()
             }
-            Expr::Constant(Constant::Tautology | Constant::Contradiction) => &LambdaType::T,
             Expr::Constant(Constant::Literal(l)) => l.typ(),
         }
     }

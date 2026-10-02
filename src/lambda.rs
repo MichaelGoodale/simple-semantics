@@ -25,7 +25,7 @@ pub mod enumerator;
 pub mod parser;
 mod printing;
 mod serializations;
-pub use serializations::MathModeExpression;
+pub use serializations::{MathModeExpression, ToLiteral};
 
 pub(crate) type Bvar = usize;
 

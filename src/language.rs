@@ -4,7 +4,7 @@ use std::fmt::Display;
 
 use crate::lambda::Literal;
 use crate::lambda::types::LambdaType;
-use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
+use crate::{Entity, PropertyLabel, Scenario};
 
 ///All binary operations
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize)]
@@ -89,10 +89,6 @@ pub enum Constant<'a> {
     Everyone,
     ///The set of all events in the [`Scenario`].
     EveryEvent,
-    ///Truth
-    Tautology,
-    ///Falsity
-    Contradiction,
     ///Any predicate as a set
     Property(PropertyLabel<'a>, ActorOrEvent),
     ///A Literal representation of an [`Actor]`, [`ActorSet`], [`Event`], [`EventSet`], [`Boolean`] or a one
@@ -105,8 +101,6 @@ impl Display for Constant<'_> {
         match self {
             Constant::Everyone => write!(f, "all_a"),
             Constant::EveryEvent => write!(f, "all_e"),
-            Constant::Tautology => write!(f, "True"),
-            Constant::Contradiction => write!(f, "False"),
             Constant::Property(x, ActorOrEvent::Actor) => write!(f, "pa_{x}"),
             Constant::Property(x, ActorOrEvent::Event) => write!(f, "pe_{x}"),
             Constant::Literal(literal) => write!(f, "{literal}"),
@@ -144,10 +138,6 @@ pub enum Expr<'a> {
         ///The type of bound variable
         var_type: ActorOrEvent,
     },
-    ///See [`Actor`]. Written `a_NAME`
-    Actor(Actor<'a>),
-    ///See [`Event`]. Written `e_N` where `N` is an integer.
-    Event(Event),
     ///Any binary function.
     #[serde(untagged)]
     Binary(BinOp),
@@ -189,8 +179,6 @@ impl<'src> Expr<'src> {
             Expr::Unary(MonOp::Iota(ActorOrEvent::Event)),
             Expr::Constant(Constant::Everyone),
             Expr::Constant(Constant::EveryEvent),
-            Expr::Constant(Constant::Tautology),
-            Expr::Constant(Constant::Contradiction),
         ]
     }
 }
@@ -199,7 +187,11 @@ impl<'src> Scenario<'src> {
     ///Gets the [`Expr`] that are specifically valid in this [`Scenario`]. Doesn't include events.
     #[must_use]
     pub fn scenario_ops(&self) -> Vec<Expr<'src>> {
-        let mut v: Vec<_> = self.actors.iter().map(|x| Expr::Actor(x)).collect();
+        let mut v: Vec<_> = self
+            .actors
+            .iter()
+            .map(|x| Expr::Constant(Constant::Literal(Literal::Actor(x))))
+            .collect();
         for (k, prop) in &self.properties {
             if prop.iter().any(|x| matches!(x, Entity::Actor(_))) {
                 v.push(Expr::Constant(Constant::Property(k, ActorOrEvent::Actor)));
@@ -224,8 +216,6 @@ impl Display for Expr<'_> {
                 quantifier,
                 var_type: ActorOrEvent::Event,
             } => write!(f, "{quantifier}_e"),
-            Expr::Actor(a) => write!(f, "a_{a}"),
-            Expr::Event(e) => write!(f, "e_{e}"),
             Expr::Binary(bin_op) => write!(f, "{bin_op}"),
             Expr::Unary(mon_op) => write!(f, "{mon_op}"),
             Expr::Constant(constant) => write!(f, "{constant}"),

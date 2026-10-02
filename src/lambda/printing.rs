@@ -3,7 +3,9 @@ use std::fmt::{Debug, Display};
 use super::interpretation::Value;
 use ahash::HashMap;
 
-use crate::lambda::{LambdaLanguageOfThought, RootedLambdaPool, types::LambdaType};
+use crate::lambda::{
+    LambdaLanguageOfThought, RootedLambdaPool, serializations::ToLiteral, types::LambdaType,
+};
 
 static VARIABLENAMES: [&str; 26] = [
     "x", "y", "z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
@@ -88,8 +90,8 @@ impl<'a> VarContext<'a> {
     }
 }
 
-impl<T: LambdaLanguageOfThought + Display + Clone + PartialEq + Debug> std::fmt::Display
-    for RootedLambdaPool<'_, T>
+impl<'src, T: LambdaLanguageOfThought + Display + Clone + PartialEq + Debug + ToLiteral<'src>>
+    std::fmt::Display for RootedLambdaPool<'src, T>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let x = self.tokens(self.root, VarContext::default());
