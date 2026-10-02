@@ -384,7 +384,7 @@ where
     }
 }
 
-impl<'src, T> Value<'src, '_, T>
+impl<'src, T> Value<'src, T>
 where
     T: LambdaLanguageOfThought + PartialEq + Clone + Debug,
 {
@@ -441,7 +441,7 @@ where
     }
 }
 
-impl<'src, T> Neutral<'src, '_, T>
+impl<'src, T> Neutral<'src, T>
 where
     T: LambdaLanguageOfThought + PartialEq + Clone + Debug,
 {
@@ -522,8 +522,7 @@ where
     }
 }
 
-impl<'src, 'pool, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq>
-    Value<'src, 'pool, T>
+impl<'src, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq> Value<'src, T>
 where
     T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq + Debug,
     T::Token: Clone,
@@ -535,8 +534,7 @@ where
     }
 }
 
-impl<'src, 'pool, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq>
-    Neutral<'src, 'pool, T>
+impl<'src, T: ParseLot<'src> + LambdaLanguageOfThought + 'src + PartialEq> Neutral<'src, T>
 where
     T: ParseLot<'src> + Clone + LambdaLanguageOfThought + PartialEq + Debug,
     T::Token: Clone,

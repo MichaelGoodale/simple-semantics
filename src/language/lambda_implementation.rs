@@ -68,7 +68,7 @@ impl MonOp {
     /// Will panic if the value types are not correct.
     pub fn eval<'src>(
         &self,
-        argument: Value<'src, '_, Expr<'src>>,
+        argument: Value<'src, Expr<'src>>,
         scenario: &Scenario<'src>,
     ) -> Result<Literal<'src>, EvaluationError> {
         let argument = argument.into_base_value_with_scenario(scenario)?.unwrap();
@@ -104,10 +104,10 @@ impl BinOp {
     ///
     ///# Panics
     /// Will panic if the value types are not correct.
-    pub fn eval<'src, 'pool>(
+    pub fn eval<'src>(
         &self,
-        x: Value<'src, 'pool, Expr<'src>>,
-        y: Value<'src, 'pool, Expr<'src>>,
+        x: Value<'src, Expr<'src>>,
+        y: Value<'src, Expr<'src>>,
         scenario: &Scenario<'src>,
     ) -> Result<bool, EvaluationError> {
         match self {
@@ -164,7 +164,7 @@ impl BinOp {
     /// Will panic if the value types are not correct.
     pub fn partial_eval<'src>(
         &self,
-        argument: Value<'src, '_, Expr<'src>>,
+        argument: Value<'src, Expr<'src>>,
         scenario: &Scenario<'src>,
     ) -> Result<Literal<'src>, EvaluationError> {
         let arg = argument.into_base_value_with_scenario(scenario)?.unwrap();
@@ -214,11 +214,11 @@ impl Quantifier {
     ///
     ///# Panics
     /// Will panic if the value types are not correct.
-    pub fn eval<'src, 'pool>(
+    pub fn eval<'src>(
         &self,
         var_type: ActorOrEvent,
-        restrictor: Value<'src, 'pool, Expr<'src>>,
-        predicate: Value<'src, 'pool, Expr<'src>>,
+        restrictor: Value<'src, Expr<'src>>,
+        predicate: Value<'src, Expr<'src>>,
         scenario: &Scenario<'src>,
     ) -> Result<bool, EvaluationError> {
         let restrictor = restrictor.into_base_value_with_scenario(scenario)?.unwrap();
@@ -248,9 +248,9 @@ impl Quantifier {
 impl<'src> InterpretableLOT<'src> for Expr<'src> {
     fn eval<'pool>(
         &self,
-        mut arguments: Vec<Value<'src, 'pool, Expr<'src>>>,
+        mut arguments: Vec<Value<'src, Expr<'src>>>,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+    ) -> Result<Value<'src, Expr<'src>>, EvaluationError> {
         Ok(Value::Base(match self {
             Expr::Quantifier {
                 quantifier,

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::Display};
+use std::{borrow::Cow, collections::BTreeMap, fmt::Display};
 
 use crate::{
     Actor, Entity, Event, Scenario,
@@ -230,46 +230,46 @@ pub enum EvaluationError {
 
 ///A value resulting from evaluating an expression.
 #[derive(Debug, Clone)]
-pub enum Value<'src, 'pool, T: LambdaLanguageOfThought + Clone> {
+pub enum Value<'src, T: LambdaLanguageOfThought + Clone> {
     ///A [`Literal`]
     Base(Literal<'src>),
     ///A lambda function
-    Function(Box<Value<'src, 'pool, T>>, &'pool LambdaType, usize),
+    Function(Box<Value<'src, T>>, LambdaType, usize),
     ///A [`Neutral`] value, e.g. a value which cannot be evaluated without more information.
-    Neutral(Neutral<'src, 'pool, T>),
+    Neutral(Neutral<'src, T>),
 
     /// A primitive expression paired with its arguments.
     Primitive {
         ///The primitive expression
         expr: T,
         ///Its accumulated arguments.
-        args: Vec<Value<'src, 'pool, T>>,
+        args: Vec<Value<'src, T>>,
     },
 }
 
 ///A value which cannot be evaluated yet.
 #[derive(Debug, Clone)]
-pub enum Neutral<'src, 'pool, T: LambdaLanguageOfThought + Clone> {
+pub enum Neutral<'src, T: LambdaLanguageOfThought + Clone> {
     ///A free variable.
-    FreeVar(FreeVar<'src>, &'pool LambdaType),
+    FreeVar(FreeVar<'src>, LambdaType),
     ///A bound variable
-    BoundVar(Bvar, &'pool LambdaType),
+    BoundVar(Bvar, LambdaType),
     ///An application where both children are [`Neutral`].
-    AppBoth(Box<Neutral<'src, 'pool, T>>, Box<Neutral<'src, 'pool, T>>),
+    AppBoth(Box<Neutral<'src, T>>, Box<Neutral<'src, T>>),
     ///An application where only the head is neutral.
-    AppHead(Box<Neutral<'src, 'pool, T>>, Box<Value<'src, 'pool, T>>),
+    AppHead(Box<Neutral<'src, T>>, Box<Value<'src, T>>),
     ///An application where only the argument is neutral.
-    AppArg(Box<Value<'src, 'pool, T>>, Box<Neutral<'src, 'pool, T>>),
+    AppArg(Box<Value<'src, T>>, Box<Neutral<'src, T>>),
     ///A primitive with some neutral argument.
     Primitive {
         ///The primitive expression
         expr: T,
         ///Its accumulated arguments.
-        args: Vec<Value<'src, 'pool, T>>,
+        args: Vec<Value<'src, T>>,
     },
 }
 
-impl<T> PartialEq for Neutral<'_, '_, T>
+impl<T> PartialEq for Neutral<'_, T>
 where
     T: LambdaLanguageOfThought + Clone + PartialEq,
 {
@@ -295,9 +295,9 @@ where
     }
 }
 
-impl<T> Eq for Neutral<'_, '_, T> where T: LambdaLanguageOfThought + Clone + Eq {}
+impl<T> Eq for Neutral<'_, T> where T: LambdaLanguageOfThought + Clone + Eq {}
 
-impl<T> PartialEq for Value<'_, '_, T>
+impl<T> PartialEq for Value<'_, T>
 where
     T: LambdaLanguageOfThought + Clone + PartialEq,
 {
@@ -323,9 +323,9 @@ where
     }
 }
 
-impl<T> Eq for Value<'_, '_, T> where T: LambdaLanguageOfThought + Clone + Eq {}
+impl<T> Eq for Value<'_, T> where T: LambdaLanguageOfThought + Clone + Eq {}
 
-impl<T> Value<'_, '_, T>
+impl<T> Value<'_, T>
 where
     T: LambdaLanguageOfThought + Clone,
 {
@@ -352,7 +352,7 @@ where
         }
     }
 }
-impl<T> Neutral<'_, '_, T>
+impl<T> Neutral<'_, T>
 where
     T: LambdaLanguageOfThought + Clone,
 {
@@ -375,7 +375,7 @@ where
 }
 
 fn reduce_domain<'src, T>(
-    func: Value<'src, '_, T>,
+    func: Value<'src, T>,
     arg_type: &LambdaType,
     scenario: &Scenario<'src>,
 ) -> Result<Literal<'src>, EvaluationError>
@@ -455,7 +455,7 @@ where
     })
 }
 
-impl<'src, T> Value<'src, '_, T>
+impl<'src, T> Value<'src, T>
 where
     T: InterpretableLOT<'src>,
 {
@@ -492,8 +492,8 @@ where
                     return Ok(None);
                 }
 
-                let func = Value::Function(body, arg_type, d);
-                reduce_domain(func, arg_type, scenario).map(Some)
+                let func = Value::Function(body, arg_type.clone(), d);
+                reduce_domain(func, &arg_type, scenario).map(Some)
             }
             Value::Primitive { expr, args } => {
                 let mut t = expr.typ();
@@ -522,9 +522,9 @@ where
 #[error("Not the desired type!")]
 pub struct ValueConversionError;
 
-impl<'src> TryFrom<Value<'src, '_, Expr<'src>>> for bool {
+impl<'src> TryFrom<Value<'src, Expr<'src>>> for bool {
     type Error = ValueConversionError;
-    fn try_from(value: Value<'src, '_, Expr<'src>>) -> Result<Self, Self::Error> {
+    fn try_from(value: Value<'src, Expr<'src>>) -> Result<Self, Self::Error> {
         value
             .into_base_value()
             .and_then(|x| x.as_bool())
@@ -532,7 +532,7 @@ impl<'src> TryFrom<Value<'src, '_, Expr<'src>>> for bool {
     }
 }
 
-impl<'src, 'pool, T> Value<'src, 'pool, T>
+impl<'src, T> Value<'src, T>
 where
     T: InterpretableLOT<'src>,
 {
@@ -545,7 +545,7 @@ where
         self,
         other: Self,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, T>, EvaluationError> {
+    ) -> Result<Value<'src, T>, EvaluationError> {
         match self {
             Value::Base(f) if let Some(x) = f.constant_app() => Ok(Value::Base(x)),
             Value::Base(f) => match other {
@@ -575,17 +575,14 @@ where
             })),
             Value::Primitive { expr, mut args } => {
                 args.push(other);
-                eval_expr(expr, args, scenario)
+                eval_expr(Cow::Owned(expr), args, scenario)
             }
         }
     }
 }
 
-impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
-    fn reduce(
-        self,
-        scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+impl<'src> Value<'src, Expr<'src>> {
+    fn reduce(self, scenario: &Scenario<'src>) -> Result<Value<'src, Expr<'src>>, EvaluationError> {
         match self {
             Value::Base(literal) => Ok(Value::Base(literal)),
             Value::Function(value, arg_type, d) => {
@@ -612,24 +609,21 @@ impl<'src, 'pool> Value<'src, 'pool, Expr<'src>> {
                     .map(|x| x.reduce(scenario))
                     .collect::<Result<_, _>>()?;
 
-                eval_expr(expr, args, scenario)
+                eval_expr(Cow::Owned(expr), args, scenario)
             }
         }
     }
 }
 
-impl<'src, 'pool> Neutral<'src, 'pool, Expr<'src>> {
-    fn reduce(
-        self,
-        scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+impl<'src, 'pool> Neutral<'src, Expr<'src>> {
+    fn reduce(self, scenario: &Scenario<'src>) -> Result<Value<'src, Expr<'src>>, EvaluationError> {
         match self {
             Neutral::Primitive { expr, args } => {
                 let args: Vec<_> = args
                     .into_iter()
                     .map(|x| x.reduce(scenario))
                     .collect::<Result<_, _>>()?;
-                eval_expr(expr, args, scenario)
+                eval_expr(Cow::Owned(expr), args, scenario)
             }
             v @ (Neutral::FreeVar(..) | Neutral::BoundVar(..)) => Ok(Value::Neutral(v)),
             Neutral::AppBoth(head, arg) => {
@@ -662,7 +656,7 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     pub fn interp<'pool>(
         &'pool self,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Expr<'src>>, EvaluationError> {
+    ) -> Result<Value<'src, Expr<'src>>, EvaluationError> {
         let x = self
             .pool
             .eval(self.root, vec![], scenario, None)
@@ -672,15 +666,15 @@ impl<'src> RootedLambdaPool<'src, Expr<'src>> {
     }
 }
 
-impl<'src, 'pool, T> Neutral<'src, 'pool, T>
+impl<'src, T> Neutral<'src, T>
 where
     T: InterpretableLOT<'src>,
 {
     fn eval(
         self,
-        mut variables: BTreeMap<usize, Value<'src, 'pool, T>>,
+        mut variables: BTreeMap<usize, Value<'src, T>>,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, T>, EvaluationError> {
+    ) -> Result<Value<'src, T>, EvaluationError> {
         match self {
             Neutral::FreeVar(..) => todo!(),
             Neutral::BoundVar(b, lambda_type) => {
@@ -708,24 +702,24 @@ where
                     .into_iter()
                     .map(|x| x.eval(variables.clone(), scenario))
                     .collect::<Result<_, _>>()?;
-                eval_expr(expr, args, scenario)
+                eval_expr(Cow::Owned(expr), args, scenario)
             }
         }
     }
 }
 
-impl<'src, 'pool, T> Value<'src, 'pool, T>
+impl<'src, 'pool, T> Value<'src, T>
 where
     T: InterpretableLOT<'src>,
 {
     fn eval(
         self,
-        mut variables: BTreeMap<usize, Value<'src, 'pool, T>>,
+        mut variables: BTreeMap<usize, Value<'src, T>>,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, T>, EvaluationError> {
+    ) -> Result<Value<'src, T>, EvaluationError> {
         match self {
             Value::Function(body, arg_type, d) => {
-                variables.insert(d, Value::Neutral(Neutral::BoundVar(d, arg_type)));
+                variables.insert(d, Value::Neutral(Neutral::BoundVar(d, arg_type.clone())));
                 let body = body.eval(variables, scenario)?;
                 Ok(Value::Function(Box::new(body), arg_type, d))
             }
@@ -786,7 +780,7 @@ where
     }
 }
 
-impl<'src, T> Neutral<'src, '_, T>
+impl<'src, T> Neutral<'src, T>
 where
     T: InterpretableLOT<'src>,
 {
@@ -845,19 +839,19 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
     fn eval<'pool>(
         &'pool self,
         index: LambdaExprRef,
-        mut variables: Vec<Value<'src, 'pool, Expr<'src>>>,
+        mut variables: Vec<Value<'src, Expr<'src>>>,
         scenario: &Scenario<'src>,
         under_lambda: Option<usize>,
-    ) -> Result<(Value<'src, 'pool, Expr<'src>>, bool), EvaluationError> {
+    ) -> Result<(Value<'src, Expr<'src>>, bool), EvaluationError> {
         match self.get(index) {
             LambdaExpr::Lambda(body, arg_type) => {
                 let d = variables.len();
-                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type)));
+                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type.clone())));
                 let (body, eta_reduced) = self.eval(*body, variables, scenario, Some(d))?;
                 if eta_reduced {
                     Ok((body, false))
                 } else {
-                    Ok((Value::Function(Box::new(body), arg_type, d), false))
+                    Ok((Value::Function(Box::new(body), arg_type.clone(), d), false))
                 }
             }
             LambdaExpr::BoundVariable(x, _) => {
@@ -889,7 +883,7 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                 }
             }
             LambdaExpr::LanguageOfThoughtExpr(x, ExprType::NoVar) => {
-                eval_expr(*x, vec![], scenario).map(|x| (x, false))
+                eval_expr(Cow::Borrowed(x), vec![], scenario).map(|x| (x, false))
             }
 
             LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::BindVarTwoBodies(x, y)) => {
@@ -898,24 +892,24 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                     .var_type()
                     .expect("Expression is syncategorematic without haveing var_type");
 
-                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type)));
+                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type.clone())));
                 let (x_body, eta_reduced) = self.eval(*x, variables.clone(), scenario, Some(d))?;
 
                 let x = if eta_reduced {
                     x_body
                 } else {
-                    Value::Function(Box::new(x_body), arg_type, d)
+                    Value::Function(Box::new(x_body), arg_type.clone(), d)
                 };
                 let (y_body, eta_reduced) = self.eval(*y, variables.clone(), scenario, Some(d))?;
 
                 let y = if eta_reduced {
                     y_body
                 } else {
-                    Value::Function(Box::new(y_body), arg_type, d)
+                    Value::Function(Box::new(y_body), arg_type.clone(), d)
                 };
 
                 let arguments = vec![x, y];
-                eval_expr(*expr, arguments, scenario).map(|x| (x, false))
+                eval_expr(Cow::Borrowed(expr), arguments, scenario).map(|x| (x, false))
             }
             LambdaExpr::LanguageOfThoughtExpr(expr, ExprType::BindVar(x)) => {
                 let d = variables.len();
@@ -923,30 +917,36 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
                     .var_type()
                     .expect("Expression is syncategorematic without haveing var_type");
 
-                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type)));
+                variables.push(Value::Neutral(Neutral::BoundVar(d, arg_type.clone())));
                 let (x_body, eta_reduced) = self.eval(*x, variables.clone(), scenario, Some(d))?;
                 let x = if eta_reduced {
                     x_body
                 } else {
-                    Value::Function(Box::new(x_body), arg_type, d)
+                    Value::Function(Box::new(x_body), arg_type.clone(), d)
                 };
 
                 let arguments = vec![x];
-                eval_expr(*expr, arguments, scenario).map(|x| (x, false))
+                eval_expr(Cow::Borrowed(expr), arguments, scenario).map(|x| (x, false))
             }
         }
     }
 }
 
-fn eval_expr<'src, 'pool, T: InterpretableLOT<'src>>(
-    expr: T,
-    args: Vec<Value<'src, 'pool, T>>,
+fn eval_expr<'src, T: InterpretableLOT<'src>>(
+    expr: Cow<T>,
+    args: Vec<Value<'src, T>>,
     scenario: &Scenario<'src>,
-) -> Result<Value<'src, 'pool, T>, EvaluationError> {
+) -> Result<Value<'src, T>, EvaluationError> {
     match expr.eval(args.clone(), scenario) {
         Ok(x) => Ok(x),
-        Err(EvaluationError::Unfinished) => Ok(Value::Primitive { expr, args }),
-        Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive { expr, args })),
+        Err(EvaluationError::Unfinished) => Ok(Value::Primitive {
+            expr: expr.into_owned(),
+            args,
+        }),
+        Err(Stuck) => Ok(Value::Neutral(Neutral::Primitive {
+            expr: expr.into_owned(),
+            args,
+        })),
         Err(UndefinedExpression) => Err(UndefinedExpression),
     }
 }
@@ -1074,7 +1074,7 @@ mod test {
         )?;
 
         let mut expressions = scenario.scenario_ops();
-        expressions.extend(Expr::basic_ops());
+        expressions.extend(Expr::basic_ops().into_iter().cloned());
         let mut generator: Generator<Expr> = Generator::new(expressions);
 
         for ty in LambdaType::all().take(12) {

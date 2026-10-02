@@ -498,9 +498,6 @@ pub trait ParseLot<'src> {
 
     ///Convert from a token to `Self`. May involve cloning.
     fn into_expr(token: Self::Token) -> Self;
-
-    ///Convert an expression to a token.
-    fn as_token(&self) -> Self::Token;
 }
 
 impl<'src> ParseLot<'src> for () {
@@ -523,10 +520,6 @@ impl<'src> ParseLot<'src> for () {
     }
 
     fn into_expr(_: Self::Token) -> Self {}
-
-    fn as_token(&self) -> Self::Token {
-        "1"
-    }
 }
 
 impl<'src> ParseLot<'src> for Expr<'src> {
@@ -592,10 +585,6 @@ impl<'src> ParseLot<'src> for Expr<'src> {
             Expr::Quantifier { .. } => PrimitiveVarType::BindVarTwoBodies,
             _ => PrimitiveVarType::NoVar,
         }
-    }
-
-    fn as_token(&self) -> Self::Token {
-        *self
     }
 }
 

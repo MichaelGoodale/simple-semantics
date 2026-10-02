@@ -1143,7 +1143,7 @@ mod test {
             Expr::Constant(Property("a", ActorOrEvent::Actor)),
             Expr::Constant(Property("e", ActorOrEvent::Event)),
         ];
-        expressions.extend(Expr::basic_ops());
+        expressions.extend(Expr::basic_ops().into_iter().cloned());
 
         let types = vec![
             (LambdaType::A, 45),

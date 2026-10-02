@@ -97,9 +97,7 @@ impl<T: LambdaLanguageOfThought + Display + Clone + PartialEq + Debug> std::fmt:
     }
 }
 
-impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone + Debug> Display
-    for Value<'_, '_, T>
-{
+impl<T: LambdaLanguageOfThought + Display + PartialEq + Clone + Debug> Display for Value<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.tokens(VarContext::default()))
     }

@@ -164,11 +164,11 @@ pub trait InterpretableLOT<'src>: LambdaLanguageOfThought + Clone + Debug {
     /// - [`EvaluationError::UndefinedExpression`] if there is an expression that is undefined (e.g. 1/0)
     /// - [`EvaluationError::Stuck`] if a value cannt yet be evaluated due to a not yet defined variable.
     /// - [`EvaluationError::Unfinished`] if the expression requires more arguments before any value can be returned.
-    fn eval<'pool>(
+    fn eval(
         &self,
-        arguments: Vec<Value<'src, 'pool, Self>>,
+        arguments: Vec<Value<'src, Self>>,
         scenario: &Scenario<'src>,
-    ) -> Result<Value<'src, 'pool, Self>, EvaluationError>;
+    ) -> Result<Value<'src, Self>, EvaluationError>;
 }
 
 impl LambdaLanguageOfThought for () {

@@ -2,6 +2,7 @@
 
 use std::fmt::Display;
 
+use crate::lambda::Literal;
 use crate::lambda::types::LambdaType;
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario};
 
@@ -82,7 +83,7 @@ impl From<ActorOrEvent> for LambdaType {
 }
 
 ///Any valid constant in the language.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub enum Constant<'a> {
     ///The set of all actors in the [`Scenario`].
     Everyone,
@@ -94,6 +95,9 @@ pub enum Constant<'a> {
     Contradiction,
     ///Any predicate as a set
     Property(PropertyLabel<'a>, ActorOrEvent),
+    //A Literal representation of an [`Actor]`, [`ActorSet`], [`Event`], [`EventSet`], [`Boolean`] or a one
+    //place truth function.
+    //Literal(Literal<'a>),
 }
 
 impl Display for Constant<'_> {
@@ -105,6 +109,7 @@ impl Display for Constant<'_> {
             Constant::Contradiction => write!(f, "False"),
             Constant::Property(x, ActorOrEvent::Actor) => write!(f, "pa_{x}"),
             Constant::Property(x, ActorOrEvent::Event) => write!(f, "pe_{x}"),
+            //Constant::Literal(literal) => write!(f, "{literal}"),
         }
     }
 }
@@ -130,7 +135,7 @@ impl Display for Quantifier {
 ///The basic expression type of the language of thought.
 ///Note that it *does not* include free variables or any of the machinery of the lambda calculus
 ///which is handled elsewhere.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize)]
 pub enum Expr<'a> {
     ///A quantified expression. Variables are implemented with `DeBruijn` indices.
     Quantifier {
