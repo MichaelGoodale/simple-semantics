@@ -200,15 +200,12 @@ pub enum OwnedExpr {
         quantifier: Quantifier,
         var_type: ActorOrEvent,
     },
-    Actor(String),
-    Event(Event),
     Binary(BinOp),
     Unary(MonOp),
     Everyone,
     EveryEvent,
-    Contradiction,
-    Tautology,
     Property(String, ActorOrEvent),
+    Literal(OwnedLiteral),
 }
 
 impl<'a> From<&'a OwnedExpr> for Expr<'a> {
@@ -221,17 +218,14 @@ impl<'a> From<&'a OwnedExpr> for Expr<'a> {
                 quantifier: *quantifier,
                 var_type: *var_type,
             },
-            OwnedExpr::Actor(actor) => Expr::Actor(actor.as_str()),
-            OwnedExpr::Event(event) => Expr::Event(*event),
             OwnedExpr::Binary(bin_op) => Expr::Binary(*bin_op),
             OwnedExpr::Unary(mon_op) => Expr::Unary(*mon_op),
             OwnedExpr::Everyone => Expr::Constant(Constant::Everyone),
             OwnedExpr::EveryEvent => Expr::Constant(Constant::EveryEvent),
-            OwnedExpr::Contradiction => Expr::Constant(Constant::Contradiction),
-            OwnedExpr::Tautology => Expr::Constant(Constant::Tautology),
             OwnedExpr::Property(property, actor_or_event) => {
                 Expr::Constant(Constant::Property(property.as_str(), *actor_or_event))
             }
+            OwnedExpr::Literal(l) => Expr::Constant(Constant::Literal(l.into())),
         }
     }
 }
@@ -246,17 +240,14 @@ impl<'a> From<Expr<'a>> for OwnedExpr {
                 quantifier,
                 var_type,
             },
-            Expr::Actor(actor) => OwnedExpr::Actor(actor.to_owned()),
-            Expr::Event(event) => OwnedExpr::Event(event),
             Expr::Binary(bin_op) => OwnedExpr::Binary(bin_op),
             Expr::Unary(mon_op) => OwnedExpr::Unary(mon_op),
             Expr::Constant(Constant::Everyone) => OwnedExpr::Everyone,
             Expr::Constant(Constant::EveryEvent) => OwnedExpr::EveryEvent,
-            Expr::Constant(Constant::Contradiction) => OwnedExpr::Contradiction,
-            Expr::Constant(Constant::Tautology) => OwnedExpr::Tautology,
             Expr::Constant(Constant::Property(property, actor_or_event)) => {
                 OwnedExpr::Property(property.to_owned(), actor_or_event)
             }
+            Expr::Constant(Constant::Literal(l)) => OwnedExpr::Literal(l.into()),
         }
     }
 }
@@ -387,7 +378,7 @@ pub enum OwnedNeutral<T> {
     Primitive { expr: T, args: Vec<OwnedValue<T>> },
 }
 
-impl<T> Value<'_, '_, T>
+impl<T> Value<'_, T>
 where
     T: IntoOwnedLOT + Clone,
 {
@@ -403,12 +394,12 @@ where
     T::RefExpression<'a>: Clone,
 {
     ///Converts to the usable, version: [`Value`] instead of the owned version.
-    pub fn as_borrowed(&'a self) -> Value<'a, 'a, T::RefExpression<'a>> {
+    pub fn as_borrowed(&'a self) -> Value<'a, T::RefExpression<'a>> {
         self.into()
     }
 }
 
-impl<'a, OwnedType, RefType> From<&'a OwnedValue<OwnedType>> for Value<'a, 'a, RefType>
+impl<'a, OwnedType, RefType> From<&'a OwnedValue<OwnedType>> for Value<'a, RefType>
 where
     RefType: LambdaLanguageOfThought + From<&'a OwnedType> + Clone,
 {
@@ -416,7 +407,7 @@ where
         match value {
             OwnedValue::Base(literal) => Value::Base(literal.as_borrowed()),
             OwnedValue::Function(body, ty, index) => {
-                Value::Function(Box::new(Value::from(body.as_ref())), ty, *index)
+                Value::Function(Box::new(Value::from(body.as_ref())), ty.clone(), *index)
             }
             OwnedValue::Neutral(neutral) => Value::Neutral(neutral.into()),
             OwnedValue::Primitive { expr, args } => Value::Primitive {
@@ -427,16 +418,16 @@ where
     }
 }
 
-impl<OwnedType, RefType> From<Value<'_, '_, RefType>> for OwnedValue<OwnedType>
+impl<OwnedType, RefType> From<Value<'_, RefType>> for OwnedValue<OwnedType>
 where
     OwnedType: From<RefType>,
     RefType: LambdaLanguageOfThought + Clone,
 {
-    fn from(value: Value<'_, '_, RefType>) -> Self {
+    fn from(value: Value<'_, RefType>) -> Self {
         match value {
             Value::Base(literal) => OwnedValue::Base(literal.into_owned()),
             Value::Function(body, ty, index) => {
-                OwnedValue::Function(Box::new((*body).into()), (*ty).clone(), index)
+                OwnedValue::Function(Box::new((*body).into()), ty, index)
             }
             Value::Neutral(neutral) => OwnedValue::Neutral(neutral.into()),
             Value::Primitive { expr, args } => OwnedValue::Primitive {
@@ -447,14 +438,14 @@ where
     }
 }
 
-impl<'a, OwnedType, RefType> From<&'a OwnedNeutral<OwnedType>> for Neutral<'a, 'a, RefType>
+impl<'a, OwnedType, RefType> From<&'a OwnedNeutral<OwnedType>> for Neutral<'a, RefType>
 where
     RefType: LambdaLanguageOfThought + From<&'a OwnedType> + Clone,
 {
     fn from(value: &'a OwnedNeutral<OwnedType>) -> Self {
         match value {
-            OwnedNeutral::FreeVar(var, ty) => Neutral::FreeVar(var.into(), ty),
-            OwnedNeutral::BoundVar(bvar, ty) => Neutral::BoundVar(*bvar, ty),
+            OwnedNeutral::FreeVar(var, ty) => Neutral::FreeVar(var.into(), ty.clone()),
+            OwnedNeutral::BoundVar(bvar, ty) => Neutral::BoundVar(*bvar, ty.clone()),
             OwnedNeutral::AppBoth(left, right) => Neutral::AppBoth(
                 Box::new(Neutral::from(left.as_ref())),
                 Box::new(Neutral::from(right.as_ref())),
@@ -475,15 +466,15 @@ where
     }
 }
 
-impl<OwnedType, RefType> From<Neutral<'_, '_, RefType>> for OwnedNeutral<OwnedType>
+impl<OwnedType, RefType> From<Neutral<'_, RefType>> for OwnedNeutral<OwnedType>
 where
     OwnedType: From<RefType>,
     RefType: LambdaLanguageOfThought + Clone,
 {
-    fn from(value: Neutral<'_, '_, RefType>) -> Self {
+    fn from(value: Neutral<'_, RefType>) -> Self {
         match value {
-            Neutral::FreeVar(var, ty) => OwnedNeutral::FreeVar(var.into(), (*ty).clone()),
-            Neutral::BoundVar(bvar, ty) => OwnedNeutral::BoundVar(bvar, (*ty).clone()),
+            Neutral::FreeVar(var, ty) => OwnedNeutral::FreeVar(var.into(), ty),
+            Neutral::BoundVar(bvar, ty) => OwnedNeutral::BoundVar(bvar, ty),
             Neutral::AppBoth(left, right) => {
                 OwnedNeutral::AppBoth(Box::new((*left).into()), Box::new((*right).into()))
             }
