@@ -11,7 +11,8 @@ use std::{
 };
 
 use crate::lambda::{
-    Bvar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool, types::LambdaType,
+    Bvar, FreeVar, LambdaExpr, LambdaExprRef, LambdaLanguageOfThought, RootedLambdaPool,
+    types::LambdaType,
 };
 
 ///A struct which is used to enumerate all expressions of a given Language of Thought.
@@ -975,7 +976,10 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
 
     ///Creates a new [`Generator`].
     #[must_use]
-    pub fn new(base_expressions: Vec<T>) -> Generator<'src, T> {
+    pub fn new(
+        base_expressions: Vec<T>,
+        free_var: Vec<(FreeVar<'src>, LambdaType)>,
+    ) -> Generator<'src, T> {
         let mut contexts = IndexSet::new();
         contexts.insert(Context::Empty);
         debug_assert!(contexts.get_index(0).is_some());
@@ -988,6 +992,13 @@ impl<'src, T: LambdaLanguageOfThought + Hash + Eq> Generator<'src, T> {
             let t = b.typ();
             let (t, _) = types.insert_full(t.clone());
             let b = LambdaExpr::LanguageOfThoughtExpr(b, crate::lambda::ExprType::NoVar);
+            let (b, _) = exprs.insert_full(b);
+            constants.entry(TypeId(t)).or_default().push(ExprId(b));
+        }
+
+        for (f, typ) in free_var {
+            let (t, _) = types.insert_full(typ.clone());
+            let b = LambdaExpr::FreeVariable(f, typ);
             let (b, _) = exprs.insert_full(b);
             constants.entry(TypeId(t)).or_default().push(ExprId(b));
         }
@@ -1022,7 +1033,7 @@ mod test {
             Expr::Constant(Property("a", ActorOrEvent::Actor)),
             Expr::Constant(Property("e", ActorOrEvent::Event)),
         ];
-        let mut g: Generator<Expr> = Generator::new(expressions);
+        let mut g: Generator<Expr> = Generator::new(expressions, vec![]);
 
         for t in [
             MetaVariable::Unknown(TypeVar(0)),
@@ -1053,7 +1064,7 @@ mod test {
 
     #[test]
     fn test_unification() -> anyhow::Result<()> {
-        let mut g: Generator<Expr> = Generator::new(vec![]);
+        let mut g: Generator<Expr> = Generator::new(vec![], vec![]);
 
         let a_to_a = MetaVariable::Function(
             Box::new(MetaVariable::Unknown(TypeVar(0))),
@@ -1162,7 +1173,7 @@ mod test {
             (LambdaType::T, 2068),
         ];
 
-        let mut generator: Generator<Expr> = Generator::new(expressions.to_vec());
+        let mut generator: Generator<Expr> = Generator::new(expressions.to_vec(), vec![]);
         for (ty, _) in types {
             println!("{ty}");
             //let mut pool_set = HashSet::new();

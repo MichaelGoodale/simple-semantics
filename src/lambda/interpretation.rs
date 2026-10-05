@@ -631,7 +631,7 @@ where
         scenario: &Scenario<'src>,
     ) -> Result<Value<'src, T>, EvaluationError> {
         match self {
-            Neutral::FreeVar(..) => todo!(),
+            v @ Neutral::FreeVar(..) => Ok(Value::Neutral(v)),
             Neutral::BoundVar(b, lambda_type) => {
                 if let Some(x) = variables.remove(&b) {
                     Ok(x)
@@ -812,8 +812,8 @@ impl<'src> LambdaPool<'src, Expr<'src>> {
             LambdaExpr::BoundVariable(x, _) => {
                 Ok((variables[variables.len() - 1 - *x].clone(), false))
             }
-            LambdaExpr::FreeVariable(..) => {
-                todo!("No support for free variables yet.")
+            LambdaExpr::FreeVariable(fvar, t) => {
+                Ok((Value::Neutral(Neutral::FreeVar(*fvar, t.clone())), false))
             }
             LambdaExpr::Application {
                 subformula,
@@ -1137,8 +1137,9 @@ mod test {
         )?;
 
         let mut expressions = scenario.scenario_ops();
-        expressions.extend(Expr::basic_ops().into_iter().cloned());
-        let mut generator: Generator<Expr> = Generator::new(expressions);
+        expressions.extend(Expr::basic_ops().iter().cloned());
+        let mut generator: Generator<Expr> =
+            Generator::new(expressions, vec![(FreeVar::Named("Z"), LambdaType::T)]);
 
         for ty in LambdaType::all().take(12) {
             generator.enumerate_or_generate(ty.clone(), 4);
@@ -1156,6 +1157,23 @@ mod test {
             }
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn weird_interp() -> anyhow::Result<()> {
+        //output works if this is reduced, but not if it isn't
+        let phi = "(lambda <e,<a,t>> M M(e_0, a_John))(lambda e x lambda a y (lambda e z lambda a a PatientOf(a, z))(x, y) & (lambda a z {e_0}(iota_e(PatientOf(z))))(y))";
+        let phi = RootedLambdaPool::<Expr>::parse(phi)?;
+        let scenario = "<John (man), Phil (man, nice), Susan (woman); {A: Susan (dance)}, {A: John (run)}, {P: Phil (fall)}, {P: Phil (shake)}> lambda <a,t> P P(a_Susan) & ~P(a_John) & ~P(a_Phil)";
+        let scenario = Scenario::parse(scenario)?;
+        let mut phi_reduced = phi.clone();
+        phi_reduced.reduce()?;
+
+        assert!(phi_reduced.interp(&scenario).is_err()); //works
+        println!("Reduced works!");
+
+        //phi.interp(&scenario)?; //panics??
         Ok(())
     }
 }
