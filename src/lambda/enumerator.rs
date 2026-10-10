@@ -31,7 +31,7 @@ pub struct Generator<'src, T> {
 }
 
 ///The ID of an expression in a [`Generator`]. See [`Generator::to_rooted_lambda_pool`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExprId(usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
