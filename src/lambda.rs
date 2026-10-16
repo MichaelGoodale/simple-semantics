@@ -1071,7 +1071,9 @@ where
         }
 
         for (x, d) in self.bfs_from_mut(subformula).filter_map(|(x, d, _)| {
-            if let LambdaExpr::BoundVariable(bvar, _) = x {
+            if let LambdaExpr::BoundVariable(bvar, _) = x
+                && d < *bvar
+            {
                 Some((bvar, d))
             } else {
                 None
@@ -1185,6 +1187,7 @@ where
                 ApplicationOpportunity::Eta(x) => self.eta_reduce(x)?,
             }
         }
+
         Ok(())
     }
 }
@@ -2025,9 +2028,146 @@ mod test {
                 "lambda a x lambda a y pa_kind(x)",
             ),
             ("lambda a x lambda a y pa_kind(y)", "lambda a x pa_kind"),
+            ("(lambda e x x)(x#e)", "x#e"),
+            ("lambda t x (lambda t y x | y)(x)", "lambda t phi phi | phi"),
+            ("lambda e x (lambda e x x)(x)", "lambda e x x"),
+            (
+                "(lambda <e,e> P lambda e x P(x))(lambda e x x)",
+                "lambda e x x",
+            ),
+            (
+                "(lambda <e,e> P lambda e x P(P(x)))(lambda e x x)",
+                "lambda e x x",
+            ),
+            ("lambda e x x", "lambda e x x"),
+            ("lambda a x x", "lambda a x x"),
+            ("lambda t p p", "lambda t p p"),
+            ("lambda e x lambda a y x", "lambda e x lambda a y x"),
+            ("lambda e x lambda a y y", "lambda e x lambda a y y"),
+            ("(lambda e x lambda a y x)(john#e)", "lambda a y john#e"),
+            ("(lambda e x lambda a y y)(john#e)", "lambda a y y"),
+            ("(lambda a x lambda a y x)(m#a)", "lambda a y m#a"),
+            ("(lambda e x lambda a y x)(john#e)", "lambda a y john#e"),
+            ("(lambda e x lambda e x x)(john#e)", "lambda e x x"),
+            ("lambda e x lambda e y x", "lambda e x lambda e y x"),
+            ("lambda e x lambda e y y", "lambda e x lambda e y y"),
+            ("lambda e x lambda e y f#<e,e>(y)", "lambda e x f#<e,e>"),
+            ("(lambda a x x)(m#a)", "m#a"),
+            ("(lambda e x x)(john#e)", "john#e"),
+            ("(lambda t p p)(true#t)", "true#t"),
+            ("(lambda a x p#<a,t>(x))(m#a)", "p#<a,t>(m#a)"),
+            ("(lambda e x f#<e,e>(x))(john#e)", "f#<e,e>(john#e)"),
+            (
+                "(lambda a x lambda e y p#<a,t>(x))(m#a)",
+                "lambda e y p#<a,t>(m#a)",
+            ),
+            ("(lambda a x p#<a,t>(m#a))(n#a)", "p#<a,t>(m#a)"),
+            ("lambda e x f#<e,e>(x)", "f#<e,e>"),
+            ("lambda a x p#<a,t>(x)", "p#<a,t>"),
+            ("lambda t p not#<t,t>(p)", "not#<t,t>"),
+            ("lambda <e,e> f lambda e x f(x)", "lambda <e,e> f f"),
+            (
+                "lambda <<a,t>,t> Q lambda <a,t> P Q(P)",
+                "lambda <<a,t>,t> Q Q",
+            ),
+            (
+                "lambda <<a,t>,<<a,t>,t>> R lambda <a,t> P lambda <a,t> Q R(P, Q)",
+                "lambda <<a,t>,<<a,t>,t>> R R",
+            ),
+            ("(lambda <e,e> f lambda e x f(x))(f#<e,e>)", "f#<e,e>"),
+            (
+                "(lambda <a,a> f lambda a x f(x))(lambda a x x)",
+                "lambda a x x",
+            ),
+            (
+                "(lambda <t,t> f lambda t p f(p))(lambda t p p)",
+                "lambda t p p",
+            ),
+            (
+                "(lambda <e,e> f lambda e x f(f(x)))(lambda e x x)",
+                "lambda e x x",
+            ),
+            (
+                "(lambda <e,e> f lambda e x f(f(x)))(g#<e,e>)",
+                "lambda e x g#<e,e>(g#<e,e>(x))",
+            ),
+            ("(lambda <a,t> P lambda a x P(x))(kind#<a,t>)", "kind#<a,t>"),
+            ("(lambda <a,t> P P)(p#<a,t>)", "p#<a,t>"),
+            ("(lambda <<a,t>,t> Q Q)(q#<<a,t>,t>)", "q#<<a,t>,t>"),
+            (
+                "(lambda <<a,t>,<<a,t>,t>> R R)(r#<<a,t>,<<a,t>,t>>)",
+                "r#<<a,t>,<<a,t>,t>>",
+            ),
+            ("((lambda e x lambda a y x)(john#e))(m#a)", "john#e"),
+            (
+                "((lambda <e,e> f lambda e x f(x))(g#<e,e>))(john#e)",
+                "g#<e,e>(john#e)",
+            ),
+            (
+                "((lambda <<a,t>,t> Q lambda <a,t> P Q(P))(q#<<a,t>,t>))(kind#<a,t>)",
+                "q#<<a,t>,t>(kind#<a,t>)",
+            ),
+            (
+                "(lambda <e,e> f lambda e x f(x))(lambda e x g#<e,e>(x))",
+                "g#<e,e>",
+            ),
+            ("(lambda t p lambda t q p)(true#t)", "lambda t q true#t"),
+            ("(lambda e x x)(y#e)", "y#e"),
+            ("(lambda e x lambda e y x)(z#e)", "lambda e x z#e"),
+            ("(lambda e x lambda e y x)(y#e)", "lambda e x y#e"),
+            ("(lambda <a,t> P P)(pa_kind)", "pa_kind"),
+            ("(lambda <<a,t>,<<a,t>,t>> R R)(every)", "every"),
+            ("lambda <a,t> P lambda a x P(x)", "lambda <a,t> P P"),
+            (
+                "lambda <e,e> F lambda e x (lambda e y F(y))(x)",
+                "lambda <e,e> F F",
+            ),
+            ("(lambda <e,e> P lambda e x P(x))(f#<e,e>)", "f#<e,e>"),
+            (
+                "(lambda <<a,t>,<<a,t>,t>> R lambda <a,t> P R(P))(every)",
+                "every",
+            ),
+            (
+                "(lambda <<a,t>,<<a,t>,t>> R lambda <a,t> P lambda <a,t> Q R(P, Q))(every, pa_kind)",
+                "every(pa_kind)",
+            ),
+            (
+                "(lambda <<a,t>,<<a,t>,t>> R lambda <a,t> P lambda <a,t> Q R(P, Q))(every, pa_kind, pa_kind)",
+                "every(pa_kind, pa_kind)",
+            ),
+            (
+                "(lambda <a,t> P lambda <a,t> Q every(Q, Q))(pa_kind)",
+                "lambda <a,t> Q every(Q, Q)",
+            ),
+            (
+                "(lambda <e,e> F lambda <e,e> G lambda e x F(G(x)))(lambda e x x, lambda e x x)",
+                "lambda e x x",
+            ),
+            (
+                "(lambda <e,e> F lambda <e,e> G lambda e x F(G(x)))(f#<e,e>, lambda e x x)",
+                "f#<e,e>",
+            ),
+            (
+                "(lambda <e,e> F lambda e x F(F(x)))(lambda e x x)",
+                "lambda e x x",
+            ),
+            (
+                "(lambda <e,e> F lambda e x F(F(x)))(f#<e,e>)",
+                "lambda e x f#<e,e>(f#<e,e>(x))",
+            ),
+            ("lambda a x (lambda a x pa_kind(x))(x)", "pa_kind"),
+            ("lambda e x (lambda e y y)(x)", "lambda e x x"),
+            (
+                "(lambda <e,<e,e>> F F(x#e))(lambda e y lambda e z y)",
+                "lambda e z x#e",
+            ),
+            (
+                "(lambda t p lambda t q p)(kind#<a,t>(k#a))",
+                "lambda t q kind#<a,t>(k#a)",
+            ),
         ];
-        for (expresssion, reduced) in expressions {
-            let mut phi = RootedLambdaPool::<Expr>::parse(expresssion)?;
+        for (expression, reduced) in expressions {
+            let mut phi = RootedLambdaPool::<Expr>::parse(expression)?;
             phi.reduce()?;
             let reduced = RootedLambdaPool::<Expr>::parse(reduced)?;
             assert_eq!(phi, reduced, "{phi} != {reduced}");
