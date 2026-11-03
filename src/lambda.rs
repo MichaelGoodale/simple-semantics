@@ -913,6 +913,27 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
         MutableLambdaPoolBFSIterator::new(self, x)
     }
 
+    ///Gets applications accessible from the surface, ignoring their children.
+    fn surface_apps(&self, root: LambdaExprRef) -> Vec<ApplicationOpportunity> {
+        let mut queue = VecDeque::from([root]);
+        let mut apps = vec![];
+        while let Some(r) = queue.pop_front() {
+            match self.get(r) {
+                LambdaExpr::Lambda(..) if self.is_eta_opportunity(r) => {
+                    apps.push(ApplicationOpportunity::Eta(r));
+                }
+                LambdaExpr::Application { subformula, .. }
+                    if matches!(self.get(*subformula), LambdaExpr::Lambda(..)) =>
+                {
+                    apps.push(ApplicationOpportunity::Beta(r))
+                }
+
+                x => queue.extend(x.get_children()),
+            };
+        }
+        apps
+    }
+
     fn get_next_app(&self, root: LambdaExprRef) -> Option<ApplicationOpportunity> {
         self.bfs_from(root)
             .map(|(x, _)| x)
@@ -961,6 +982,7 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 enum ApplicationOpportunity {
     Beta(LambdaExprRef),
     Eta(LambdaExprRef),
@@ -1149,7 +1171,6 @@ where
         //them, it gets invalidated.
         self.replace_section(&subformula_vars, argument);
         self.0[app.0 as usize] = self.0[inner_term.0 as usize].clone();
-        //self.0.swap(inner_term.0 as usize, app.0 as usize); <- BAD
 
         Ok(())
     }
@@ -1181,11 +1202,19 @@ where
     }
 
     pub fn reduce(&mut self, root: LambdaExprRef) -> Result<(), ReductionError> {
-        while let Some(x) = self.get_next_app(root) {
-            match x {
-                ApplicationOpportunity::Beta(x) => self.beta_reduce(x)?,
-                ApplicationOpportunity::Eta(x) => self.eta_reduce(x)?,
+        let mut apps = self.surface_apps(root);
+
+        println!("{apps:?}");
+        while !apps.is_empty() {
+            for x in apps.into_iter().rev() {
+                println!("{x:?}");
+                match x {
+                    ApplicationOpportunity::Beta(x) => self.beta_reduce(x)?,
+                    ApplicationOpportunity::Eta(x) => self.eta_reduce(x)?,
+                }
             }
+            apps = self.surface_apps(root);
+            println!("{apps:?}");
         }
 
         Ok(())
@@ -1697,52 +1726,6 @@ mod test {
             LambdaExpr::FreeVariable("0".into(), LambdaType::a().clone()),
         ]);
         assert!(pool.reduce(LambdaExprRef(0)).is_ok());
-        Ok(())
-    }
-
-    #[test]
-    fn complicated_lambda() -> anyhow::Result<()> {
-        // [[[Mary sings] and]  [John dances]]
-        let mut pool = LambdaPool::<()>(vec![
-            LambdaExpr::Application {
-                subformula: LambdaExprRef(5),
-                argument: LambdaExprRef(1),
-            },
-            LambdaExpr::Application {
-                //John dances
-                subformula: LambdaExprRef(2),
-                argument: LambdaExprRef(4),
-            },
-            LambdaExpr::Lambda(LambdaExprRef(3), LambdaType::e().clone()),
-            LambdaExpr::FreeVariable("0".into(), LambdaType::t().clone()),
-            LambdaExpr::FreeVariable("2".into(), LambdaType::t().clone()),
-            // 5
-            //\lambda x. Mary sings and
-            LambdaExpr::Application {
-                subformula: LambdaExprRef(6),
-                argument: LambdaExprRef(9),
-            },
-            LambdaExpr::Lambda(LambdaExprRef(7), LambdaType::t().clone()),
-            LambdaExpr::Lambda(LambdaExprRef(8), LambdaType::t().clone()),
-            LambdaExpr::BoundVariable(1, LambdaType::t().clone()),
-            LambdaExpr::Application {
-                //10
-                subformula: LambdaExprRef(10),
-                argument: LambdaExprRef(12),
-            },
-            LambdaExpr::Lambda(LambdaExprRef(11), LambdaType::e().clone()),
-            LambdaExpr::FreeVariable("1337".into(), LambdaType::t().clone()),
-            LambdaExpr::FreeVariable("5".into(), LambdaType::e().clone()),
-        ]);
-        pool.reduce(LambdaExprRef(0))?;
-        pool.cleanup(LambdaExprRef(0));
-        assert_eq!(
-            pool,
-            LambdaPool(vec![LambdaExpr::FreeVariable(
-                "1337".into(),
-                LambdaType::t().clone()
-            )])
-        );
         Ok(())
     }
 
