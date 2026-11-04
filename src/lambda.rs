@@ -1204,17 +1204,14 @@ where
     pub fn reduce(&mut self, root: LambdaExprRef) -> Result<(), ReductionError> {
         let mut apps = self.surface_apps(root);
 
-        println!("{apps:?}");
         while !apps.is_empty() {
             for x in apps.into_iter().rev() {
-                println!("{x:?}");
                 match x {
                     ApplicationOpportunity::Beta(x) => self.beta_reduce(x)?,
                     ApplicationOpportunity::Eta(x) => self.eta_reduce(x)?,
                 }
             }
             apps = self.surface_apps(root);
-            println!("{apps:?}");
         }
 
         Ok(())
