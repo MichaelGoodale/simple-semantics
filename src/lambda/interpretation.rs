@@ -150,7 +150,7 @@ impl<'src> Literal<'src> {
     #[must_use]
     pub const fn has_literal(typ: &LambdaType) -> bool {
         match typ {
-            LambdaType::Composition(lhs, rhs) => !lhs.is_function() && matches!(&**rhs, LambdaType::T),
+            LambdaType::Composition(lhs, rhs) => !lhs.is_function() && matches!(**rhs, LambdaType::T),
             _ => true,
         }
     }
