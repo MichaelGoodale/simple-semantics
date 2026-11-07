@@ -26,7 +26,7 @@ pub mod parser;
 #[cfg(feature = "sampling")]
 pub mod random;
 #[cfg(feature = "sampling")]
-pub use random::RandomError;
+pub use random::SamplingError;
 mod printing;
 mod serializations;
 pub use serializations::{MathModeExpression, ToLiteral};
@@ -375,6 +375,17 @@ fn cmp_pool<T: LambdaLanguageOfThought + Ord>(
 impl<T: LambdaLanguageOfThought + Ord> Ord for RootedLambdaPool<'_, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         cmp_pool(&self.pool, self.root, &other.pool, other.root)
+    }
+}
+
+impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
+    fn get_typ(&self) -> Option<&LambdaType> {
+        match self {
+            LambdaExpr::Lambda(..) | LambdaExpr::Application { .. } => None,
+            LambdaExpr::BoundVariable(_, lambda_type)
+            | LambdaExpr::FreeVariable(_, lambda_type) => Some(lambda_type),
+            LambdaExpr::LanguageOfThoughtExpr(x, _) => Some(x.typ()),
+        }
     }
 }
 
@@ -866,6 +877,7 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
         }
     }
 }
+
 impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
     pub fn get_type(&self, x: LambdaExprRef) -> Result<LambdaType, TypeError> {
         match self.get(x) {

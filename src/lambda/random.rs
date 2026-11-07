@@ -1,15 +1,6 @@
-//! Randomly generates lambda expressions of a language of thought.
-//!
-//!Unlike [`crate::lambda::enumerator`], which enumerates *all* expressions up to a size, this
-//!module randomly descends through the space of well-typed, beta-eta normal expressions and
-//!generates a single one. Applications are "free" w.r.t. size (see
-//![`RootedLambdaPool::appless_len`]), so the generator uses head applications to go deeper
-//!without spending size.
+//! Ways to sample random expressions from a language of thought.
 
-use rand::{
-    Rng, RngExt,
-    seq::{IndexedRandom, SliceRandom},
-};
+use rand::{Rng, RngExt, seq::SliceRandom};
 use thiserror::Error;
 
 use crate::lambda::{
@@ -17,9 +8,10 @@ use crate::lambda::{
     RootedLambdaPool, types::LambdaType,
 };
 
-///Errors resulting from randomly generating a lambda expression.
+///Errors that arise from sampling with [`RootedLambdaPool::random_exact`] and
+///[`RootedLambdaPool::random_up_to`]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
-pub enum RandomError {
+pub enum SamplingError {
     ///No expression of the target type can be constructed from the given base expressions.
     #[error("No expression of type {typ} can be generated from the given base expressions")]
     NotConstructible {
@@ -42,10 +34,7 @@ pub enum RandomError {
     NoBaseExpressions,
 }
 
-///How many attempts the root of a generation gets before giving up. Failed attempts are retried
-///with fresh random choices, and each child node gets a fraction of its parent's attempts (see
-///[`child_attempts`]), which bounds the search.
-const ATTEMPTS: usize = 256;
+const GENERATION_ATTEMPTS: usize = 256;
 
 ///The state of a single random descent.
 struct RandomExprBuilder<'src, 'a, T> {
@@ -53,7 +42,7 @@ struct RandomExprBuilder<'src, 'a, T> {
     ///The types of the bound variables in scope, indexed by De Bruijn index.
     context: Vec<LambdaType>,
     ///The usable base expressions and free variables, with their types.
-    leaves: &'a [(LambdaExpr<'src, T>, LambdaType)],
+    leaves: &'a [LambdaExpr<'src, T>],
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'src, '_, T> {
@@ -194,14 +183,14 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     fn head_type(&self, i: usize) -> &LambdaType {
         self.leaves
             .get(i)
-            .map(|(_, t)| t)
+            .map(|x| x.get_typ().unwrap())
             .unwrap_or_else(|| &self.context[i - self.leaves.len()])
     }
 
     ///A clone of the expression of the `i`-th head.
     fn head_expr(&self, i: usize) -> LambdaExpr<'src, T> {
         match self.leaves.get(i) {
-            Some((x, _)) => x.clone(),
+            Some(x) => x.clone(),
             None => {
                 let j = i - self.leaves.len();
                 LambdaExpr::BoundVariable(j, self.context[j].clone())
@@ -304,42 +293,19 @@ fn random_index(rng: &mut impl Rng, n: usize, f: impl Fn(usize) -> bool) -> Opti
     (0..n).filter(|&i| f(i)).nth(rng.random_range(0..count))
 }
 
-///Picks a random target type if none was given.
-fn pick_target(
-    rng: &mut impl Rng,
-    target: Option<LambdaType>,
-    leaves: &[(LambdaExpr<'_, impl LambdaLanguageOfThought>, LambdaType)],
-) -> Result<LambdaType, RandomError> {
-    match target {
-        Some(t) => Ok(t),
-        None => leaves
-            .choose(rng)
-            .map(|(_, t)| t.clone())
-            .ok_or(RandomError::NoBaseExpressions),
-    }
-}
-
-///Filters out syncategorematic expressions (which bind variables directly and so cannot be used
-///by random generation, mirroring the enumerator) and pairs the rest with their types.
 fn mk_leaves<'src, T: LambdaLanguageOfThought + Clone>(
     base_expressions: &[T],
     free_var: &[(FreeVar<'src>, LambdaType)],
-) -> Vec<(LambdaExpr<'src, T>, LambdaType)> {
-    let mut leaves: Vec<(LambdaExpr<'src, T>, LambdaType)> = base_expressions
+) -> Vec<LambdaExpr<'src, T>> {
+    let mut leaves: Vec<_> = base_expressions
         .iter()
-        .filter(|x| x.bind_vars() == crate::lambda::PrimitiveVarType::NoVar)
-        .map(|x| {
-            (
-                LambdaExpr::LanguageOfThoughtExpr(x.clone(), ExprType::NoVar),
-                x.typ().clone(),
-            )
-        })
+        .map(|x| LambdaExpr::LanguageOfThoughtExpr(x.clone(), ExprType::NoVar))
         .collect();
 
     leaves.extend(
         free_var
             .iter()
-            .map(|(f, t)| (LambdaExpr::FreeVariable(*f, t.clone()), t.clone())),
+            .map(|(f, t)| LambdaExpr::FreeVariable(*f, t.clone())),
     );
 
     leaves
@@ -350,7 +316,7 @@ fn generate_pool<'src, T: LambdaLanguageOfThought + Clone + PartialEq>(
     rng: &mut impl Rng,
     typ: &LambdaType,
     size: usize,
-    leaves: &[(LambdaExpr<'src, T>, LambdaType)],
+    leaves: &[LambdaExpr<'src, T>],
 ) -> Option<RootedLambdaPool<'src, T>> {
     let mut builder = RandomExprBuilder {
         pool: vec![],
@@ -359,7 +325,7 @@ fn generate_pool<'src, T: LambdaLanguageOfThought + Clone + PartialEq>(
     };
 
     builder
-        .generate(rng, typ, size, ATTEMPTS)
+        .generate(rng, typ, size, GENERATION_ATTEMPTS)
         .ok()
         .map(|root| RootedLambdaPool {
             pool: LambdaPool(builder.pool),
@@ -379,17 +345,20 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
     ///Returns a [`RandomError`] if no expression of the target type and size can be constructed
     ///from the given base expressions and free variables.
     pub fn random_exact(
-        rng: &mut impl Rng,
         target: Option<LambdaType>,
         size: usize,
         base_expressions: &[T],
         free_var: &[(FreeVar<'src>, LambdaType)],
-    ) -> Result<Self, RandomError> {
+        rng: &mut impl Rng,
+    ) -> Result<Self, SamplingError> {
         let leaves = mk_leaves(base_expressions, free_var);
-        let typ = pick_target(rng, target, &leaves)?;
+        let typ = match target {
+            Some(x) => x,
+            None => todo!("implement random sampler for types"),
+        };
 
         generate_pool(rng, &typ, size, &leaves)
-            .ok_or(RandomError::SizeNotConstructible { typ, size })
+            .ok_or(SamplingError::SizeNotConstructible { typ, size })
     }
 
     ///Randomly generates an expression of type `target` with an [`RootedLambdaPool::appless_len`]
@@ -403,14 +372,17 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
     ///Returns a [`RandomError`] if no expression of the target type can be constructed from the
     ///given base expressions and free variables.
     pub fn random_up_to(
-        rng: &mut impl Rng,
         target: Option<LambdaType>,
         max_size: usize,
         base_expressions: &[T],
         free_var: &[(FreeVar<'src>, LambdaType)],
-    ) -> Result<Self, RandomError> {
+        rng: &mut impl Rng,
+    ) -> Result<Self, SamplingError> {
         let leaves = mk_leaves(base_expressions, free_var);
-        let typ = pick_target(rng, target, &leaves)?;
+        let typ = match target {
+            Some(x) => x,
+            None => todo!("implement random sampler for types"),
+        };
 
         let mut sizes: Vec<usize> = (1..=max_size).collect();
         sizes.shuffle(rng);
@@ -418,7 +390,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
         sizes
             .iter()
             .find_map(|&size| generate_pool(rng, &typ, size, &leaves))
-            .ok_or(RandomError::NotConstructible { typ })
+            .ok_or(SamplingError::NotConstructible { typ })
     }
 }
 
@@ -458,47 +430,29 @@ mod test {
 
         //There is no bare `t` constant, so size 1 is not constructible.
         let err = RootedLambdaPool::<Expr<'static>>::random_exact(
-            &mut rng,
             Some(LambdaType::T),
             1,
             &base_expressions(),
             &[],
+            &mut rng,
         )
         .unwrap_err();
         assert_eq!(
             err,
-            RandomError::SizeNotConstructible {
+            SamplingError::SizeNotConstructible {
                 typ: LambdaType::T,
                 size: 1
             }
         );
 
-        //Size 4 is not constructible either: the only size 3 `t` is `~(pa(John))`, so `~` at size 4
-        //would be a repeated involutory application, and `&` needs 1 + 2 + 2 = 5 nodes.
-        let err = RootedLambdaPool::<Expr<'static>>::random_exact(
-            &mut rng,
-            Some(LambdaType::T),
-            4,
-            &base_expressions(),
-            &[],
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            RandomError::SizeNotConstructible {
-                typ: LambdaType::T,
-                size: 4
-            }
-        );
-
         for _ in 0..200 {
-            for size in [2, 3, 5, 6] {
+            for size in [2, 3, 4, 5, 6] {
                 let expr = RootedLambdaPool::<Expr<'static>>::random_exact(
-                    &mut rng,
                     Some(LambdaType::T),
                     size,
                     &base_expressions(),
                     &[],
+                    &mut rng,
                 )?;
                 assert!(expr.is_reduced(), "{expr} is not fully reduced");
                 assert_eq!(expr.appless_len(), size);
@@ -515,11 +469,11 @@ mod test {
 
         for _ in 0..200 {
             let expr = RootedLambdaPool::<Expr<'static>>::random_up_to(
-                &mut rng,
                 None,
                 6,
                 &base_expressions(),
                 &[],
+                &mut rng,
             )?;
             assert!(expr.is_reduced(), "{expr} is not fully reduced");
             assert!(expr.appless_len() <= 6);
@@ -536,11 +490,11 @@ mod test {
 
         for _ in 0..100 {
             let expr = RootedLambdaPool::<Expr<'static>>::random_up_to(
-                &mut rng,
                 Some(LambdaType::T),
                 5,
                 &base_expressions(),
                 &free_var,
+                &mut rng,
             )?;
             assert!(expr.is_reduced(), "{expr} is not fully reduced");
             assert_eq!(expr.get_type()?, LambdaType::T);
@@ -551,30 +505,29 @@ mod test {
 
     #[test]
     fn test_not_constructible() -> anyhow::Result<()> {
+        //given we have no atomic events in `base_expressions`, it can't sample an event of size one.
         let mut rng = ChaCha8Rng::seed_from_u64(3);
 
-        //No base expression can produce an `e` (iota is syncategorematic and so unusable).
         let err = RootedLambdaPool::<Expr<'static>>::random_exact(
-            &mut rng,
             Some(LambdaType::E),
-            3,
+            1,
             &base_expressions(),
             &[],
+            &mut rng,
         )
         .unwrap_err();
 
         assert_eq!(
             err,
-            RandomError::SizeNotConstructible {
+            SamplingError::SizeNotConstructible {
                 typ: LambdaType::E,
-                size: 3
+                size: 1
             }
         );
 
-        //Nothing to generate from at all.
-        let err = RootedLambdaPool::<Expr<'static>>::random_up_to(&mut rng, None, 3, &[], &[])
+        let err = RootedLambdaPool::<Expr<'static>>::random_up_to(None, 1, &[], &[], &mut rng)
             .unwrap_err();
-        assert_eq!(err, RandomError::NoBaseExpressions);
+        assert_eq!(err, SamplingError::NoBaseExpressions);
 
         Ok(())
     }
