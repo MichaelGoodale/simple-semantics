@@ -63,7 +63,7 @@ pub struct Scenario<'a> {
 impl<'a> Scenario<'a> {
     ///Create a new scenario.
     #[must_use]
-    pub fn new(
+    pub const fn new(
         actors: Vec<Actor<'a>>,
         thematic_relations: Vec<ThetaRoles<'a>>,
         properties: BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>>,
@@ -84,7 +84,7 @@ impl<'a> Scenario<'a> {
 
     ///Get the properties (e.g. what predicates apply) of the entities in a scenario.
     #[must_use]
-    pub fn properties(&self) -> &BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>> {
+    pub const fn properties(&self) -> &BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>> {
         &self.properties
     }
 
