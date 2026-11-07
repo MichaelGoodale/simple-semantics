@@ -110,7 +110,7 @@ impl Display for Literal<'_> {
     }
 }
 
-fn capitalized_bool(b: bool) -> &'static str {
+const fn capitalized_bool(b: bool) -> &'static str {
     if b { "True" } else { "False" }
 }
 
@@ -185,7 +185,7 @@ impl<'src> Literal<'src> {
 
     ///Converts the literal into a `bool`. Returns `None` if not a `bool`.
     #[must_use]
-    pub fn as_bool(&self) -> Option<bool> {
+    pub const fn as_bool(&self) -> Option<bool> {
         if let Literal::Bool(b) = self {
             Some(*b)
         } else {
@@ -195,7 +195,7 @@ impl<'src> Literal<'src> {
 
     ///Converts the literal into an [`Entity`]. Returns `None` if not an [`Entity`].
     #[must_use]
-    pub fn as_entity(&self) -> Option<Entity<'src>> {
+    pub const fn as_entity(&self) -> Option<Entity<'src>> {
         match self {
             Literal::Actor(a) => Some(Entity::Actor(a)),
             Literal::Event(e) => Some(Entity::Event(*e)),
@@ -205,7 +205,7 @@ impl<'src> Literal<'src> {
 
     ///Converts the literal into an [`Actor`]. Returns `None` if not an [`Actor`].
     #[must_use]
-    pub fn as_actor(&self) -> Option<Actor<'src>> {
+    pub const fn as_actor(&self) -> Option<Actor<'src>> {
         match self {
             Literal::Actor(a) => Some(a),
             _ => None,
@@ -214,7 +214,7 @@ impl<'src> Literal<'src> {
 
     ///Converts the literal into an [`Event`]. Returns `None` if not an [`Event`].
     #[must_use]
-    pub fn as_event(&self) -> Option<Event> {
+    pub const fn as_event(&self) -> Option<Event> {
         match self {
             Literal::Event(e) => Some(*e),
             _ => None,
@@ -468,7 +468,7 @@ where
         }
     }
 
-    fn is_neutral(&self) -> bool {
+    const fn is_neutral(&self) -> bool {
         matches!(&self, Value::Neutral(_))
     }
 }

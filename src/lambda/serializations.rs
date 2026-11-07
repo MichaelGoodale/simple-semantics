@@ -308,7 +308,7 @@ impl<'src, T: PartialEq + Debug + LambdaLanguageOfThought> PrintingAST<'src, T> 
         }
     }
 
-    fn head(&self) -> Option<&BaseExpr<'src, T>> {
+    const fn head(&self) -> Option<&BaseExpr<'src, T>> {
         match self {
             PrintingAST::Application {
                 head:

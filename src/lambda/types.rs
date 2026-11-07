@@ -199,19 +199,19 @@ impl LambdaType {
 
     ///Get the atomic type `a`
     #[must_use]
-    pub fn a() -> &'static Self {
+    pub const fn a() -> &'static Self {
         &LambdaType::A
     }
 
     ///get the atomic type `e`
     #[must_use]
-    pub fn e() -> &'static Self {
+    pub const fn e() -> &'static Self {
         &LambdaType::E
     }
 
     ///Get the atomic type `t`
     #[must_use]
-    pub fn t() -> &'static Self {
+    pub const fn t() -> &'static Self {
         &LambdaType::T
     }
 
@@ -348,7 +348,7 @@ impl LambdaType {
 
     ///The number of elements in this type
     #[must_use]
-    pub fn size(&self) -> usize {
+    pub const fn size(&self) -> usize {
         match self {
             LambdaType::A | LambdaType::E | LambdaType::T => 1,
             LambdaType::Composition(a, b) => a.size() + b.size(),
@@ -386,7 +386,7 @@ impl LambdaType {
 
     ///Checks that the type is a function.
     #[must_use]
-    pub fn is_function(&self) -> bool {
+    pub const fn is_function(&self) -> bool {
         matches!(&self, LambdaType::Composition(_, _))
     }
 

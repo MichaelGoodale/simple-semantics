@@ -375,7 +375,7 @@ impl<T: LambdaLanguageOfThought + Ord> Ord for RootedLambdaPool<'_, T> {
 }
 
 impl<T: LambdaLanguageOfThought + Ord> LambdaExpr<'_, T> {
-    fn ordering(&self) -> usize {
+    const fn ordering(&self) -> usize {
         match self {
             LambdaExpr::Lambda(..) => 0,
             LambdaExpr::BoundVariable(..) => 1,
