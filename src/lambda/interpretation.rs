@@ -148,10 +148,11 @@ impl<'src> Literal<'src> {
 
     ///Whether a type can be expressed as a [`Literal`].
     #[must_use]
-    #[expect(clippy::missing_panics_doc)]
-    pub fn has_literal(typ: &LambdaType) -> bool {
-        // this is fine since we check its a function before unwrapping.
-        !typ.is_function() || (typ.is_one_place_function() && typ.rhs().unwrap() == &LambdaType::T)
+    pub const fn has_literal(typ: &LambdaType) -> bool {
+        match typ {
+            LambdaType::Composition(lhs, rhs) => !lhs.is_function() && matches!(&**rhs, LambdaType::T),
+            _ => true,
+        }
     }
 
     ///Get the type of the literal.
