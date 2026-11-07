@@ -10,7 +10,6 @@ use rand::{
     Rng, RngExt,
     seq::{IndexedRandom, SliceRandom},
 };
-use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::lambda::{
@@ -43,99 +42,10 @@ pub enum RandomError {
     NoBaseExpressions,
 }
 
-///How many node attempts a single generation may make before giving up. This bounds the
-///backtracking search so pathological base expressions cannot hang generation.
-const BUDGET: usize = 10_000;
-
-///The number of ways to choose `r` things from `n` (in any order).
-fn binom(n: usize, r: usize) -> usize {
-    if r > n {
-        return 0;
-    }
-    let r = r.min(n - r);
-    let mut c = 1;
-    for i in 0..r {
-        c = c * (n - i) / (i + 1);
-    }
-    c
-}
-
-///The number of ways `total` can be split into `parts` sizes, each at least one.
-fn compositions_count(total: usize, parts: usize) -> usize {
-    if total < parts {
-        return 0;
-    }
-    binom(total - 1, parts - 1)
-}
-
-///The `idx`-th (in lexicographic order) way to split `total` into `parts` sizes, each at least
-///one.
-fn unrank_composition(idx: usize, total: usize, parts: usize) -> SmallVec<[usize; 4]> {
-    let mut sizes = SmallVec::new();
-    let (mut total, mut parts, mut idx) = (total, parts, idx);
-
-    while parts > 1 {
-        let mut first = 1;
-        loop {
-            let count = compositions_count(total - first, parts - 1);
-            if idx < count {
-                sizes.push(first);
-                total -= first;
-                parts -= 1;
-                break;
-            }
-            idx -= count;
-            first += 1;
-        }
-    }
-    sizes.push(total);
-
-    sizes
-}
-
-///The length of the `j`-th way `typ` can be applied to arguments to result in `target`, with at
-///most `max_len` arguments.
-fn chain_length(
-    typ: &LambdaType,
-    target: &LambdaType,
-    max_len: usize,
-    mut j: usize,
-) -> Option<usize> {
-    let mut len = 0;
-    let mut cur = typ;
-    while let Ok((_, r)) = cur.split() {
-        len += 1;
-        if len > max_len {
-            break;
-        }
-        if r == target {
-            if j == 0 {
-                return Some(len);
-            }
-            j -= 1;
-        }
-        cur = r;
-    }
-    None
-}
-
-///A decoded candidate for a node, addressed by index so no candidates are materialized until one
-///is chosen.
-enum DecodedChoice {
-    ///The `n`-th leaf of the target type.
-    Leaf(usize),
-    ///The bound variable with the given De Bruijn index.
-    BoundVar(usize),
-    ///A lambda of the target (function) type.
-    Lambda,
-    ///The `chain`-th argument chain of the `head`-th head expression, with the `comp`-th split
-    ///of the remaining size over the arguments.
-    Application {
-        head: usize,
-        chain: usize,
-        comp: usize,
-    },
-}
+///How many attempts the root of a generation gets before giving up. Failed attempts are retried
+///with fresh random choices, and each child node gets a fraction of its parent's attempts (see
+///[`child_attempts`]), which bounds the search.
+const ATTEMPTS: usize = 256;
 
 ///The state of a single random descent.
 struct RandomExprBuilder<'src, 'a, T> {
@@ -144,44 +54,24 @@ struct RandomExprBuilder<'src, 'a, T> {
     context: Vec<LambdaType>,
     ///The usable base expressions and free variables, with their types.
     leaves: &'a [(LambdaExpr<'src, T>, LambdaType)],
-    budget: usize,
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'src, '_, T> {
     ///Randomly generates an expression of exactly `size` (in the [`RootedLambdaPool::appless_len`]
-    ///sense) of type `target`, backtracking when a descent dead-ends.
-    ///
-    ///Candidates are counted and addressed by index (see [`DecodedChoice`]) rather than
-    ///collected, so backtracking allocates nothing. They are attempted starting from a random
-    ///index, wrapping around, which covers every candidate.
+    ///sense) of type `target`. Failed attempts are rolled back and retried with fresh random
+    ///choices, up to `attempts` times.
     fn generate(
         &mut self,
         rng: &mut impl Rng,
         target: &LambdaType,
         size: usize,
+        attempts: usize,
     ) -> Result<LambdaExprRef, ()> {
-        if size == 0 || self.budget == 0 {
-            return Err(());
-        }
-
-        let count = self.choice_count(target, size);
-        if count == 0 {
-            return Err(());
-        }
-
-        let start = rng.random_range(0..count);
-        for k in 0..count {
-            if self.budget == 0 {
-                return Err(());
-            }
-            self.budget -= 1;
-
-            let idx = (start + k) % count;
+        for _ in 0..attempts {
             let pool_mark = self.pool.len();
             let context_mark = self.context.len();
 
-            let choice = self.decode(idx, target, size);
-            if let Some(r) = self.try_choice(rng, choice, target, size) {
+            if let Some(r) = self.try_generate(rng, target, size, attempts) {
                 return Ok(r);
             }
 
@@ -192,138 +82,117 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         Err(())
     }
 
-    ///The number of candidates for a node of type `target` and size `size`.
-    fn choice_count(&self, target: &LambdaType, size: usize) -> usize {
-        if size == 1 {
-            return self.leaf_count(target) + self.bound_var_count(target);
-        }
-
-        let mut count = usize::from(target.is_function());
-        for head in 0..self.head_count() {
-            let typ = self.head_type(head);
-            let mut len = 0;
-            let mut cur = typ;
-            while let Ok((_, r)) = cur.split() {
-                len += 1;
-                if len > size - 1 {
-                    break;
-                }
-                if r == target {
-                    count += compositions_count(size - 1, len);
-                }
-                cur = r;
-            }
-        }
-
-        count
-    }
-
-    ///Decodes a candidate index into the candidate it refers to.
-    fn decode(&self, idx: usize, target: &LambdaType, size: usize) -> DecodedChoice {
-        if size == 1 {
-            let leaves = self.leaf_count(target);
-            if idx < leaves {
-                return DecodedChoice::Leaf(self.nth_leaf(target, idx));
-            }
-            return DecodedChoice::BoundVar(self.nth_bound_var(target, idx - leaves));
-        }
-
-        if target.is_function() && idx == 0 {
-            return DecodedChoice::Lambda;
-        }
-
-        let mut idx = idx - usize::from(target.is_function());
-        for head in 0..self.head_count() {
-            let typ = self.head_type(head);
-            let mut len = 0;
-            let mut chain = 0;
-            let mut cur = typ;
-            while let Ok((_, r)) = cur.split() {
-                len += 1;
-                if len > size - 1 {
-                    break;
-                }
-                if r == target {
-                    let count = compositions_count(size - 1, len);
-                    if idx < count {
-                        return DecodedChoice::Application {
-                            head,
-                            chain,
-                            comp: idx,
-                        };
-                    }
-                    idx -= count;
-                    chain += 1;
-                }
-                cur = r;
-            }
-        }
-
-        panic!("Invalid candidate index {idx} for type {target} of size {size}!")
-    }
-
-    ///Attempts a single choice, returning [`None`] (leaving the builder in a rolled-back state)
-    ///if it dead-ends.
-    fn try_choice(
+    ///A single attempt: randomly picks what kind of node to build and builds it, recursing.
+    fn try_generate(
         &mut self,
         rng: &mut impl Rng,
-        choice: DecodedChoice,
         target: &LambdaType,
         size: usize,
+        attempts: usize,
     ) -> Option<LambdaExprRef> {
-        match choice {
-            DecodedChoice::Leaf(i) => {
-                let expr = self.leaves[i].0.clone();
-                Some(self.push(expr))
-            }
-            DecodedChoice::BoundVar(i) => {
-                let expr = LambdaExpr::BoundVariable(i, self.context[i].clone());
-                Some(self.push(expr))
-            }
-            DecodedChoice::Lambda => {
-                let Ok((arg, res)) = target.split() else {
-                    return None;
-                };
+        if size == 0 {
+            return None;
+        }
+        if size == 1 {
+            return self.random_leaf(rng, target);
+        }
 
-                self.context.insert(0, arg.clone());
-                let body = self.generate(rng, res, size - 1);
-                self.context.remove(0);
-                let body = body.ok()?;
+        //The choices are a lambda (if the target is a function type) or a head applied to
+        //arguments.
+        let heads = self.app_head_count(target, size - 1);
+        let count = usize::from(target.is_function()) + heads;
+        if count == 0 {
+            return None;
+        }
+        let choice = rng.random_range(0..count);
 
-                //The bound variable must be used and the body must not be an eta redex.
-                if !self.uses_bvar(body, 0) || self.is_eta_redex(body) {
-                    return None;
+        if target.is_function() && choice == 0 {
+            let (arg, res) = target.split().ok()?;
+
+            self.context.insert(0, arg.clone());
+            let body = self.generate(rng, res, size - 1, child_attempts(attempts));
+            self.context.remove(0);
+            let body = body.ok()?;
+
+            //The bound variable must be used and the body must not be an eta redex.
+            if !self.uses_bvar(body, 0) || self.is_eta_redex(body) {
+                return None;
+            }
+
+            Some(self.push(LambdaExpr::Lambda(body, arg.clone())))
+        } else {
+            let head = choice - usize::from(target.is_function());
+            self.random_application(rng, target, size, head, attempts)
+        }
+    }
+
+    ///Pushes a random leaf (base expression, free variable or bound variable) of type `typ`,
+    /// picked by index so nothing is collected.
+    fn random_leaf(&mut self, rng: &mut impl Rng, typ: &LambdaType) -> Option<LambdaExprRef> {
+        let leaves = self.leaf_count(typ);
+        let count = leaves + self.bound_var_count(typ);
+        if count == 0 {
+            return None;
+        }
+
+        let choice = rng.random_range(0..count);
+        let expr = if choice < leaves {
+            self.leaves[self.nth_leaf(typ, choice)?].0.clone()
+        } else {
+            let i = self.nth_bound_var(typ, choice - leaves)?;
+            LambdaExpr::BoundVariable(i, self.context[i].clone())
+        };
+
+        Some(self.push(expr))
+    }
+
+    ///Pushes the `head`-th head (of those that can be applied to reach `target`) applied to
+    ///randomly generated arguments.
+    fn random_application(
+        &mut self,
+        rng: &mut impl Rng,
+        target: &LambdaType,
+        size: usize,
+        head: usize,
+        attempts: usize,
+    ) -> Option<LambdaExprRef> {
+        //Find the `head`-th head with an argument chain to `target`.
+        let mut found = None;
+        let mut seen = 0;
+        for i in 0..self.head_count() {
+            if let Some(len) = chain_len(self.head_type(i), target, size - 1) {
+                if head == seen {
+                    found = Some((i, len));
+                    break;
                 }
-
-                Some(self.push(LambdaExpr::Lambda(body, arg.clone())))
-            }
-            DecodedChoice::Application { head, chain, comp } => {
-                let typ = self.head_type(head).clone();
-                let len = chain_length(&typ, target, size - 1, chain)?;
-                let sizes = unrank_composition(comp, size - 1, len);
-
-                let mut cur = self.push(self.head_expr(head));
-                let mut typ = &typ;
-                for s in sizes {
-                    let Ok((arg_typ, r)) = typ.split() else {
-                        return None;
-                    };
-
-                    let argument = self.generate(rng, arg_typ, s).ok()?;
-                    if self.is_involutory(cur, argument) {
-                        return None;
-                    }
-
-                    cur = self.push(LambdaExpr::Application {
-                        subformula: cur,
-                        argument,
-                    });
-                    typ = r;
-                }
-
-                Some(cur)
+                seen += 1;
             }
         }
+        let (head, args) = found?;
+
+        let sizes = split_size(rng, size - 1, args)?;
+        let head_type = self.head_type(head).clone();
+        let mut cur = self.push(self.head_expr(head));
+        let mut typ = &head_type;
+
+        for s in sizes {
+            let (arg_typ, rest) = typ.split().ok()?;
+
+            let argument = self
+                .generate(rng, arg_typ, s, child_attempts(attempts))
+                .ok()?;
+            if self.is_involutory(cur, argument) {
+                return None;
+            }
+
+            cur = self.push(LambdaExpr::Application {
+                subformula: cur,
+                argument,
+            });
+            typ = rest;
+        }
+
+        Some(cur)
     }
 
     fn push(&mut self, expr: LambdaExpr<'src, T>) -> LambdaExprRef {
@@ -337,14 +206,13 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     }
 
     ///The index into `leaves` of the `j`-th leaf of type `typ`.
-    fn nth_leaf(&self, typ: &LambdaType, j: usize) -> usize {
+    fn nth_leaf(&self, typ: &LambdaType, j: usize) -> Option<usize> {
         self.leaves
             .iter()
             .enumerate()
             .filter(|(_, (_, t))| *t == *typ)
             .nth(j)
             .map(|(i, _)| i)
-            .unwrap_or_else(|| panic!("Invalid leaf index {j} for type {typ}!"))
     }
 
     ///The number of bound variables in scope of type `typ`.
@@ -353,19 +221,25 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     }
 
     ///The De Bruijn index of the `j`-th bound variable of type `typ`.
-    fn nth_bound_var(&self, typ: &LambdaType, j: usize) -> usize {
+    fn nth_bound_var(&self, typ: &LambdaType, j: usize) -> Option<usize> {
         self.context
             .iter()
             .enumerate()
             .filter(|(_, t)| *t == typ)
             .nth(j)
             .map(|(i, _)| i)
-            .unwrap_or_else(|| panic!("Invalid bound variable index {j} for type {typ}!"))
     }
 
     ///The total number of heads: leaves plus bound variables in scope.
     fn head_count(&self) -> usize {
         self.leaves.len() + self.context.len()
+    }
+
+    ///The number of heads that can be applied to (at most `max_len`) arguments to reach `target`.
+    fn app_head_count(&self, target: &LambdaType, max_len: usize) -> usize {
+        (0..self.head_count())
+            .filter(|&i| chain_len(self.head_type(i), target, max_len).is_some())
+            .count()
     }
 
     ///The type of the `i`-th head.
@@ -440,6 +314,43 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     }
 }
 
+///The shortest number of arguments `typ` can be applied to (at most `max_len`) to result in
+///`target`.
+fn chain_len(typ: &LambdaType, target: &LambdaType, max_len: usize) -> Option<usize> {
+    let mut len = 0;
+    let mut cur = typ;
+    while let Ok((_, r)) = cur.split() {
+        len += 1;
+        if len > max_len {
+            return None;
+        }
+        if r == target {
+            return Some(len);
+        }
+        cur = r;
+    }
+    None
+}
+
+///Randomly splits `total` into `parts` sizes, each at least one.
+fn split_size(rng: &mut impl Rng, total: usize, parts: usize) -> Option<Vec<usize>> {
+    if total < parts {
+        return None;
+    }
+
+    let mut sizes = vec![1; parts];
+    for _ in 0..total - parts {
+        sizes[rng.random_range(0..parts)] += 1;
+    }
+
+    Some(sizes)
+}
+
+///How many attempts a child node gets, given the attempts of its parent.
+fn child_attempts(attempts: usize) -> usize {
+    (attempts / 8).max(1)
+}
+
 ///Picks a random target type if none was given.
 fn pick_target(
     rng: &mut impl Rng,
@@ -505,11 +416,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
             pool: vec![],
             context: vec![],
             leaves: &leaves,
-            budget: BUDGET,
         };
 
         builder
-            .generate(rng, &typ, size)
+            .generate(rng, &typ, size, ATTEMPTS)
             .map(|root| RootedLambdaPool {
                 pool: LambdaPool(builder.pool),
                 root,
@@ -545,10 +455,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
                 pool: vec![],
                 context: vec![],
                 leaves: &leaves,
-                budget: BUDGET,
             };
 
-            if let Ok(root) = builder.generate(rng, &typ, size) {
+            if let Ok(root) = builder.generate(rng, &typ, size, ATTEMPTS) {
                 return Ok(RootedLambdaPool {
                     pool: LambdaPool(builder.pool),
                     root,
