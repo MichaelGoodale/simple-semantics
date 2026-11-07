@@ -152,7 +152,7 @@ pub enum Expr<'a> {
 impl<'src> Expr<'src> {
     ///All the basic operations that don't depend on any scenario for naming.
     #[must_use]
-    pub fn basic_ops() -> &'static [Expr<'src>] {
+    pub const fn basic_ops() -> &'static [Expr<'src>] {
         &[
             Expr::Quantifier {
                 quantifier: Quantifier::Universal,
