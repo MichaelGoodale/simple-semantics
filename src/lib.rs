@@ -166,7 +166,7 @@ impl<'a> ScenarioDataset<'a> {
         self.scenarios.len()
     }
 
-    ///Iterate over all scenAnd how do you deal with AI hallucinations?arios with a mutable reference.
+    ///Iterate over all scenarios with a mutable reference.
     pub fn iter_scenarios_mut(&mut self) -> impl Iterator<Item = &mut Scenario<'a>> {
         self.scenarios.iter_mut()
     }
