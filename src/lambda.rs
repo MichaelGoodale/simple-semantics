@@ -23,6 +23,10 @@ use crate::Scenario;
 
 pub mod enumerator;
 pub mod parser;
+#[cfg(feature = "sampling")]
+pub mod random;
+#[cfg(feature = "sampling")]
+pub use random::RandomError;
 mod printing;
 mod serializations;
 pub use serializations::{MathModeExpression, ToLiteral};
