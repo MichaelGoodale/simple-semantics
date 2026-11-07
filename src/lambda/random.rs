@@ -28,7 +28,9 @@ pub enum RandomError {
     },
     ///No expression of the target type of the given size can be constructed from the given base
     ///expressions.
-    #[error("No expression of type {typ} of size {size} can be generated from the given base expressions")]
+    #[error(
+        "No expression of type {typ} of size {size} can be generated from the given base expressions"
+    )]
     SizeNotConstructible {
         ///The type which could not be constructed.
         typ: LambdaType,
@@ -110,7 +112,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         heads.extend(self.all_bound_vars());
         for (head, typ) in heads {
             for args in arg_chains(&typ, target) {
-                if args.len() <= size - 1 {
+                if args.len() < size {
                     choices.push(Choice::Application {
                         head: head.clone(),
                         args,
@@ -249,8 +251,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     ///Checks if `f` is an involutory expression applied to an application of itself, e.g.
     ///`!(!p)`, which can be simplified.
     fn is_involutory(&self, f: LambdaExprRef, x: LambdaExprRef) -> bool {
-        let LambdaExpr::LanguageOfThoughtExpr(outer, _) =
-            &self.pool[usize::try_from(f.0).unwrap()]
+        let LambdaExpr::LanguageOfThoughtExpr(outer, _) = &self.pool[usize::try_from(f.0).unwrap()]
         else {
             return false;
         };
@@ -259,8 +260,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             return false;
         }
 
-        let LambdaExpr::Application { subformula, .. } =
-            &self.pool[usize::try_from(x.0).unwrap()]
+        let LambdaExpr::Application { subformula, .. } = &self.pool[usize::try_from(x.0).unwrap()]
         else {
             return false;
         };
@@ -577,8 +577,8 @@ mod test {
         );
 
         //Nothing to generate from at all.
-        let err =
-            RootedLambdaPool::<Expr<'static>>::random_up_to(&mut rng, None, 3, &[], &[]).unwrap_err();
+        let err = RootedLambdaPool::<Expr<'static>>::random_up_to(&mut rng, None, 3, &[], &[])
+            .unwrap_err();
         assert_eq!(err, RandomError::NoBaseExpressions);
 
         Ok(())
