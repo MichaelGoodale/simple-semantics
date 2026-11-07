@@ -68,15 +68,13 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         attempts: usize,
     ) -> Result<LambdaExprRef, ()> {
         for _ in 0..attempts {
-            let pool_mark = self.pool.len();
-            let context_mark = self.context.len();
+            let mark = self.pool.len();
 
             if let Some(r) = self.try_generate(rng, target, size, attempts) {
                 return Ok(r);
             }
 
-            self.pool.truncate(pool_mark);
-            self.context.truncate(context_mark);
+            self.pool.truncate(mark);
         }
 
         Err(())
@@ -97,16 +95,16 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             return self.random_leaf(rng, target);
         }
 
-        //The choices are a lambda (if the target is a function type) or a head applied to
-        //arguments.
-        let heads = self.app_head_count(target, size - 1);
-        let count = usize::from(target.is_function()) + heads;
+        //The choices are a lambda (if the target is a function type) or one of the heads that
+        //can be applied to reach the target.
+        let lambda = usize::from(target.is_function());
+        let count = lambda + self.app_head_count(target, size - 1);
         if count == 0 {
             return None;
         }
         let choice = rng.random_range(0..count);
 
-        if target.is_function() && choice == 0 {
+        if lambda == 1 && choice == 0 {
             let (arg, res) = target.split().ok()?;
 
             self.context.insert(0, arg.clone());
@@ -121,8 +119,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
 
             Some(self.push(LambdaExpr::Lambda(body, arg.clone())))
         } else {
-            let head = choice - usize::from(target.is_function());
-            self.random_application(rng, target, size, head, attempts)
+            self.random_application(rng, target, size, choice - lambda, attempts)
         }
     }
 
