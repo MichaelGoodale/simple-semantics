@@ -375,7 +375,7 @@ impl<T: LambdaLanguageOfThought + Ord> Ord for RootedLambdaPool<'_, T> {
 }
 
 impl<T: LambdaLanguageOfThought + Ord> LambdaExpr<'_, T> {
-    fn ordering(&self) -> usize {
+    const fn ordering(&self) -> usize {
         match self {
             LambdaExpr::Lambda(..) => 0,
             LambdaExpr::BoundVariable(..) => 1,
@@ -605,7 +605,7 @@ impl<'src, T: LambdaLanguageOfThought> RootedLambdaPool<'src, T> {
     }
 
     ///Create a new lambda expression.
-    pub(crate) fn new(pool: LambdaPool<'src, T>, root: LambdaExprRef) -> Self {
+    pub(crate) const fn new(pool: LambdaPool<'src, T>, root: LambdaExprRef) -> Self {
         RootedLambdaPool { pool, root }
     }
 
@@ -695,12 +695,12 @@ impl<'src, T: LambdaLanguageOfThought + Sized> LambdaPool<'src, T> {
 
     #[cfg(test)]
     ///Convert from [`Vec<LambdaExpr<T>>`] to [`LambdaPool`]
-    pub fn from(x: Vec<LambdaExpr<'src, T>>) -> Self {
+    pub const fn from(x: Vec<LambdaExpr<'src, T>>) -> Self {
         LambdaPool(x)
     }
 
     ///Create a new, empty [`LambdaPool`]
-    pub fn new<'c>() -> LambdaPool<'c, T> {
+    pub const fn new<'c>() -> LambdaPool<'c, T> {
         LambdaPool(vec![])
     }
 
@@ -731,7 +731,7 @@ pub(crate) struct LambdaPoolBFSIterator<'a, 'src, T: LambdaLanguageOfThought> {
 }
 
 impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
-    pub(crate) fn n_children(&self) -> usize {
+    pub(crate) const fn n_children(&self) -> usize {
         match self {
             LambdaExpr::BoundVariable(..)
             | LambdaExpr::FreeVariable(..)

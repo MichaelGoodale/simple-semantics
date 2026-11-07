@@ -37,11 +37,11 @@ impl SetCounter {
         }
     }
 
-    pub(super) fn done(&self) -> bool {
+    pub(super) const fn done(&self) -> bool {
         self.done
     }
 
-    pub(super) fn included(&self) -> &InclusionSet {
+    pub(super) const fn included(&self) -> &InclusionSet {
         &self.item
     }
 

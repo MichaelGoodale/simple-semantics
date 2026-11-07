@@ -199,19 +199,19 @@ impl LambdaType {
 
     ///Get the atomic type `a`
     #[must_use]
-    pub fn a() -> &'static Self {
+    pub const fn a() -> &'static Self {
         &LambdaType::A
     }
 
     ///get the atomic type `e`
     #[must_use]
-    pub fn e() -> &'static Self {
+    pub const fn e() -> &'static Self {
         &LambdaType::E
     }
 
     ///Get the atomic type `t`
     #[must_use]
-    pub fn t() -> &'static Self {
+    pub const fn t() -> &'static Self {
         &LambdaType::T
     }
 
@@ -348,7 +348,7 @@ impl LambdaType {
 
     ///The number of elements in this type
     #[must_use]
-    pub fn size(&self) -> usize {
+    pub const fn size(&self) -> usize {
         match self {
             LambdaType::A | LambdaType::E | LambdaType::T => 1,
             LambdaType::Composition(a, b) => a.size() + b.size(),
@@ -365,7 +365,7 @@ impl LambdaType {
     ///
     ///# Errors
     ///Returns a [`TypeError`] if the type is not a function.
-    pub fn split(&self) -> Result<(&LambdaType, &LambdaType), TypeError> {
+    pub const fn split(&self) -> Result<(&LambdaType, &LambdaType), TypeError> {
         match &self {
             LambdaType::Composition(a, b) => Ok((a, b)),
             _ => Err(TypeError::NotAFunction),
@@ -386,7 +386,7 @@ impl LambdaType {
 
     ///Checks that the type is a function.
     #[must_use]
-    pub fn is_function(&self) -> bool {
+    pub const fn is_function(&self) -> bool {
         matches!(&self, LambdaType::Composition(_, _))
     }
 
@@ -394,17 +394,19 @@ impl LambdaType {
     ///
     ///# Errors
     ///Returns a [`TypeError`] if the type is not a function.
-    pub fn lhs(&self) -> Result<&Self, TypeError> {
-        Ok(self.split()?.0)
+    pub const fn lhs(&self) -> Result<&Self, TypeError> {
+        match self {
+            LambdaType::Composition(lhs, _) => Ok(lhs),
+            _ => Err(TypeError::NotAFunction),
+        }
     }
 
     ///Checks if the type takes a primitive type and returns a primitive type
     #[must_use]
-    pub fn is_one_place_function(&self) -> bool {
-        if let Ok((lhs, rhs)) = self.split() {
-            !lhs.is_function() && !rhs.is_function()
-        } else {
-            false
+    pub const fn is_one_place_function(&self) -> bool {
+        match self {
+            LambdaType::Composition(lhs, rhs) => !lhs.is_function() && !rhs.is_function(),
+            _ => false,
         }
     }
 
@@ -412,8 +414,11 @@ impl LambdaType {
     ///
     ///# Errors
     ///Returns a [`TypeError`] if the type is not a function.
-    pub fn rhs(&self) -> Result<&Self, TypeError> {
-        Ok(self.split()?.1)
+    pub const fn rhs(&self) -> Result<&Self, TypeError> {
+        match self {
+            LambdaType::Composition(_, rhs) => Ok(rhs),
+            _ => Err(TypeError::NotAFunction),
+        }
     }
 }
 
