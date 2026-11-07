@@ -2,12 +2,13 @@ use divan::AllocProfiler;
 use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use simple_semantics::{
-    LanguageExpression, ScenarioDataset,
+    ScenarioDataset,
     lambda::{
         RootedLambdaPool,
+        enumerator::Generator,
         types::{LambdaType, TypeParsingError},
     },
-    language::PossibleExpressions,
+    language::Expr,
 };
 
 #[global_allocator]
@@ -18,7 +19,6 @@ fn main() {
     divan::main();
 }
 
-// Register a `fibonacci` function and benchmark it over multiple cases.
 #[divan::bench(args = ["a", "<a,t>", "<<a,<t,t>>"])]
 fn parsing(s: &str) -> Result<LambdaType, TypeParsingError> {
     LambdaType::from_string(s)
@@ -53,59 +53,44 @@ fn random_types() {
     }
 }
 
-#[divan::bench]
-fn random(bencher: divan::Bencher) {
-    let actors = &["1", "2", "3", "4", "5"];
-    let actor_properties = &["1", "2", "3", "4", "5"];
-    let event_properties = &["1", "2", "3", "4", "5"];
-    let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
+fn expressions_bencher(bencher: divan::Bencher, t: LambdaType, max_size: usize) {
+    let scenario = simple_semantics::Scenario::parse(
+        "<John, Mary, Susan, Phil, Sue (man);{A: John,P: Mary (likes)},{A: Mary,P: Susan (likes)},{A: Susan,P: Phil (likes)},{A: Phil,P: Sue (likes)}>",
+    )
+    .unwrap();
+    let mut expressions = scenario.scenario_ops();
+    expressions.extend(Expr::basic_ops().iter().cloned());
 
     bencher.bench(|| {
-        let mut rng = ChaCha8Rng::seed_from_u64(34);
-        let t = LambdaType::random(&mut rng);
-        RootedLambdaPool::random_expr(&t, &poss, &mut rng)
+        let mut generator: Generator<Expr> = Generator::new(expressions.clone(), vec![]);
+        generator.enumerate_or_generate(t.clone(), max_size);
+        generator.enumerate(&t, max_size).unwrap().len()
     });
 }
 
 #[divan::bench]
 fn enumerate(bencher: divan::Bencher) {
-    let actors = &["1", "2", "3", "4", "5"];
-    let actor_properties = &["1", "2", "3", "4", "5"];
-    let event_properties = &["1", "2", "3", "4", "5"];
-
-    let t = LambdaType::from_string("<a,<a,t>>").unwrap();
-    bencher.bench(|| {
-        let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
-        RootedLambdaPool::enumerator(&t, &poss).take(10_000).count()
-    });
+    expressions_bencher(bencher, LambdaType::T, 5);
 }
 
 #[divan::bench]
 fn alt_enumerate(bencher: divan::Bencher) {
-    let actors = &["1", "2", "3", "4", "5"];
-    let actor_properties = &["1", "2", "3", "4", "5"];
-    let event_properties = &["1", "2", "3", "4", "5"];
-
-    let t = LambdaType::from_string("<a,<a,t>>").unwrap();
-    bencher.bench(|| {
-        let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
-        poss.enumerator(&t, 8).count()
-    });
+    expressions_bencher(bencher, LambdaType::from_string("<a,<a,t>>").unwrap(), 5);
 }
 
-#[divan::bench(args = ["every_e(x,pe_dance,AgentOf(a_Phil,x))",
-"every_e(x,pe_dance,AgentOf(a_Mary,x))",
-"(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))"])]
+#[divan::bench(args = ["every_e(x,pe_dance(x),AgentOf(a_Phil,x))",
+"every_e(x,pe_dance(x),AgentOf(a_Mary,x))",
+"(every_e(x,pe_dance(x),AgentOf(a_Phil,x)))&~(every_e(x,pe_dance(x),AgentOf(a_Mary,x)))"])]
 fn to_string(bencher: divan::Bencher, s: &str) {
-    let a = LanguageExpression::parse(s).unwrap();
+    let a: RootedLambdaPool<Expr> = RootedLambdaPool::parse(s).unwrap();
     bencher.bench(|| a.to_string());
 }
 
-#[divan::bench(args = ["lambda a z (every_e(x,pe_dance,AgentOf(z,x)))",
-"lambda <a,<e,t>> P (every_e(x,pe_dance, (P(a_Mary))(x)))",
-"lambda a r ((every_e(x,pe_dance,AgentOf(r,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x))))"])]
+#[divan::bench(args = ["lambda a z (every_e(x,pe_dance(x),AgentOf(z,x)))",
+"lambda <a,t> P (P(a_Mary) & ~P(a_Phil))",
+"lambda a r ((every_e(x,pe_dance(x),AgentOf(r,x)))&~(every_e(x,pe_dance(x),AgentOf(a_Mary,x))))"])]
 fn lambda_string(bencher: divan::Bencher, s: &str) {
-    let a = RootedLambdaPool::parse(s).unwrap();
+    let a: RootedLambdaPool<Expr> = RootedLambdaPool::parse(s).unwrap();
     bencher.bench(|| a.to_string());
 }
 
@@ -115,29 +100,32 @@ fn scenarios(bencher: divan::Bencher) {
 
     let labels = ScenarioDataset::parse(scenario).unwrap();
 
-    let a = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Phil,x))").unwrap();
-    let b = LanguageExpression::parse("every_e(x,pe_dance,AgentOf(a_Mary,x))").unwrap();
-    let c = LanguageExpression::parse(
-        "(every_e(x,pe_dance,AgentOf(a_Phil,x)))&~(every_e(x,pe_dance,AgentOf(a_Mary,x)))",
+    let a: RootedLambdaPool<Expr> =
+        RootedLambdaPool::parse("every_e(x,pe_dance(x),AgentOf(a_Phil,x))").unwrap();
+    let b: RootedLambdaPool<Expr> =
+        RootedLambdaPool::parse("every_e(x,pe_dance(x),AgentOf(a_Mary,x))").unwrap();
+    let c: RootedLambdaPool<Expr> = RootedLambdaPool::parse(
+        "(every_e(x,pe_dance(x),AgentOf(a_Phil,x)))&~(every_e(x,pe_dance(x),AgentOf(a_Mary,x)))",
     )
     .unwrap();
     let scenario = labels.iter_scenarios().next().unwrap();
     bencher.bench(|| {
-        a.run(scenario, None).unwrap();
-        b.run(scenario, None).unwrap();
-        c.run(scenario, None).unwrap();
+        a.interp(scenario).unwrap();
+        b.interp(scenario).unwrap();
+        c.interp(scenario).unwrap();
     });
 }
 
 #[divan::bench]
 fn reduction(bencher: divan::Bencher) {
     let t_to_t = [
-        "lambda t phi ~(phi | pa_woman(a_Phil) | (some_e(x, pe_laughs, pe_likes(x)) & ~some(x, pa_woman, phi))) | pa_woman(a_Mary) | every_e(x, pe_likes, pe_runs(x)) | pa_man(a_Mary) | pa_woman(a_Sue) | every(x, lambda a y phi, pa_man(a_Phil) & ~pa_woman(x) & some(y, all_a, phi | (some_e(z, pe_runs, PatientOf(a_John, z)) & (~pa_man(a_Sue) | ~pa_man(y)))))",
-        "lambda t phi every_e(x, pe_sleeps, pe_sleeps(x) & (pa_woman(a_John) | pe_likes(x)))",
-        "lambda t phi ~some(x, all_a, ~some_e(y, pe_loves, PatientOf(x, y)) & (~every_e(y, pe_helps, phi) | some(y, pa_man, ~~pa_woman(x)))) | some_e(x, all_e, pe_runs(x))",
+        "lambda t phi ~(phi | pa_woman(a_Phil) | (some_e(x, pe_laughs(x), pe_likes(x)) & ~some(x, pa_woman(x), phi))) | pa_woman(a_Mary) | every_e(x, pe_likes(x), pe_runs(x)) | pa_man(a_Mary) | pa_woman(a_Sue) | every(x, all_a(x), pa_man(a_Phil) & ~pa_woman(x) & some(y, all_a(y), phi | (some_e(z, pe_runs(z), PatientOf(a_John, z)) & (~pa_man(a_Sue) | ~pa_man(y)))))",
+        "lambda t phi every_e(x, pe_sleeps(x), pe_sleeps(x) & (pa_woman(a_John) | pe_likes(x)))",
+        "lambda t phi ~some(x, all_a(x), ~some_e(y, pe_loves(y), PatientOf(x, y)) & (~every_e(y, pe_helps(y), phi) | some(y, pa_man(y), ~~pa_woman(x)))) | some_e(x, all_e(x), pe_runs(x))",
     ]
-    .map(|s| RootedLambdaPool::parse(s).unwrap());
-    let t = RootedLambdaPool::parse("every_e(x, pe_runs, pe_laughs(x) & pa_woman(a_Sue))").unwrap();
+    .map(|s| RootedLambdaPool::<Expr>::parse(s).unwrap());
+    let t: RootedLambdaPool<Expr> =
+        RootedLambdaPool::parse("every_e(x, pe_runs(x), pe_laughs(x) & pa_woman(a_Sue))").unwrap();
 
     bencher.bench(|| {
         let mut t = t.clone();
@@ -150,11 +138,18 @@ fn reduction(bencher: divan::Bencher) {
 
 #[divan::bench]
 fn ordering(bencher: divan::Bencher) {
-    let actors = &["1", "2"];
-    let actor_properties = &["1", "2"];
-    let event_properties = &["1", "2"];
-    let poss = PossibleExpressions::new(actors, actor_properties, event_properties);
-    let pools = poss.enumerator(&LambdaType::T, 5).collect::<Vec<_>>();
+    let scenario = simple_semantics::Scenario::parse(
+        "<John, Mary (man);{A: John,P: Mary (likes)},{A: Mary,P: John (likes)}>",
+    )
+    .unwrap();
+    let mut expressions = scenario.scenario_ops();
+    expressions.extend(Expr::basic_ops().iter().cloned());
+    let mut generator: Generator<Expr> = Generator::new(expressions, vec![]);
+    let pools = generator
+        .enumerate_or_generate(LambdaType::T, 5)
+        .into_iter()
+        .map(|x| generator.to_rooted_lambda_pool(x).unwrap())
+        .collect::<Vec<_>>();
     let mut rng = ChaCha8Rng::seed_from_u64(32);
     let comparisons = (0..1000)
         .map(|_| {
