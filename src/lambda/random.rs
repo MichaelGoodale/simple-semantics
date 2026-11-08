@@ -123,12 +123,12 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             self.context.remove(0);
             let body = body.ok()?;
 
+            let lambda = self.pool.add(LambdaExpr::Lambda(body, arg.clone()));
             //The bound variable must be used and the body must not be an eta redex.
-            if !self.pool.uses_bvar(body) || self.pool.is_eta_opportunity(body) {
+            if !self.pool.uses_bvar(body) || self.pool.is_eta_opportunity(lambda) {
                 return None;
             }
-
-            Some(self.pool.add(LambdaExpr::Lambda(body, arg.clone())))
+            Some(lambda)
         } else {
             self.random_application(rng, target, size, choice, attempts)
         }
@@ -141,7 +141,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             None
         } else {
             let head = rng.random_range(0..count);
-            Some(self.pool.add(self.head_expr(head)))
+            Some(
+                self.pool
+                    .add(self.head_expr(self.nth_possible_head(head, typ, 0).unwrap())),
+            )
         }
     }
 
@@ -154,9 +157,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         attempts: usize,
     ) -> Option<LambdaExprRef> {
         //Find the `head`-th head with an argument chain to `target`.
-        let head = (0..self.n_heads())
-            .filter(|&i| n_apps_until_type(self.head_type(i), target, size - 1).is_some())
-            .nth(head)?;
+        let head = self.nth_possible_head(head, target, size - 1)?;
         let args = n_apps_until_type(self.head_type(head), target, size - 1)?;
         if args == 0 {
             return None;
@@ -195,6 +196,12 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         (0..self.n_heads())
             .filter(|&i| n_apps_until_type(self.head_type(i), target, max_len).is_some())
             .count()
+    }
+
+    fn nth_possible_head(&self, head: usize, target: &LambdaType, max_len: usize) -> Option<usize> {
+        (0..self.n_heads())
+            .filter(|&i| n_apps_until_type(self.head_type(i), target, max_len).is_some())
+            .nth(head)
     }
 
     fn head_type(&self, i: usize) -> &LambdaType {
