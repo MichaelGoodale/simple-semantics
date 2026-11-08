@@ -10,35 +10,63 @@ use crate::lambda::{
 
 ///Errors that arise from sampling with [`RootedLambdaPool::random_exact`] and
 ///[`RootedLambdaPool::random_up_to`]
-#[derive(Debug, Clone, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SamplingError {
-    ///No expression of the target type can be constructed from the given base expressions.
-    #[error("No expression of type {typ} can be generated from the given base expressions")]
-    NotConstructible {
-        ///The type which could not be constructed.
-        typ: LambdaType,
+    ///No expression of type typ (or any type) with size <= max_size
+    CantFindInSizeUpTo {
+        ///The type which could not be constructed (none if no provided type).
+        typ: Option<LambdaType>,
+        ///The biggest possible size
+        max_size: usize,
     },
-    ///No expression of the target type of the given size can be constructed from the given base
-    ///expressions.
-    #[error(
-        "No expression of type {typ} of size {size} can be generated from the given base expressions"
-    )]
-    SizeNotConstructible {
-        ///The type which could not be constructed.
-        typ: LambdaType,
-        ///The size which could not be constructed.
+    ///No expression of type typ (or any type) with size = max_size
+    CantFindOfSize {
+        ///The type which could not be constructed (none if no provided type).
+        typ: Option<LambdaType>,
+        ///The size that no expression for could be found
         size: usize,
     },
-    ///No base expressions or free variables were given to generate from.
-    #[error("No base expressions or free variables to generate expressions from")]
+    ///Can't generate anything because there are no expressions
     NoBaseExpressions,
+}
+
+impl std::fmt::Display for SamplingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SamplingError::CantFindInSizeUpTo {
+                typ: Some(typ),
+                max_size,
+            } => write!(
+                f,
+                "Cannot find any expression of type {typ} of size {max_size} or less"
+            ),
+            SamplingError::CantFindInSizeUpTo {
+                typ: None,
+                max_size,
+            } => write!(f, "Cannot find any expression of size {max_size} or less"),
+            SamplingError::CantFindOfSize {
+                typ: Some(typ),
+                size,
+            } => write!(
+                f,
+                "Cannot find any expression of type {typ} with size of {size}"
+            ),
+            SamplingError::CantFindOfSize { typ: None, size } => {
+                write!(f, "Cannot find any expression with size of {size}")
+            }
+            SamplingError::NoBaseExpressions => write!(
+                f,
+                "You need to provide base expressions, otherwise there is nothing to sample"
+            ),
+        }
+    }
 }
 
 const GENERATION_ATTEMPTS: usize = 256;
 
 ///The state of a single random descent.
-struct RandomExprBuilder<'src, 'a, T> {
-    pool: Vec<LambdaExpr<'src, T>>,
+struct RandomExprBuilder<'src, 'a, T: LambdaLanguageOfThought> {
+    pool: LambdaPool<'src, T>,
     ///The types of the bound variables in scope, indexed by De Bruijn index.
     context: Vec<LambdaType>,
     ///The usable base expressions and free variables, with their types.
@@ -57,13 +85,14 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         attempts: usize,
     ) -> Result<LambdaExprRef, ()> {
         for _ in 0..attempts {
-            let mark = self.pool.len();
+            let mark = self.pool.0.len();
 
             if let Some(r) = self.try_generate(rng, target, size, attempts) {
                 return Ok(r);
             }
 
-            self.pool.truncate(mark);
+            //undo anything that was added
+            self.pool.0.truncate(mark);
         }
 
         Err(())
@@ -86,14 +115,14 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
 
         //The choices are a lambda (if the target is a function type) or one of the heads that
         //can be applied to reach the target.
-        let lambda = usize::from(target.is_function());
-        let count = lambda + self.app_head_count(target, size - 1);
+        let count =
+            self.n_possible_heads(target, size - 1) + if target.is_function() { 1 } else { 0 };
         if count == 0 {
             return None;
         }
         let choice = rng.random_range(0..count);
 
-        if lambda == 1 && choice == 0 {
+        if target.is_function() && choice == count - 1 {
             let (arg, res) = target.split().ok()?;
 
             self.context.insert(0, arg.clone());
@@ -106,16 +135,16 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
                 return None;
             }
 
-            Some(self.push(LambdaExpr::Lambda(body, arg.clone())))
+            Some(self.pool.add(LambdaExpr::Lambda(body, arg.clone())))
         } else {
-            self.random_application(rng, target, size, choice - lambda, attempts)
+            self.random_application(rng, target, size, choice, attempts)
         }
     }
 
     ///Pushes a random leaf (base expression, free variable or bound variable) of type `typ`.
     fn random_leaf(&mut self, rng: &mut impl Rng, typ: &LambdaType) -> Option<LambdaExprRef> {
-        let head = random_index(rng, self.head_count(), |i| self.head_type(i) == typ)?;
-        Some(self.push(self.head_expr(head)))
+        let head = random_index(rng, self.n_heads(), |i| self.head_type(i) == typ)?;
+        Some(self.pool.add(self.head_expr(head)))
     }
 
     ///Pushes the `head`-th applicable head (of those that can be applied to reach `target`)
@@ -129,13 +158,13 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         attempts: usize,
     ) -> Option<LambdaExprRef> {
         //Find the `head`-th head with an argument chain to `target`.
-        let head = (0..self.head_count())
-            .filter(|&i| chain_len(self.head_type(i), target, size - 1).is_some())
+        let head = (0..self.n_heads())
+            .filter(|&i| n_applications_from_type(self.head_type(i), target, size - 1).is_some())
             .nth(head)?;
-        let args = chain_len(self.head_type(head), target, size - 1)?;
+        let args = n_applications_from_type(self.head_type(head), target, size - 1)?;
 
         let head_type = self.head_type(head).clone();
-        let mut cur = self.push(self.head_expr(head));
+        let mut cur = self.pool.add(self.head_expr(head));
         let mut typ = &head_type;
 
         for s in split_size(rng, size - 1, args)? {
@@ -148,7 +177,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
                 return None;
             }
 
-            cur = self.push(LambdaExpr::Application {
+            cur = self.pool.add(LambdaExpr::Application {
                 subformula: cur,
                 argument,
             });
@@ -158,24 +187,15 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         Some(cur)
     }
 
-    fn push(&mut self, expr: LambdaExpr<'src, T>) -> LambdaExprRef {
-        self.pool.push(expr);
-        LambdaExprRef(u32::try_from(self.pool.len() - 1).unwrap())
-    }
-
-    fn get(&self, r: LambdaExprRef) -> &LambdaExpr<'src, T> {
-        &self.pool[usize::try_from(r.0).unwrap()]
-    }
-
-    ///The total number of heads: leaves plus bound variables in scope.
-    fn head_count(&self) -> usize {
+    ///Number of possible base expressions at this point
+    fn n_heads(&self) -> usize {
         self.leaves.len() + self.context.len()
     }
 
     ///The number of heads that can be applied to (at most `max_len`) arguments to reach `target`.
-    fn app_head_count(&self, target: &LambdaType, max_len: usize) -> usize {
-        (0..self.head_count())
-            .filter(|&i| chain_len(self.head_type(i), target, max_len).is_some())
+    fn n_possible_heads(&self, target: &LambdaType, max_len: usize) -> usize {
+        (0..self.n_heads())
+            .filter(|&i| n_applications_from_type(self.head_type(i), target, max_len).is_some())
             .count()
     }
 
@@ -202,7 +222,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     fn uses_bvar(&self, root: LambdaExprRef, idx: usize) -> bool {
         let mut stack = vec![root];
         while let Some(r) = stack.pop() {
-            match self.get(r) {
+            match self.pool.get(r) {
                 LambdaExpr::BoundVariable(x, _) if *x == idx => return true,
                 expr => stack.extend(expr.get_children()),
             }
@@ -216,19 +236,19 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         let LambdaExpr::Application {
             subformula,
             argument,
-        } = self.get(body)
+        } = self.pool.get(body)
         else {
             return false;
         };
 
-        matches!(self.get(*argument), LambdaExpr::BoundVariable(0, _))
+        matches!(self.pool.get(*argument), LambdaExpr::BoundVariable(0, _))
             && !self.uses_bvar(*subformula, 0)
     }
 
     ///Checks if `f` is an involutory expression applied to an application of itself, e.g.
     ///`!(!p)`, which can be simplified.
     fn is_involutory(&self, f: LambdaExprRef, x: LambdaExprRef) -> bool {
-        let LambdaExpr::LanguageOfThoughtExpr(outer, _) = self.get(f) else {
+        let LambdaExpr::LanguageOfThoughtExpr(outer, _) = self.pool.get(f) else {
             return false;
         };
 
@@ -236,19 +256,23 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             return false;
         }
 
-        let LambdaExpr::Application { subformula, .. } = self.get(x) else {
+        let LambdaExpr::Application { subformula, .. } = self.pool.get(x) else {
             return false;
         };
 
         matches!(
-            self.get(*subformula),
+            self.pool.get(*subformula),
             LambdaExpr::LanguageOfThoughtExpr(inner, _) if inner == outer
         )
     }
 }
 
 ///The number of arguments `typ` can be applied to (at most `max_len`) to result in `target`.
-fn chain_len(typ: &LambdaType, target: &LambdaType, max_len: usize) -> Option<usize> {
+fn n_applications_from_type(
+    typ: &LambdaType,
+    target: &LambdaType,
+    max_len: usize,
+) -> Option<usize> {
     let mut len = 0;
     let mut cur = typ;
     while let Ok((_, r)) = cur.split() {
@@ -296,7 +320,7 @@ fn random_index(rng: &mut impl Rng, n: usize, f: impl Fn(usize) -> bool) -> Opti
 fn mk_leaves<'src, T: LambdaLanguageOfThought + Clone>(
     base_expressions: &[T],
     free_var: &[(FreeVar<'src>, LambdaType)],
-) -> Vec<LambdaExpr<'src, T>> {
+) -> Result<Vec<LambdaExpr<'src, T>>, SamplingError> {
     let mut leaves: Vec<_> = base_expressions
         .iter()
         .map(|x| LambdaExpr::LanguageOfThoughtExpr(x.clone(), ExprType::NoVar))
@@ -308,10 +332,13 @@ fn mk_leaves<'src, T: LambdaLanguageOfThought + Clone>(
             .map(|(f, t)| LambdaExpr::FreeVariable(*f, t.clone())),
     );
 
-    leaves
+    if leaves.is_empty() {
+        Err(SamplingError::NoBaseExpressions)
+    } else {
+        Ok(leaves)
+    }
 }
 
-///Runs a single random descent, returning [`None`] if it fails.
 fn generate_pool<'src, T: LambdaLanguageOfThought + Clone + PartialEq>(
     rng: &mut impl Rng,
     typ: &LambdaType,
@@ -319,7 +346,7 @@ fn generate_pool<'src, T: LambdaLanguageOfThought + Clone + PartialEq>(
     leaves: &[LambdaExpr<'src, T>],
 ) -> Option<RootedLambdaPool<'src, T>> {
     let mut builder = RandomExprBuilder {
-        pool: vec![],
+        pool: LambdaPool(vec![]),
         context: vec![],
         leaves,
     };
@@ -328,22 +355,19 @@ fn generate_pool<'src, T: LambdaLanguageOfThought + Clone + PartialEq>(
         .generate(rng, typ, size, GENERATION_ATTEMPTS)
         .ok()
         .map(|root| RootedLambdaPool {
-            pool: LambdaPool(builder.pool),
+            pool: builder.pool,
             root,
         })
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src, T> {
-    ///Randomly generates an expression of type `target` with an [`RootedLambdaPool::appless_len`]
-    ///of exactly `size`.
+    ///Randomly generate an expression with a length of `size` (length measured with
+    ///[`RootedLambdaPool::appless_len`]
     ///
-    ///If `target` is [`None`], a type is chosen at random from the types of the base expressions
-    ///and free variables. The expression is guaranteed to be fully reduced (see
-    ///[`RootedLambdaPool::is_reduced`]).
+    ///If no `target` type is passed, it will randomly sample a typ.
     ///
     ///# Errors
-    ///Returns a [`RandomError`] if no expression of the target type and size can be constructed
-    ///from the given base expressions and free variables.
+    ///Returns a [`RandomError`] if no expression be found under these parameters
     pub fn random_exact(
         target: Option<LambdaType>,
         size: usize,
@@ -351,26 +375,31 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
         free_var: &[(FreeVar<'src>, LambdaType)],
         rng: &mut impl Rng,
     ) -> Result<Self, SamplingError> {
-        let leaves = mk_leaves(base_expressions, free_var);
-        let typ = match target {
-            Some(x) => x,
-            None => todo!("implement random sampler for types"),
-        };
+        let leaves = mk_leaves(base_expressions, free_var)?;
+        let no_target = target.is_none();
+        let typ = target.unwrap_or_else(|| LambdaType::random(rng));
 
-        generate_pool(rng, &typ, size, &leaves)
-            .ok_or(SamplingError::SizeNotConstructible { typ, size })
+        let mut sol = generate_pool(rng, &typ, size, &leaves);
+
+        let mut t = 0;
+        while no_target && sol.is_none() && t < GENERATION_ATTEMPTS {
+            let typ = LambdaType::random(rng);
+            sol = generate_pool(rng, &typ, size, &leaves);
+            t += 1;
+        }
+        sol.ok_or(SamplingError::CantFindOfSize {
+            typ: if no_target { None } else { Some(typ) },
+            size,
+        })
     }
 
-    ///Randomly generates an expression of type `target` with an [`RootedLambdaPool::appless_len`]
-    ///of at most `max_size`, roughly uniformly distributed over the achievable sizes.
+    ///Randomly generate an expression with a length from 1 to `max_size` (length measured with
+    ///[`RootedLambdaPool::appless_len`]
     ///
-    ///If `target` is [`None`], a type is chosen at random from the types of the base expressions
-    ///and free variables. The expression is guaranteed to be fully reduced (see
-    ///[`RootedLambdaPool::is_reduced`]).
+    ///If no `target` type is passed, it will randomly sample a typ.
     ///
     ///# Errors
-    ///Returns a [`RandomError`] if no expression of the target type can be constructed from the
-    ///given base expressions and free variables.
+    ///Returns a [`RandomError`] if no expression be found under these parameters
     pub fn random_up_to(
         target: Option<LambdaType>,
         max_size: usize,
@@ -378,19 +407,29 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
         free_var: &[(FreeVar<'src>, LambdaType)],
         rng: &mut impl Rng,
     ) -> Result<Self, SamplingError> {
-        let leaves = mk_leaves(base_expressions, free_var);
-        let typ = match target {
-            Some(x) => x,
-            None => todo!("implement random sampler for types"),
-        };
+        let leaves = mk_leaves(base_expressions, free_var)?;
+        let no_target = target.is_none();
+        let typ = target.unwrap_or_else(|| LambdaType::random(rng));
 
         let mut sizes: Vec<usize> = (1..=max_size).collect();
         sizes.shuffle(rng);
 
-        sizes
+        let mut sol = sizes
             .iter()
-            .find_map(|&size| generate_pool(rng, &typ, size, &leaves))
-            .ok_or(SamplingError::NotConstructible { typ })
+            .find_map(|&size| generate_pool(rng, &typ, size, &leaves));
+        let mut t = 0;
+        while no_target && sol.is_none() && t < GENERATION_ATTEMPTS {
+            let typ = LambdaType::random(rng);
+            sol = sizes
+                .iter()
+                .find_map(|&size| generate_pool(rng, &typ, size, &leaves));
+            t += 1;
+        }
+
+        sol.ok_or(SamplingError::CantFindInSizeUpTo {
+            typ: if no_target { None } else { Some(typ) },
+            max_size,
+        })
     }
 }
 
@@ -439,8 +478,8 @@ mod test {
         .unwrap_err();
         assert_eq!(
             err,
-            SamplingError::SizeNotConstructible {
-                typ: LambdaType::T,
+            SamplingError::CantFindOfSize {
+                typ: Some(LambdaType::T),
                 size: 1
             }
         );
@@ -519,8 +558,8 @@ mod test {
 
         assert_eq!(
             err,
-            SamplingError::SizeNotConstructible {
-                typ: LambdaType::E,
+            SamplingError::CantFindOfSize {
+                typ: Some(LambdaType::E),
                 size: 1
             }
         );
