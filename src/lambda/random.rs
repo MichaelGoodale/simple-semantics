@@ -64,19 +64,14 @@ impl std::fmt::Display for SamplingError {
 
 const GENERATION_ATTEMPTS: usize = 256;
 
-///The state of a single random descent.
 struct RandomExprBuilder<'src, 'a, T: LambdaLanguageOfThought> {
     pool: LambdaPool<'src, T>,
-    ///The types of the bound variables in scope, indexed by De Bruijn index.
     context: Vec<LambdaType>,
-    ///The usable base expressions and free variables, with their types.
     leaves: &'a [LambdaExpr<'src, T>],
 }
 
 impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'src, '_, T> {
-    ///Randomly generates an expression of exactly `size` (in the [`RootedLambdaPool::appless_len`]
-    ///sense) of type `target`. Failed attempts are rolled back and retried with fresh random
-    ///choices, up to `attempts` times.
+    ///Attempt to generate an expression with roll-back to re-attempt if there is a failure.
     fn generate(
         &mut self,
         rng: &mut impl Rng,
@@ -98,7 +93,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         Err(())
     }
 
-    ///A single attempt: randomly picks what kind of node to build and builds it, recursing.
     fn try_generate(
         &mut self,
         rng: &mut impl Rng,
@@ -110,11 +104,10 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             return None;
         }
         if size == 1 {
-            return self.random_leaf(rng, target);
+            return self.random_expression(rng, target);
         }
 
-        //The choices are a lambda (if the target is a function type) or one of the heads that
-        //can be applied to reach the target.
+        //Add lambda as an option if we can.
         let count =
             self.n_possible_heads(target, size - 1) + if target.is_function() { 1 } else { 0 };
         if count == 0 {
@@ -131,7 +124,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             let body = body.ok()?;
 
             //The bound variable must be used and the body must not be an eta redex.
-            if !self.uses_bvar(body, 0) || self.is_eta_redex(body) {
+            if !self.pool.uses_bvar(body) || self.pool.is_eta_opportunity(body) {
                 return None;
             }
 
@@ -142,13 +135,16 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     }
 
     ///Pushes a random leaf (base expression, free variable or bound variable) of type `typ`.
-    fn random_leaf(&mut self, rng: &mut impl Rng, typ: &LambdaType) -> Option<LambdaExprRef> {
-        let head = random_index(rng, self.n_heads(), |i| self.head_type(i) == typ)?;
-        Some(self.pool.add(self.head_expr(head)))
+    fn random_expression(&mut self, rng: &mut impl Rng, typ: &LambdaType) -> Option<LambdaExprRef> {
+        let count = self.n_possible_heads(typ, 0);
+        if count == 0 {
+            None
+        } else {
+            let head = rng.random_range(0..count);
+            Some(self.pool.add(self.head_expr(head)))
+        }
     }
 
-    ///Pushes the `head`-th applicable head (of those that can be applied to reach `target`)
-    ///applied to randomly generated arguments.
     fn random_application(
         &mut self,
         rng: &mut impl Rng,
@@ -159,13 +155,15 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     ) -> Option<LambdaExprRef> {
         //Find the `head`-th head with an argument chain to `target`.
         let head = (0..self.n_heads())
-            .filter(|&i| n_applications_from_type(self.head_type(i), target, size - 1).is_some())
+            .filter(|&i| n_apps_until_type(self.head_type(i), target, size - 1).is_some())
             .nth(head)?;
-        let args = n_applications_from_type(self.head_type(head), target, size - 1)?;
+        let args = n_apps_until_type(self.head_type(head), target, size - 1)?;
+        if args == 0 {
+            return None;
+        }
 
-        let head_type = self.head_type(head).clone();
         let mut cur = self.pool.add(self.head_expr(head));
-        let mut typ = &head_type;
+        let mut typ = &self.head_type(head).clone();
 
         for s in split_size(rng, size - 1, args)? {
             let (arg_typ, rest) = typ.split().ok()?;
@@ -173,7 +171,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             let argument = self
                 .generate(rng, arg_typ, s, child_attempts(attempts))
                 .ok()?;
-            if self.is_involutory(cur, argument) {
+            if self.is_involutory_repetition(cur, argument) {
                 return None;
             }
 
@@ -192,14 +190,13 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         self.leaves.len() + self.context.len()
     }
 
-    ///The number of heads that can be applied to (at most `max_len`) arguments to reach `target`.
+    ///How many heads are or can be turned into something of type t with at most max_len applications
     fn n_possible_heads(&self, target: &LambdaType, max_len: usize) -> usize {
         (0..self.n_heads())
-            .filter(|&i| n_applications_from_type(self.head_type(i), target, max_len).is_some())
+            .filter(|&i| n_apps_until_type(self.head_type(i), target, max_len).is_some())
             .count()
     }
 
-    ///The type of the `i`-th head.
     fn head_type(&self, i: usize) -> &LambdaType {
         self.leaves
             .get(i)
@@ -207,7 +204,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             .unwrap_or_else(|| &self.context[i - self.leaves.len()])
     }
 
-    ///A clone of the expression of the `i`-th head.
     fn head_expr(&self, i: usize) -> LambdaExpr<'src, T> {
         match self.leaves.get(i) {
             Some(x) => x.clone(),
@@ -218,36 +214,9 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         }
     }
 
-    ///Checks if the subtree rooted at `root` uses the bound variable with De Bruijn index `idx`.
-    fn uses_bvar(&self, root: LambdaExprRef, idx: usize) -> bool {
-        let mut stack = vec![root];
-        while let Some(r) = stack.pop() {
-            match self.pool.get(r) {
-                LambdaExpr::BoundVariable(x, _) if *x == idx => return true,
-                expr => stack.extend(expr.get_children()),
-            }
-        }
-        false
-    }
-
-    ///Checks if `body` (a lambda's body) is the site of an eta reduction, i.e. it applies a
-    ///subformula that doesn't use the bound variable to that variable.
-    fn is_eta_redex(&self, body: LambdaExprRef) -> bool {
-        let LambdaExpr::Application {
-            subformula,
-            argument,
-        } = self.pool.get(body)
-        else {
-            return false;
-        };
-
-        matches!(self.pool.get(*argument), LambdaExpr::BoundVariable(0, _))
-            && !self.uses_bvar(*subformula, 0)
-    }
-
     ///Checks if `f` is an involutory expression applied to an application of itself, e.g.
     ///`!(!p)`, which can be simplified.
-    fn is_involutory(&self, f: LambdaExprRef, x: LambdaExprRef) -> bool {
+    fn is_involutory_repetition(&self, f: LambdaExprRef, x: LambdaExprRef) -> bool {
         let LambdaExpr::LanguageOfThoughtExpr(outer, _) = self.pool.get(f) else {
             return false;
         };
@@ -268,13 +237,13 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
 }
 
 ///The number of arguments `typ` can be applied to (at most `max_len`) to result in `target`.
-fn n_applications_from_type(
-    typ: &LambdaType,
-    target: &LambdaType,
-    max_len: usize,
-) -> Option<usize> {
+fn n_apps_until_type(typ: &LambdaType, target: &LambdaType, max_len: usize) -> Option<usize> {
+    if typ == target {
+        return Some(0);
+    }
     let mut len = 0;
     let mut cur = typ;
+
     while let Ok((_, r)) = cur.split() {
         len += 1;
         if len > max_len {
@@ -302,19 +271,8 @@ fn split_size(rng: &mut impl Rng, total: usize, parts: usize) -> Option<Vec<usiz
     Some(sizes)
 }
 
-///How many attempts a child node gets, given the attempts of its parent.
 fn child_attempts(attempts: usize) -> usize {
     (attempts / 8).max(1)
-}
-
-///Picks a random index `0..n` satisfying `f`, or [`None`] if there are none.
-fn random_index(rng: &mut impl Rng, n: usize, f: impl Fn(usize) -> bool) -> Option<usize> {
-    let count = (0..n).filter(|&i| f(i)).count();
-    if count == 0 {
-        return None;
-    }
-
-    (0..n).filter(|&i| f(i)).nth(rng.random_range(0..count))
 }
 
 fn mk_leaves<'src, T: LambdaLanguageOfThought + Clone>(

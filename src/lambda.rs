@@ -991,10 +991,13 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
             return false;
         }
 
-        let uses_variable_in_body = self
-            .bfs_from(*subformula)
-            .any(|(x, d)| matches!(self.get(x), LambdaExpr::BoundVariable(v, _) if *v==d ));
-        !uses_variable_in_body
+        !self.uses_bvar(*subformula)
+    }
+
+    ///Check whether the most recently bound variable is ever used.
+    fn uses_bvar(&self, x: LambdaExprRef) -> bool {
+        self.bfs_from(x)
+            .any(|(x, d)| matches!(self.get(x), LambdaExpr::BoundVariable(v, _) if *v==d ))
     }
 }
 
