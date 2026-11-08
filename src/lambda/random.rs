@@ -405,7 +405,7 @@ mod test {
 
     use crate::{
         lambda::{
-            Literal,
+            LambdaExpr, Literal,
             types::LambdaType,
             {FreeVar, RootedLambdaPool},
         },
@@ -533,6 +533,67 @@ mod test {
             .unwrap_err();
         assert_eq!(err, SamplingError::NoBaseExpressions);
 
+        Ok(())
+    }
+
+    ///Guards against picking a leaf by an index into the full head list rather than the matching
+    ///heads: `pa`/`all_a` (the only `<a,t>` leaves) are not at the front of the base list, so a
+    ///wrongly indexed pick would return an expression of the wrong type.
+    #[test]
+    fn test_leaf_types() -> anyhow::Result<()> {
+        let mut rng = ChaCha8Rng::seed_from_u64(4);
+
+        for _ in 0..50 {
+            let expr = RootedLambdaPool::<Expr<'static>>::random_exact(
+                Some(LambdaType::at().clone()),
+                1,
+                &base_expressions(),
+                &[],
+                &mut rng,
+            )?;
+            assert_eq!(expr.get_type()?, *LambdaType::at());
+            assert_eq!(expr.appless_len(), 1);
+        }
+
+        Ok(())
+    }
+
+    ///Guards against bound variables being unreachable as leaves (which would make every lambda
+    ///body fail to use its binder and so reject all lambdas), and against eta redexes sneaking
+    ///through the check.
+    #[test]
+    fn test_lambdas() -> anyhow::Result<()> {
+        let mut rng = ChaCha8Rng::seed_from_u64(5);
+        let (mut generated, mut lambdas) = (0, 0);
+
+        for _ in 0..100 {
+            let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
+                Some(LambdaType::at().clone()),
+                4,
+                &base_expressions(),
+                &[],
+                &mut rng,
+            ) else {
+                continue;
+            };
+
+            assert!(expr.is_reduced(), "{expr} is not fully reduced");
+            assert_eq!(expr.get_type()?, *LambdaType::at());
+            assert_eq!(expr.appless_len(), 4);
+            generated += 1;
+
+            if expr
+                .pool
+                .0
+                .iter()
+                .any(|x| matches!(x, LambdaExpr::Lambda(..)))
+            {
+                lambdas += 1;
+            }
+        }
+
+        assert!(generated > 0, "nothing was generated");
+        assert!(lambdas > 0, "no lambdas were generated");
         Ok(())
     }
 }
