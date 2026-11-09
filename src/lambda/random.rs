@@ -338,7 +338,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
     ///# Errors
     ///Returns a [`SamplingError`] if no expression be found under these parameters
     pub fn random_exact(
-        target: Option<LambdaType>,
+        target: Option<&LambdaType>,
         size: usize,
         base_expressions: &[T],
         free_var: &[(FreeVar<'src>, LambdaType)],
@@ -346,9 +346,12 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
     ) -> Result<Self, SamplingError> {
         let leaves = mk_leaves(base_expressions, free_var)?;
         let no_target = target.is_none();
-        let typ = target.unwrap_or_else(|| LambdaType::random(rng));
+        let typ = match target {
+            Some(x) => x,
+            None => &LambdaType::random(rng),
+        };
 
-        let mut sol = generate_pool(rng, &typ, size, &leaves);
+        let mut sol = generate_pool(rng, typ, size, &leaves);
 
         let mut t = 0;
         while no_target && sol.is_none() && t < GENERATION_ATTEMPTS {
@@ -357,7 +360,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
             t += 1;
         }
         sol.ok_or(SamplingError::CantFindOfSize {
-            typ: if no_target { None } else { Some(typ) },
+            typ: if no_target { None } else { Some(typ.clone()) },
             size,
         })
     }
@@ -370,7 +373,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
     ///# Errors
     ///Returns a [`SamplingError`] if no expression be found under these parameters
     pub fn random_up_to(
-        target: Option<LambdaType>,
+        target: Option<&LambdaType>,
         max_size: usize,
         base_expressions: &[T],
         free_var: &[(FreeVar<'src>, LambdaType)],
@@ -378,14 +381,17 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
     ) -> Result<Self, SamplingError> {
         let leaves = mk_leaves(base_expressions, free_var)?;
         let no_target = target.is_none();
-        let typ = target.unwrap_or_else(|| LambdaType::random(rng));
+        let typ = match target {
+            Some(x) => x,
+            None => &LambdaType::random(rng),
+        };
 
         let mut sizes: Vec<usize> = (1..=max_size).collect();
         sizes.shuffle(rng);
 
         let mut sol = sizes
             .iter()
-            .find_map(|&size| generate_pool(rng, &typ, size, &leaves));
+            .find_map(|&size| generate_pool(rng, typ, size, &leaves));
         let mut t = 0;
         while no_target && sol.is_none() && t < GENERATION_ATTEMPTS {
             let typ = LambdaType::random(rng);
@@ -396,7 +402,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
         }
 
         sol.ok_or(SamplingError::CantFindInSizeUpTo {
-            typ: if no_target { None } else { Some(typ) },
+            typ: if no_target { None } else { Some(typ.clone()) },
             max_size,
         })
     }
@@ -439,7 +445,7 @@ mod test {
 
         //No expression of size 1 of type t.
         let err = RootedLambdaPool::<Expr<'static>>::random_exact(
-            Some(LambdaType::T),
+            Some(&LambdaType::T),
             1,
             &base_expressions(),
             &[],
@@ -457,7 +463,7 @@ mod test {
         for _ in 0..25 {
             for size in [2, 3, 4, 5, 6] {
                 let expr = RootedLambdaPool::<Expr<'static>>::random_exact(
-                    Some(LambdaType::T),
+                    Some(&LambdaType::T),
                     size,
                     &base_expressions(),
                     &[],
@@ -500,7 +506,7 @@ mod test {
         let mut contains_free_var = false;
         for _ in 0..25 {
             let expr = RootedLambdaPool::<Expr<'static>>::random_up_to(
-                Some(LambdaType::T),
+                Some(&LambdaType::T),
                 5,
                 &base_expressions(),
                 &free_var,
@@ -527,7 +533,7 @@ mod test {
         let mut rng = ChaCha8Rng::seed_from_u64(3);
 
         let err = RootedLambdaPool::<Expr<'static>>::random_exact(
-            Some(LambdaType::E),
+            Some(&LambdaType::E),
             1,
             &base_expressions(),
             &[],
@@ -556,7 +562,7 @@ mod test {
 
         for _ in 0..25 {
             let expr = RootedLambdaPool::<Expr<'static>>::random_exact(
-                Some(LambdaType::at().clone()),
+                Some(LambdaType::at()),
                 1,
                 &base_expressions(),
                 &[],
@@ -576,7 +582,7 @@ mod test {
 
         for _ in 0..25 {
             let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
-                Some(LambdaType::at().clone()),
+                Some(LambdaType::at()),
                 4,
                 &base_expressions(),
                 &[],
@@ -649,7 +655,7 @@ mod test {
 
                 for _ in 0..150 {
                     let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
-                        Some(typ.clone()),
+                        Some(typ),
                         size,
                         &bases,
                         &[],
