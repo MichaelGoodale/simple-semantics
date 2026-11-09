@@ -124,7 +124,6 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
             let body = body.ok()?;
 
             let lambda = self.pool.add(LambdaExpr::Lambda(body, arg.clone()));
-            //The bound variable must be used and the body must not be an eta redex.
             if !self.pool.uses_bvar(body) || self.pool.is_eta_opportunity(lambda) {
                 return None;
             }
@@ -134,7 +133,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         }
     }
 
-    ///Pushes a random leaf (base expression, free variable or bound variable) of type `typ`.
+    ///Pushes random single expression
     fn random_expression(&mut self, rng: &mut impl Rng, typ: &LambdaType) -> Option<LambdaExprRef> {
         let count = self.n_possible_heads(typ, 0, 0);
         if count == 0 {
@@ -227,8 +226,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         }
     }
 
-    ///Checks if `f` is an involutory expression applied to an application of itself, e.g.
-    ///`!(!p)`, which can be simplified.
+    ///Checks if an expression is a redudant involution (e.g. `~~phi`)
     fn is_involutory_repetition(&self, f: LambdaExprRef, x: LambdaExprRef) -> bool {
         let LambdaExpr::LanguageOfThoughtExpr(outer, _) = self.pool.get(f) else {
             return false;
@@ -249,7 +247,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     }
 }
 
-///The number of arguments `typ` can be applied to (at most `max_len`) to result in `target`.
+///The number of arguments `typ` can be applied to (between `min_len` and `max_len`) to result in `target`.
 fn n_apps_until_type(typ: &LambdaType, target: &LambdaType, max_len: usize) -> Option<usize> {
     if typ == target {
         return Some(0);
