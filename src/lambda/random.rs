@@ -596,4 +596,73 @@ mod test {
         assert!(lambdas > 0, "no lambdas were generated");
         Ok(())
     }
+
+    ///Enumerates every expression up to size 3 of each literal type with the
+    ///[`crate::lambda::enumerator::Generator`], then checks that random sampling eventually
+    ///produces all of them (and nothing outside the enumerated set).
+    #[test]
+    fn test_full_coverage() -> anyhow::Result<()> {
+        use crate::lambda::enumerator::Generator;
+        use std::collections::HashSet;
+
+        let types = [
+            LambdaType::A,
+            LambdaType::E,
+            LambdaType::T,
+            LambdaType::at().clone(),
+            LambdaType::et().clone(),
+            LambdaType::tt().clone(),
+        ];
+
+        let bases = base_expressions();
+        let mut generator: Generator<Expr> = Generator::new(bases.clone(), vec![]);
+        let mut rng = ChaCha8Rng::seed_from_u64(6);
+
+        for typ in &types {
+            //All expressions of this type up to size 3, bucketed by their appless length.
+            let mut expected: Vec<HashSet<RootedLambdaPool<Expr>>> =
+                vec![HashSet::new(), HashSet::new(), HashSet::new()];
+
+            for id in generator.enumerate_or_generate(typ.clone(), 3) {
+                let expr = generator.to_rooted_lambda_pool(id).unwrap();
+                let len = expr.appless_len();
+                if (1..=3).contains(&len) {
+                    expected[len - 1].insert(expr);
+                }
+            }
+
+            for (i, expected) in expected.iter().enumerate() {
+                let size = i + 1;
+                let mut seen = HashSet::new();
+
+                //Sample until every expression has been generated at least once (capped).
+                for _ in 0..10_000 {
+                    if seen.len() == expected.len() {
+                        break;
+                    }
+
+                    let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
+                        Some(typ.clone()),
+                        size,
+                        &bases,
+                        &[],
+                        &mut rng,
+                    ) else {
+                        continue;
+                    };
+
+                    assert_eq!(expr.get_type()?, *typ);
+                    assert_eq!(expr.appless_len(), size);
+                    seen.insert(expr);
+                }
+
+                assert_eq!(
+                    seen, *expected,
+                    "sampling type {typ} of size {size} doesn't match enumeration"
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
