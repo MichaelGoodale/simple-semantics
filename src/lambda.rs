@@ -23,6 +23,10 @@ use crate::Scenario;
 
 pub mod enumerator;
 pub mod parser;
+#[cfg(feature = "sampling")]
+pub mod random;
+#[cfg(feature = "sampling")]
+pub use random::SamplingError;
 mod printing;
 mod serializations;
 pub use serializations::{MathModeExpression, ToLiteral};
@@ -371,6 +375,17 @@ fn cmp_pool<T: LambdaLanguageOfThought + Ord>(
 impl<T: LambdaLanguageOfThought + Ord> Ord for RootedLambdaPool<'_, T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         cmp_pool(&self.pool, self.root, &other.pool, other.root)
+    }
+}
+
+impl<T: LambdaLanguageOfThought> LambdaExpr<'_, T> {
+    fn get_typ(&self) -> Option<&LambdaType> {
+        match self {
+            LambdaExpr::Lambda(..) | LambdaExpr::Application { .. } => None,
+            LambdaExpr::BoundVariable(_, lambda_type)
+            | LambdaExpr::FreeVariable(_, lambda_type) => Some(lambda_type),
+            LambdaExpr::LanguageOfThoughtExpr(x, _) => Some(x.typ()),
+        }
     }
 }
 
@@ -862,6 +877,7 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
         }
     }
 }
+
 impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
     pub fn get_type(&self, x: LambdaExprRef) -> Result<LambdaType, TypeError> {
         match self.get(x) {
@@ -975,10 +991,13 @@ impl<'src, T: LambdaLanguageOfThought> LambdaPool<'src, T> {
             return false;
         }
 
-        let uses_variable_in_body = self
-            .bfs_from(*subformula)
-            .any(|(x, d)| matches!(self.get(x), LambdaExpr::BoundVariable(v, _) if *v==d ));
-        !uses_variable_in_body
+        !self.uses_bvar(*subformula)
+    }
+
+    ///Check whether the most recently bound variable is ever used.
+    fn uses_bvar(&self, x: LambdaExprRef) -> bool {
+        self.bfs_from(x)
+            .any(|(x, d)| matches!(self.get(x), LambdaExpr::BoundVariable(v, _) if *v==d ))
     }
 }
 

@@ -91,7 +91,8 @@ pub enum Constant<'a> {
     EveryEvent,
     ///Any predicate as a set
     Property(PropertyLabel<'a>, ActorOrEvent),
-    ///A Literal representation of an [`Actor]`, [`ActorSet`], [`Event`], [`EventSet`], [`Boolean`] or a one
+    ///A Literal representation of an actor, event, set of actors, set of events, boolean or one
+    ///place boolean function
     ///place truth function.
     Literal(Literal<'a>),
 }
