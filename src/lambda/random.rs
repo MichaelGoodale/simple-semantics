@@ -156,12 +156,8 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         head: usize,
         attempts: usize,
     ) -> Option<LambdaExprRef> {
-        //Find the `head`-th head with an argument chain to `target`.
         let head = self.nth_possible_head(head, target, 1, size - 1)?;
         let args = n_apps_until_type(self.head_type(head), target, size - 1)?;
-        if args == 0 {
-            return None;
-        }
 
         let mut cur = self.pool.add(self.head_expr(head));
         let mut typ = &self.head_type(head).clone();
