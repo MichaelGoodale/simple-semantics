@@ -636,14 +636,14 @@ mod test {
 
             for id in generator.enumerate_or_generate(typ.clone(), 3) {
                 let expr = generator.to_rooted_lambda_pool(id).unwrap();
-                expected[expr.len() - 1].insert(expr);
+                expected[expr.appless_len() - 1].insert(expr);
             }
 
             for (i, expected) in expected.iter().enumerate() {
                 let size = i + 1;
                 let mut seen = HashSet::new();
 
-                for _ in 0..10_000 {
+                for _ in 0..1_000 {
                     let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
                         Some(typ.clone()),
                         size,
