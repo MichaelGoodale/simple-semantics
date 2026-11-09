@@ -400,6 +400,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
 
 #[cfg(test)]
 mod test {
+    use itertools::Itertools;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -432,7 +433,7 @@ mod test {
     fn test_random_exact() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
 
-        //There is no bare `t` constant, so size 1 is not constructible.
+        //No expression of size 1 of type t.
         let err = RootedLambdaPool::<Expr<'static>>::random_exact(
             Some(LambdaType::T),
             1,
@@ -492,6 +493,7 @@ mod test {
         let mut rng = ChaCha8Rng::seed_from_u64(2);
         let free_var = vec![(FreeVar::Named("x"), LambdaType::E)];
 
+        let mut contains_free_var = false;
         for _ in 0..100 {
             let expr = RootedLambdaPool::<Expr<'static>>::random_up_to(
                 Some(LambdaType::T),
@@ -502,7 +504,15 @@ mod test {
             )?;
             assert!(expr.is_reduced(), "{expr} is not fully reduced");
             assert_eq!(expr.get_type()?, LambdaType::T);
+            if expr.pool.0.contains(&LambdaExpr::FreeVariable(
+                FreeVar::Named("x"),
+                LambdaType::E,
+            )) {
+                contains_free_var = true;
+            }
         }
+
+        assert!(contains_free_var, "The free variable was never sampled!");
 
         Ok(())
     }
@@ -536,11 +546,8 @@ mod test {
         Ok(())
     }
 
-    ///Guards against picking a leaf by an index into the full head list rather than the matching
-    ///heads: `pa`/`all_a` (the only `<a,t>` leaves) are not at the front of the base list, so a
-    ///wrongly indexed pick would return an expression of the wrong type.
     #[test]
-    fn test_leaf_types() -> anyhow::Result<()> {
+    fn test_at_sampling() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(4);
 
         for _ in 0..50 {
@@ -558,13 +565,10 @@ mod test {
         Ok(())
     }
 
-    ///Guards against bound variables being unreachable as leaves (which would make every lambda
-    ///body fail to use its binder and so reject all lambdas), and against eta redexes sneaking
-    ///through the check.
     #[test]
     fn test_lambdas() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(5);
-        let (mut generated, mut lambdas) = (0, 0);
+        let (mut generated, mut lambdas, mut bvars) = (0, 0, 0);
 
         for _ in 0..100 {
             let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
@@ -590,16 +594,23 @@ mod test {
             {
                 lambdas += 1;
             }
+            if expr
+                .pool
+                .0
+                .iter()
+                .any(|x| matches!(x, LambdaExpr::BoundVariable(..)))
+            {
+                bvars += 1;
+            }
         }
 
         assert!(generated > 0, "nothing was generated");
         assert!(lambdas > 0, "no lambdas were generated");
+        assert!(bvars > 0, "no bvars were generated");
         Ok(())
     }
 
-    ///Enumerates every expression up to size 3 of each literal type with the
-    ///[`crate::lambda::enumerator::Generator`], then checks that random sampling eventually
-    ///produces all of them (and nothing outside the enumerated set).
+    ///Check all expressions can be generated (at least for small numbers)
     #[test]
     fn test_full_coverage() -> anyhow::Result<()> {
         use crate::lambda::enumerator::Generator;
@@ -625,22 +636,14 @@ mod test {
 
             for id in generator.enumerate_or_generate(typ.clone(), 3) {
                 let expr = generator.to_rooted_lambda_pool(id).unwrap();
-                let len = expr.appless_len();
-                if (1..=3).contains(&len) {
-                    expected[len - 1].insert(expr);
-                }
+                expected[expr.len() - 1].insert(expr);
             }
 
             for (i, expected) in expected.iter().enumerate() {
                 let size = i + 1;
                 let mut seen = HashSet::new();
 
-                //Sample until every expression has been generated at least once (capped).
                 for _ in 0..10_000 {
-                    if seen.len() == expected.len() {
-                        break;
-                    }
-
                     let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
                         Some(typ.clone()),
                         size,
@@ -657,8 +660,11 @@ mod test {
                 }
 
                 assert_eq!(
-                    seen, *expected,
-                    "sampling type {typ} of size {size} doesn't match enumeration"
+                    seen,
+                    *expected,
+                    "sampling type {typ} of size {size} doesn't match enumeration because {{{}}} != {{{}}}",
+                    seen.iter().map(|x| x.to_string()).join(","),
+                    expected.iter().map(|x| x.to_string()).join(",")
                 );
             }
         }
