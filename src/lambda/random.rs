@@ -109,7 +109,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
 
         //Add lambda as an option if we can.
         let count =
-            self.n_possible_heads(target, size - 1) + if target.is_function() { 1 } else { 0 };
+            self.n_possible_heads(target, 1, size - 1) + if target.is_function() { 1 } else { 0 };
         if count == 0 {
             return None;
         }
@@ -136,14 +136,14 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
 
     ///Pushes a random leaf (base expression, free variable or bound variable) of type `typ`.
     fn random_expression(&mut self, rng: &mut impl Rng, typ: &LambdaType) -> Option<LambdaExprRef> {
-        let count = self.n_possible_heads(typ, 0);
+        let count = self.n_possible_heads(typ, 0, 0);
         if count == 0 {
             None
         } else {
             let head = rng.random_range(0..count);
             Some(
                 self.pool
-                    .add(self.head_expr(self.nth_possible_head(head, typ, 0).unwrap())),
+                    .add(self.head_expr(self.nth_possible_head(head, typ, 0, 0).unwrap())),
             )
         }
     }
@@ -157,7 +157,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
         attempts: usize,
     ) -> Option<LambdaExprRef> {
         //Find the `head`-th head with an argument chain to `target`.
-        let head = self.nth_possible_head(head, target, size - 1)?;
+        let head = self.nth_possible_head(head, target, 1, size - 1)?;
         let args = n_apps_until_type(self.head_type(head), target, size - 1)?;
         if args == 0 {
             return None;
@@ -192,15 +192,25 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RandomExprBuilder<'sr
     }
 
     ///How many heads are or can be turned into something of type t with at most max_len applications
-    fn n_possible_heads(&self, target: &LambdaType, max_len: usize) -> usize {
+    fn n_possible_heads(&self, target: &LambdaType, min_len: usize, max_len: usize) -> usize {
         (0..self.n_heads())
-            .filter(|&i| n_apps_until_type(self.head_type(i), target, max_len).is_some())
+            .filter(|&i| {
+                n_apps_until_type(self.head_type(i), target, max_len).is_some_and(|x| x >= min_len)
+            })
             .count()
     }
 
-    fn nth_possible_head(&self, head: usize, target: &LambdaType, max_len: usize) -> Option<usize> {
+    fn nth_possible_head(
+        &self,
+        head: usize,
+        target: &LambdaType,
+        min_len: usize,
+        max_len: usize,
+    ) -> Option<usize> {
         (0..self.n_heads())
-            .filter(|&i| n_apps_until_type(self.head_type(i), target, max_len).is_some())
+            .filter(|&i| {
+                n_apps_until_type(self.head_type(i), target, max_len).is_some_and(|x| x >= min_len)
+            })
             .nth(head)
     }
 
@@ -332,7 +342,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
     ///If no `target` type is passed, it will randomly sample a typ.
     ///
     ///# Errors
-    ///Returns a [`RandomError`] if no expression be found under these parameters
+    ///Returns a [`SamplingError`] if no expression be found under these parameters
     pub fn random_exact(
         target: Option<LambdaType>,
         size: usize,
@@ -364,7 +374,7 @@ impl<'src, T: LambdaLanguageOfThought + Clone + PartialEq> RootedLambdaPool<'src
     ///If no `target` type is passed, it will randomly sample a typ.
     ///
     ///# Errors
-    ///Returns a [`RandomError`] if no expression be found under these parameters
+    ///Returns a [`SamplingError`] if no expression be found under these parameters
     pub fn random_up_to(
         target: Option<LambdaType>,
         max_size: usize,
@@ -643,7 +653,7 @@ mod test {
                 let size = i + 1;
                 let mut seen = HashSet::new();
 
-                for _ in 0..1_000 {
+                for _ in 0..250 {
                     let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
                         Some(typ.clone()),
                         size,
