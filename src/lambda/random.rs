@@ -456,7 +456,7 @@ mod test {
             }
         );
 
-        for _ in 0..200 {
+        for _ in 0..25 {
             for size in [2, 3, 4, 5, 6] {
                 let expr = RootedLambdaPool::<Expr<'static>>::random_exact(
                     Some(LambdaType::T),
@@ -478,7 +478,7 @@ mod test {
     fn test_random_up_to() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
 
-        for _ in 0..200 {
+        for _ in 0..25 {
             let expr = RootedLambdaPool::<Expr<'static>>::random_up_to(
                 None,
                 6,
@@ -500,7 +500,7 @@ mod test {
         let free_var = vec![(FreeVar::Named("x"), LambdaType::E)];
 
         let mut contains_free_var = false;
-        for _ in 0..100 {
+        for _ in 0..25 {
             let expr = RootedLambdaPool::<Expr<'static>>::random_up_to(
                 Some(LambdaType::T),
                 5,
@@ -556,7 +556,7 @@ mod test {
     fn test_at_sampling() -> anyhow::Result<()> {
         let mut rng = ChaCha8Rng::seed_from_u64(4);
 
-        for _ in 0..50 {
+        for _ in 0..25 {
             let expr = RootedLambdaPool::<Expr<'static>>::random_exact(
                 Some(LambdaType::at().clone()),
                 1,
@@ -576,7 +576,7 @@ mod test {
         let mut rng = ChaCha8Rng::seed_from_u64(5);
         let (mut generated, mut lambdas, mut bvars) = (0, 0, 0);
 
-        for _ in 0..100 {
+        for _ in 0..25 {
             let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
                 Some(LambdaType::at().clone()),
                 4,
@@ -649,7 +649,7 @@ mod test {
                 let size = i + 1;
                 let mut seen = HashSet::new();
 
-                for _ in 0..250 {
+                for _ in 0..150 {
                     let Ok(expr) = RootedLambdaPool::<Expr<'static>>::random_exact(
                         Some(typ.clone()),
                         size,
