@@ -3,10 +3,9 @@
 
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use std::collections::BTreeMap;
 
 use simple_semantics::{
-    Scenario, ScenarioDataset, ThetaRoles,
+    Scenario, ScenarioDataset,
     lambda::{FreeVar, Literal, RootedLambdaPool, types::LambdaType},
     language::{ActorOrEvent, Constant, Expr},
 };
