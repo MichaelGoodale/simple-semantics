@@ -620,20 +620,18 @@ impl<'src> Literal<'src> {
                 .padded()
                 .then_ignore(just("]").padded())
                 .try_map(|((is_true_row, value), (is_true_row2, value2)), span| {
-                    match (is_true_row, is_true_row2) {
-                        (true, false) => Ok(Literal::TruthTable {
-                            on_false: value2,
-                            on_true: value,
-                        }),
-                        (false, true) => Ok(Literal::TruthTable {
-                            on_false: value,
-                            on_true: value2,
-                        }),
-                        _ => Err(Rich::custom(
+                    if is_true_row == is_true_row2 {
+                        return Err(Rich::custom(
                             span,
                             "A truth table must have one False row and one True row",
-                        )),
+                        ));
                     }
+                    let (on_false, on_true) = if is_true_row {
+                        (value2, value)
+                    } else {
+                        (value, value2)
+                    };
+                    Ok(Literal::TruthTable { on_false, on_true })
                 }),
         ))
     }

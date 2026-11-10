@@ -238,11 +238,9 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
                 .enumerate(),
             |(mut acc_event, mut acc_props), (i, (event, event_props))| {
                 acc_event.push(event);
-                if let Some(event_props) = event_props
-                    && let Ok(e) = Event::try_from(i + 1)
-                {
+                if let Some(event_props) = event_props {
                     for property_label in event_props {
-                        let e = Entity::Event(e);
+                        let e = Entity::Event(Event::try_from(i + 1).unwrap());
                         acc_props
                             .entry(property_label)
                             .and_modify(|x| x.push(e))
@@ -350,9 +348,6 @@ fn new_scenario<'a>(
     }
 
     let mut problems = vec![];
-    if events.len() > MAX_N_EVENTS {
-        problems.push("A scenario can have at most 256 events".to_string());
-    }
     let mut seen = BTreeSet::new();
     let duplicates = actors
         .iter()

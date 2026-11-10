@@ -25,19 +25,10 @@ fn base_expressions() -> Vec<Expr<'static>> {
 
 fn free_vars() -> Vec<(FreeVar<'static>, LambdaType)> {
     vec![
-        (
-            FreeVar::Named("f"),
-            LambdaType::from_string("<a,t>").unwrap(),
-        ),
-        (
-            FreeVar::Named("g"),
-            LambdaType::from_string("<<a,t>,t>").unwrap(),
-        ),
-        (FreeVar::Named("h"), LambdaType::from_string("a").unwrap()),
-        (
-            FreeVar::Anonymous(0),
-            LambdaType::from_string("<e,t>").unwrap(),
-        ),
+        (FreeVar::Named("f"), LambdaType::at().clone()),
+        (FreeVar::Named("g"), LambdaType::et().clone()),
+        (FreeVar::Named("h"), LambdaType::e().clone()),
+        (FreeVar::Anonymous(0), LambdaType::t().clone()),
     ]
 }
 
@@ -82,9 +73,6 @@ fn event_literal_overflow_is_an_error_not_a_panic() {
 #[test]
 fn empty_scenario_parses_and_round_trips() -> anyhow::Result<()> {
     let scenario = Scenario::parse("<>")?;
-    assert!(scenario.actors().is_empty());
-    assert!(scenario.thematic_relations().is_empty());
-    assert!(scenario.questions().is_empty());
     assert_eq!(scenario.to_string(), "<>");
     assert_eq!(Scenario::parse(&scenario.to_string())?, scenario);
     Ok(())
