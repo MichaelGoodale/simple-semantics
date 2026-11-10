@@ -231,16 +231,14 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
             (events, properties)
         })
         .foldl(
-            just(',')
-                .ignore_then(event)
-                .repeated()
-                .at_most(MAX_N_EVENTS - 1)
-                .enumerate(),
+            just(',').ignore_then(event).repeated().enumerate(),
             |(mut acc_event, mut acc_props), (i, (event, event_props))| {
                 acc_event.push(event);
-                if let Some(event_props) = event_props {
+                if let Some(event_props) = event_props
+                    && let Ok(e) = Event::try_from(i + 1)
+                {
                     for property_label in event_props {
-                        let e = Entity::Event(Event::try_from(i + 1).unwrap());
+                        let e = Entity::Event(e);
                         acc_props
                             .entry(property_label)
                             .and_modify(|x| x.push(e))

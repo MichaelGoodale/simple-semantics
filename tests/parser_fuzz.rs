@@ -102,8 +102,9 @@ fn events_with_properties(n: usize) -> String {
 fn too_many_events_is_a_parse_error_not_a_panic() {
     let max = events_with_properties(256);
     assert!(Scenario::parse(&max).is_ok());
-    assert!(Scenario::parse(&events_with_properties(257)).is_err());
-    assert!(Scenario::parse(&events_with_properties(300)).is_err());
+    let err =
+        Scenario::parse(&events_with_properties(257)).expect_err("257 events should not parse");
+    assert!(err.to_string().contains("at most 256 events"));
 }
 
 #[test]
