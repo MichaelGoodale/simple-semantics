@@ -231,7 +231,11 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
             (events, properties)
         })
         .foldl(
-            just(',').ignore_then(event).repeated().enumerate(),
+            just(',')
+                .ignore_then(event)
+                .repeated()
+                .at_most(MAX_N_EVENTS - 1)
+                .enumerate(),
             |(mut acc_event, mut acc_props), (i, (event, event_props))| {
                 acc_event.push(event);
                 if let Some(event_props) = event_props
@@ -248,6 +252,18 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
                 (acc_event, acc_props)
             },
         );
+
+    let events = events.then_ignore(
+        just(',')
+            .ignore_then(event)
+            .validate(|_, e, emitter| {
+                emitter.emit(Rich::custom(
+                    e.span(),
+                    format!("A scenario can have at most {MAX_N_EVENTS} events"),
+                ));
+            })
+            .or_not(),
+    );
 
     let scenario = actors
         .then((just(';')).ignore_then(events).or_not())
