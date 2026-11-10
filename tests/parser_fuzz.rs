@@ -96,16 +96,6 @@ fn too_many_events_is_a_parse_error_not_a_panic() {
 }
 
 #[test]
-#[should_panic(expected = "A scenario can have at most 256 events")]
-fn too_many_events_panics_in_new() {
-    let _ = Scenario::new(
-        vec!["a"],
-        vec![ThetaRoles::default(); 257],
-        BTreeMap::default(),
-    );
-}
-
-#[test]
 fn empty_lemmas_are_pruned() -> anyhow::Result<()> {
     let dataset = ScenarioDataset::parse("\"John  ran\" <John; {A: John (run)}>\n")?;
     assert_eq!(dataset.lemmas(), ["John", "ran"]);

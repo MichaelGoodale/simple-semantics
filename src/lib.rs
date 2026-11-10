@@ -265,3 +265,37 @@ pub use scenario::{EventType, PossibleEvent, ScenarioIterator};
 pub mod owned;
 
 use crate::scenario::string_scenario_parser;
+
+#[cfg(test)]
+#[test]
+fn test_check_number_of_events_displayed() {
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+
+    let payload = std::panic::catch_unwind(|| {
+        Scenario::new(
+            vec![],
+            vec![
+                ThetaRoles {
+                    agent: None,
+                    patient: None,
+                };
+                MAX_N_EVENTS + 1
+            ],
+            BTreeMap::new(),
+        )
+    })
+    .expect_err("check_scenario should have panicked");
+    std::panic::set_hook(prev_hook);
+
+    let actual = payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .expect("panic payload was not a string");
+
+    assert_eq!(
+        actual,
+        format!("A scenario can have at most {MAX_N_EVENTS} events").as_str(),
+    );
+}
