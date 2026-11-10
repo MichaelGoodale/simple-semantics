@@ -195,7 +195,9 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
                 actors.push(actor);
                 (actors, properties)
             },
-        );
+        )
+        .or_not()
+        .map(|actors| actors.unwrap_or_else(|| (Vec::default(), BTreeMap::default())));
 
     let event = theta_role_parser()
         .then(properties.or_not())
