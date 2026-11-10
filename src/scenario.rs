@@ -2,7 +2,10 @@ use crate::{ScenarioParsingError, lambda::RootedLambdaPool};
 use chumsky::{prelude::*, text::inline_whitespace};
 use itertools::{Itertools, MultiProduct};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Display,
+};
 
 use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ScenarioDataset, ThetaRoles};
 
@@ -248,10 +251,39 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
         .delimited_by(just('<'), just('>'))
         .map(|((actors, actor_props), events)| new_scenario(actors, actor_props, events))
         .try_map(|s: Scenario, span| {
+            let mut problems = vec![];
             if s.thematic_relations.len() > usize::from(Event::MAX) + 1 {
-                Err(Rich::custom(span, "A scenario can have at most 256 events"))
-            } else {
+                problems.push("A scenario can have at most 256 events".to_string());
+            }
+            let mut seen = BTreeSet::new();
+            let duplicates = s
+                .actors
+                .iter()
+                .filter(|a| !seen.insert(*a))
+                .collect::<BTreeSet<_>>();
+            if !duplicates.is_empty() {
+                problems.push(format!(
+                    "Duplicate actors: {}",
+                    duplicates.iter().join(", ")
+                ));
+            }
+            let undeclared = s
+                .thematic_relations
+                .iter()
+                .flat_map(|r| [r.agent, r.patient])
+                .flatten()
+                .filter(|a| !s.actors.contains(a))
+                .collect::<BTreeSet<_>>();
+            if !undeclared.is_empty() {
+                problems.push(format!(
+                    "Theta roles refer to undeclared actors: {}",
+                    undeclared.iter().join(", ")
+                ));
+            }
+            if problems.is_empty() {
                 Ok(s)
+            } else {
+                Err(Rich::custom(span, problems.join("; ")))
             }
         });
 

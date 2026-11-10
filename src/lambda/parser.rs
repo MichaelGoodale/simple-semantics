@@ -59,6 +59,7 @@ enum OwnedParseError {
         is_double: bool,
     },
     UnTypedFreeVariable(Range<usize>, String),
+    ReservedWord(Range<usize>, String),
 }
 
 impl From<Rich<'_, String>> for OwnedParseError {
@@ -136,6 +137,23 @@ impl Display for LambdaParseError {
                 )
                 .finish(),
 
+                OwnedParseError::ReservedWord(var_span, var) => Report::build(
+                    ariadne::ReportKind::Error,
+                    var_span.clone(),
+                )
+                .with_config(ariadne::Config::new().with_index_type(ariadne::IndexType::Byte))
+                .with_message(format!(
+                    "{var} is a reserved word and cannot be a variable name"
+                ))
+                .with_label(
+                    Label::new(var_span.clone())
+                        .with_message(format!(
+                            "This lambda binds {var}, but {var} is part of the language of thought"
+                        ))
+                        .with_color(Color::Red),
+                )
+                .finish(),
+
                 OwnedParseError::QuantifierError {
                     span,
                     quantifier_span,
@@ -207,6 +225,9 @@ where
     ///```
     ///
     ///This provides nice error messages thanks to [chumsky](https://crates.io/crates/chumsky) and [ariadne](https://crates.io/crates/ariadne) that you can print if you have invalid input.
+    ///
+    ///Note that variable names are restricted to ASCII alphanumeric characters and cannot be
+    ///words that are part of the language of thought (e.g. `every` or `True`).
     ///
     ///# Errors
     /// Produces a [`LambdaParseError`] which catalogues any mistaken types or parsing failures.
@@ -554,6 +575,8 @@ impl<'src> Literal<'src> {
     pub fn parser() -> impl Parser<'src, &'src str, Literal<'src>, extra::Err<Rich<'src, char>>> {
         let actor = just("a_").ignore_then(keyword());
 
+        let truth_value = || choice((just("True").to(true), just("False").to(false))).padded();
+
         let event = just("e_")
             .ignore_then(text::int(10))
             .try_map(|s: &str, span| {
@@ -587,14 +610,25 @@ impl<'src> Literal<'src> {
             just("[")
                 .ignore_then(just("False").padded())
                 .ignore_then(just("->").padded())
-                .ignore_then(choice((just("True").to(true), just("False").to(false))))
+                .ignore_then(truth_value())
                 .then_ignore(just(',').padded())
                 .then_ignore(just("True").padded())
                 .then_ignore(just("->").padded())
-                .then(choice((just("True").to(true), just("False").to(false))))
+                .then(truth_value())
                 .padded()
                 .then_ignore(just("]").padded())
                 .map(|(on_false, on_true)| Literal::TruthTable { on_false, on_true }),
+            just("[")
+                .ignore_then(just("True").padded())
+                .ignore_then(just("->").padded())
+                .ignore_then(truth_value())
+                .then_ignore(just(',').padded())
+                .then_ignore(just("False").padded())
+                .then_ignore(just("->").padded())
+                .then(truth_value())
+                .padded()
+                .then_ignore(just("]").padded())
+                .map(|(on_true, on_false)| Literal::TruthTable { on_false, on_true }),
         ))
     }
 }
@@ -859,6 +893,10 @@ where
     })
 }
 
+fn is_reserved_word<'src, T: ParseLot<'src>>(var: &'src str) -> bool {
+    T::tokenizer().parse(var).into_result().is_ok()
+}
+
 ///A function which maps strings to language of thought expressions. Crucially, it automatically performs all lambda reductions.
 ///
 ///# Errors
@@ -880,17 +918,28 @@ where
             .map(|x| x.span)
             .reduce(|x, acc| acc.union(x))
             .ok_or_else(|| LambdaParseError(vec![OwnedParseError::EmptyString], String::new()))?;
+        let reserved = tokens
+            .iter()
+            .filter_map(|x| match &x.inner {
+                Token::Lambda(_, var) if is_reserved_word::<T>(var) => Some(
+                    OwnedParseError::ReservedWord(x.span.into_range(), var.to_string()),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let (ast, parse_errs) = language_parser()
             .parse(tokens.as_slice().split_spanned(e))
             .into_output_errors();
 
-        if let Some(ast) = ast {
+        if let Some(ast) = ast
+            && reserved.is_empty()
+        {
             match into_pool(ast) {
                 Ok(x) => return Ok(x),
                 Err(e) => (parse_errs, e),
             }
         } else {
-            (parse_errs, Vec::new())
+            (parse_errs, reserved)
         }
     } else {
         (Vec::new(), Vec::new())

@@ -128,6 +128,41 @@ fn empty_lemmas_are_pruned() -> anyhow::Result<()> {
 }
 
 #[test]
+fn reserved_words_cannot_be_bound() {
+    let err = RootedLambdaPool::<Expr>::parse("lambda e every every(x, all_a(x), pa_Blue(x))")
+        .expect_err("binding a reserved word should fail");
+    assert!(err.to_string().contains("reserved word"));
+    let err = RootedLambdaPool::<Expr>::parse("lambda t True True").expect_err("True is reserved");
+    assert!(err.to_string().contains("reserved word"));
+    assert!(RootedLambdaPool::<Expr>::parse("lambda e x every(x, all_a(x), pa_Blue(x))").is_ok());
+}
+
+#[test]
+fn scenario_semantic_problems_are_parse_errors() {
+    let err = Scenario::parse("<a, a; {A: a}>").expect_err("duplicate actors should fail");
+    assert!(err.to_string().contains("Duplicate actors: a"));
+    let err = Scenario::parse("<a; {A: z}>").expect_err("undeclared actor should fail");
+    assert!(err.to_string().contains("undeclared actors: z"));
+    let err = Scenario::parse("<a, a; {A: z}>").expect_err("both problems should fail");
+    let printed = err.to_string();
+    assert!(printed.contains("Duplicate actors: a"));
+    assert!(printed.contains("undeclared actors: z"));
+    assert!(Scenario::parse("<a, b; {A: a, P: b}>").is_ok());
+}
+
+#[test]
+fn truth_tables_parse_in_both_row_orders() {
+    let canonical = Literal::parse("[False -> True, True -> False]").unwrap();
+    assert_eq!(
+        Literal::parse("[True -> False, False -> True]").unwrap(),
+        canonical
+    );
+    let flipped = Literal::parse("[True -> True, False -> False]").unwrap();
+    assert_eq!(flipped.to_string(), "[False -> False, True -> True]");
+    assert!(Literal::parse("[False -> True, False -> True]").is_err());
+}
+
+#[test]
 fn scenario_files_round_trip() -> anyhow::Result<()> {
     for file in [
         "tests/resources/men.scenario",
