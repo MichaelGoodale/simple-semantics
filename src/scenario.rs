@@ -231,7 +231,11 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
             (events, properties)
         })
         .foldl(
-            just(',').ignore_then(event).repeated().enumerate(),
+            just(',')
+                .ignore_then(event)
+                .repeated()
+                .at_most(MAX_N_EVENTS - 1)
+                .enumerate(),
             |(mut acc_event, mut acc_props), (i, (event, event_props))| {
                 acc_event.push(event);
                 if let Some(event_props) = event_props {
@@ -251,42 +255,8 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
         .then((just(';')).ignore_then(events).or_not())
         .padded()
         .delimited_by(just('<'), just('>'))
-        .map(|((actors, actor_props), events)| new_scenario(actors, actor_props, events))
-        .try_map(|s: Scenario, span| {
-            let mut problems = vec![];
-            if s.thematic_relations.len() > MAX_N_EVENTS {
-                problems.push("A scenario can have at most 256 events".to_string());
-            }
-            let mut seen = BTreeSet::new();
-            let duplicates = s
-                .actors
-                .iter()
-                .filter(|a| !seen.insert(*a))
-                .collect::<BTreeSet<_>>();
-            if !duplicates.is_empty() {
-                problems.push(format!(
-                    "Duplicate actors: {}",
-                    duplicates.iter().join(", ")
-                ));
-            }
-            let undeclared = s
-                .thematic_relations
-                .iter()
-                .flat_map(|r| [r.agent, r.patient])
-                .flatten()
-                .filter(|a| !s.actors.contains(a))
-                .collect::<BTreeSet<_>>();
-            if !undeclared.is_empty() {
-                problems.push(format!(
-                    "Theta roles refer to undeclared actors: {}",
-                    undeclared.iter().join(", ")
-                ));
-            }
-            if problems.is_empty() {
-                Ok(s)
-            } else {
-                Err(Rich::custom(span, problems.join("; ")))
-            }
+        .try_map(|((actors, actor_props), events), span| {
+            new_scenario(actors, actor_props, events).map_err(|e| Rich::custom(span, e))
         });
 
     let scenario = scenario.then(
@@ -350,8 +320,8 @@ fn new_scenario<'a>(
     actors: Vec<Actor<'a>>,
     actor_props: BTreeMap<&'a str, Vec<&'a str>>,
     events: EventParseType<'a>,
-) -> Scenario<'a> {
-    let (events, event_props) = events.unwrap_or_else(|| (Vec::default(), BTreeMap::default()));
+) -> Result<Scenario<'a>, String> {
+    let (events, event_props) = events.unwrap_or_default();
 
     let mut properties: BTreeMap<&str, Vec<Entity>> = actor_props
         .into_iter()
@@ -365,12 +335,43 @@ fn new_scenario<'a>(
             .or_insert(v);
     }
 
-    Scenario {
+    let mut problems = vec![];
+    if events.len() > MAX_N_EVENTS {
+        problems.push("A scenario can have at most 256 events".to_string());
+    }
+    let mut seen = BTreeSet::new();
+    let duplicates = actors
+        .iter()
+        .filter(|a| !seen.insert(*a))
+        .collect::<BTreeSet<_>>();
+    if !duplicates.is_empty() {
+        problems.push(format!(
+            "Duplicate actors: {}",
+            duplicates.iter().join(", ")
+        ));
+    }
+    let undeclared = events
+        .iter()
+        .flat_map(|r| [r.agent, r.patient])
+        .flatten()
+        .filter(|a| !actors.contains(a))
+        .collect::<BTreeSet<_>>();
+    if !undeclared.is_empty() {
+        problems.push(format!(
+            "Theta roles refer to undeclared actors: {}",
+            undeclared.iter().join(", ")
+        ));
+    }
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+
+    Ok(Scenario {
         question: vec![],
         actors,
         thematic_relations: events,
         properties,
-    }
+    })
 }
 
 mod utilities;
