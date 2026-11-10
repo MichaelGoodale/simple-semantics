@@ -578,8 +578,7 @@ impl<'src> Literal<'src> {
         let truth_value = || choice((just("True").to(true), just("False").to(false))).padded();
 
         let truth_row = || {
-            choice((just("True").to(true), just("False").to(false)))
-                .padded()
+            truth_value()
                 .then_ignore(just("->").padded())
                 .then(truth_value())
         };
