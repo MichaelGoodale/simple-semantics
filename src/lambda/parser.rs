@@ -577,6 +577,13 @@ impl<'src> Literal<'src> {
 
         let truth_value = || choice((just("True").to(true), just("False").to(false))).padded();
 
+        let truth_row = || {
+            choice((just("True").to(true), just("False").to(false)))
+                .padded()
+                .then_ignore(just("->").padded())
+                .then(truth_value())
+        };
+
         let event = just("e_")
             .ignore_then(text::int(10))
             .try_map(|s: &str, span| {
@@ -608,27 +615,27 @@ impl<'src> Literal<'src> {
             just("{}_a").to(Literal::ActorSet(vec![])),
             just("{}_e").to(Literal::EventSet(vec![])),
             just("[")
-                .ignore_then(just("False").padded())
-                .ignore_then(just("->").padded())
-                .ignore_then(truth_value())
+                .ignore_then(truth_row())
                 .then_ignore(just(',').padded())
-                .then_ignore(just("True").padded())
-                .then_ignore(just("->").padded())
-                .then(truth_value())
+                .then(truth_row())
                 .padded()
                 .then_ignore(just("]").padded())
-                .map(|(on_false, on_true)| Literal::TruthTable { on_false, on_true }),
-            just("[")
-                .ignore_then(just("True").padded())
-                .ignore_then(just("->").padded())
-                .ignore_then(truth_value())
-                .then_ignore(just(',').padded())
-                .then_ignore(just("False").padded())
-                .then_ignore(just("->").padded())
-                .then(truth_value())
-                .padded()
-                .then_ignore(just("]").padded())
-                .map(|(on_true, on_false)| Literal::TruthTable { on_false, on_true }),
+                .try_map(|((is_true_row, value), (is_true_row2, value2)), span| {
+                    match (is_true_row, is_true_row2) {
+                        (true, false) => Ok(Literal::TruthTable {
+                            on_false: value2,
+                            on_true: value,
+                        }),
+                        (false, true) => Ok(Literal::TruthTable {
+                            on_false: value,
+                            on_true: value2,
+                        }),
+                        _ => Err(Rich::custom(
+                            span,
+                            "A truth table must have one False row and one True row",
+                        )),
+                    }
+                }),
         ))
     }
 }

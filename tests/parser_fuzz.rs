@@ -110,12 +110,11 @@ fn too_many_events_is_a_parse_error_not_a_panic() {
 #[test]
 #[should_panic(expected = "A scenario can have at most 256 events")]
 fn too_many_events_panics_in_new() {
-    let mut relations = vec![ThetaRoles::default(); 257];
-    relations[0] = ThetaRoles {
-        agent: Some("a"),
-        patient: None,
-    };
-    let _ = Scenario::new(vec!["a"], relations, BTreeMap::default());
+    let _ = Scenario::new(
+        vec!["a"],
+        vec![ThetaRoles::default(); 257],
+        BTreeMap::default(),
+    );
 }
 
 #[test]
@@ -173,22 +172,7 @@ fn scenario_files_round_trip() -> anyhow::Result<()> {
         for (scenario, _) in dataset.iter() {
             let printed = scenario.to_string();
             let reparsed = Scenario::parse(&printed)?;
-            assert_eq!(
-                scenario.questions(),
-                reparsed.questions(),
-                "scenario questions differ after round trip:\n{printed}"
-            );
-            assert_eq!(
-                scenario.thematic_relations(),
-                reparsed.thematic_relations(),
-                "scenario events differ after round trip:\n{printed}"
-            );
-            assert_eq!(
-                scenario.properties(),
-                reparsed.properties(),
-                "scenario properties differ after round trip:\n{printed}"
-            );
-            assert_eq!(&scenario.actors(), &reparsed.actors().to_vec());
+            assert_eq!(scenario, &reparsed);
         }
     }
     Ok(())

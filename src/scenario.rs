@@ -7,7 +7,9 @@ use std::{
     fmt::Display,
 };
 
-use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ScenarioDataset, ThetaRoles};
+use crate::{
+    Actor, Entity, Event, MAX_EVENTS, PropertyLabel, Scenario, ScenarioDataset, ThetaRoles,
+};
 
 impl Display for Scenario<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -200,7 +202,7 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
             },
         )
         .or_not()
-        .map(|actors| actors.unwrap_or_else(|| (Vec::default(), BTreeMap::default())));
+        .map(Option::unwrap_or_default);
 
     let event = theta_role_parser()
         .then(properties.or_not())
@@ -252,7 +254,7 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
         .map(|((actors, actor_props), events)| new_scenario(actors, actor_props, events))
         .try_map(|s: Scenario, span| {
             let mut problems = vec![];
-            if s.thematic_relations.len() > usize::from(Event::MAX) + 1 {
+            if s.thematic_relations.len() > MAX_EVENTS {
                 problems.push("A scenario can have at most 256 events".to_string());
             }
             let mut seen = BTreeSet::new();

@@ -16,6 +16,9 @@ pub type Actor<'a> = &'a str;
 ///They are representated as indices to the relevant [`ThetaRoles`] in a given [`Scenario`].
 pub type Event = u8;
 
+///The maximum number of events a [`Scenario`] can hold, since [`Event`] is a `u8`.
+pub(crate) const MAX_EVENTS: usize = Event::MAX as usize + 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 ///The union of [`Actor`] and [`Event`]
 pub enum Entity<'a> {
@@ -69,7 +72,7 @@ impl<'a> Scenario<'a> {
         properties: BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>>,
     ) -> Scenario<'a> {
         assert!(
-            thematic_relations.len() <= Event::MAX as usize + 1,
+            thematic_relations.len() <= MAX_EVENTS,
             "A scenario can have at most 256 events"
         );
         Scenario {
