@@ -199,7 +199,7 @@ impl<'src> Scenario<'src> {
             }
 
             if prop.iter().any(|x| matches!(x, Entity::Event(_))) {
-                v.push(Expr::Constant(Constant::Property(k, ActorOrEvent::Actor)));
+                v.push(Expr::Constant(Constant::Property(k, ActorOrEvent::Event)));
             }
         }
         v

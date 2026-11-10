@@ -2,9 +2,14 @@ use crate::{ScenarioParsingError, lambda::RootedLambdaPool};
 use chumsky::{prelude::*, text::inline_whitespace};
 use itertools::{Itertools, MultiProduct};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Display,
+};
 
-use crate::{Actor, Entity, Event, PropertyLabel, Scenario, ScenarioDataset, ThetaRoles};
+use crate::{
+    Actor, Entity, Event, MAX_N_EVENTS, PropertyLabel, Scenario, ScenarioDataset, ThetaRoles,
+};
 
 impl Display for Scenario<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -195,7 +200,9 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
                 actors.push(actor);
                 (actors, properties)
             },
-        );
+        )
+        .or_not()
+        .map(Option::unwrap_or_default);
 
     let event = theta_role_parser()
         .then(properties.or_not())
@@ -224,7 +231,11 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
             (events, properties)
         })
         .foldl(
-            just(',').ignore_then(event).repeated().enumerate(),
+            just(',')
+                .ignore_then(event)
+                .repeated()
+                .at_most(MAX_N_EVENTS - 1)
+                .enumerate(),
             |(mut acc_event, mut acc_props), (i, (event, event_props))| {
                 acc_event.push(event);
                 if let Some(event_props) = event_props {
@@ -240,11 +251,25 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
             },
         );
 
+    let events = events.then_ignore(
+        just(',')
+            .ignore_then(event)
+            .validate(|_, e, emitter| {
+                emitter.emit(Rich::custom(
+                    e.span(),
+                    format!("A scenario can have at most {MAX_N_EVENTS} events"),
+                ));
+            })
+            .or_not(),
+    );
+
     let scenario = actors
         .then((just(';')).ignore_then(events).or_not())
         .padded()
         .delimited_by(just('<'), just('>'))
-        .map(|((actors, actor_props), events)| new_scenario(actors, actor_props, events));
+        .try_map(|((actors, actor_props), events), span| {
+            new_scenario(actors, actor_props, events).map_err(|e| Rich::custom(span, e))
+        });
 
     let scenario = scenario.then(
         inline_whitespace()
@@ -276,7 +301,7 @@ pub fn string_scenario_parser<'a>()
         .repeated()
         .to_slice()
         .delimited_by(just('"'), just('"'))
-        .map(|x: &str| x.split(' ').collect::<Vec<_>>())
+        .map(|x: &str| x.split(' ').filter(|w| !w.is_empty()).collect::<Vec<_>>())
         .then_ignore(inline_whitespace().at_least(1))
         .then(scenario_parser())
 }
@@ -307,8 +332,8 @@ fn new_scenario<'a>(
     actors: Vec<Actor<'a>>,
     actor_props: BTreeMap<&'a str, Vec<&'a str>>,
     events: EventParseType<'a>,
-) -> Scenario<'a> {
-    let (events, event_props) = events.unwrap_or_else(|| (Vec::default(), BTreeMap::default()));
+) -> Result<Scenario<'a>, String> {
+    let (events, event_props) = events.unwrap_or_default();
 
     let mut properties: BTreeMap<&str, Vec<Entity>> = actor_props
         .into_iter()
@@ -322,12 +347,40 @@ fn new_scenario<'a>(
             .or_insert(v);
     }
 
-    Scenario {
+    let mut problems = vec![];
+    let mut seen = BTreeSet::new();
+    let duplicates = actors
+        .iter()
+        .filter(|a| !seen.insert(*a))
+        .collect::<BTreeSet<_>>();
+    if !duplicates.is_empty() {
+        problems.push(format!(
+            "Duplicate actors: {}",
+            duplicates.iter().join(", ")
+        ));
+    }
+    let undeclared = events
+        .iter()
+        .flat_map(|r| [r.agent, r.patient])
+        .flatten()
+        .filter(|a| !actors.contains(a))
+        .collect::<BTreeSet<_>>();
+    if !undeclared.is_empty() {
+        problems.push(format!(
+            "Theta roles refer to undeclared actors: {}",
+            undeclared.iter().join(", ")
+        ));
+    }
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
+
+    Ok(Scenario {
         question: vec![],
         actors,
         thematic_relations: events,
         properties,
-    }
+    })
 }
 
 mod utilities;
