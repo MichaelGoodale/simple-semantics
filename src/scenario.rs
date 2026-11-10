@@ -231,7 +231,7 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
                 acc_event.push(event);
                 if let Some(event_props) = event_props {
                     for property_label in event_props {
-                        let e = Entity::Event(Event::try_from(i + 1).unwrap());
+                        let e = Entity::Event(Event::try_from(i + 1).unwrap_or(Event::MAX));
                         acc_props
                             .entry(property_label)
                             .and_modify(|x| x.push(e))
@@ -246,7 +246,14 @@ pub fn scenario_parser<'a>() -> impl Parser<'a, &'a str, Scenario<'a>, extra::Er
         .then((just(';')).ignore_then(events).or_not())
         .padded()
         .delimited_by(just('<'), just('>'))
-        .map(|((actors, actor_props), events)| new_scenario(actors, actor_props, events));
+        .map(|((actors, actor_props), events)| new_scenario(actors, actor_props, events))
+        .try_map(|s: Scenario, span| {
+            if s.thematic_relations.len() > usize::from(Event::MAX) + 1 {
+                Err(Rich::custom(span, "A scenario can have at most 256 events"))
+            } else {
+                Ok(s)
+            }
+        });
 
     let scenario = scenario.then(
         inline_whitespace()
@@ -278,7 +285,7 @@ pub fn string_scenario_parser<'a>()
         .repeated()
         .to_slice()
         .delimited_by(just('"'), just('"'))
-        .map(|x: &str| x.split(' ').collect::<Vec<_>>())
+        .map(|x: &str| x.split(' ').filter(|w| !w.is_empty()).collect::<Vec<_>>())
         .then_ignore(inline_whitespace().at_least(1))
         .then(scenario_parser())
 }

@@ -3,8 +3,10 @@
 
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use std::collections::BTreeMap;
+
 use simple_semantics::{
-    Scenario, ScenarioDataset,
+    Scenario, ScenarioDataset, ThetaRoles,
     lambda::{FreeVar, Literal, RootedLambdaPool, types::LambdaType},
     language::{ActorOrEvent, Constant, Expr},
 };
@@ -85,6 +87,43 @@ fn empty_scenario_parses_and_round_trips() -> anyhow::Result<()> {
     assert!(scenario.questions().is_empty());
     assert_eq!(scenario.to_string(), "<>");
     assert_eq!(Scenario::parse(&scenario.to_string())?, scenario);
+    Ok(())
+}
+
+fn events_with_properties(n: usize) -> String {
+    let events = (0..n)
+        .map(|i| if i == 0 { "{}" } else { "{A: a (run)}" })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("<a; {events}>")
+}
+
+#[test]
+fn too_many_events_is_a_parse_error_not_a_panic() {
+    let max = events_with_properties(256);
+    assert!(Scenario::parse(&max).is_ok());
+    let err =
+        Scenario::parse(&events_with_properties(257)).expect_err("257 events should not parse");
+    assert!(err.to_string().contains("at most 256 events"));
+}
+
+#[test]
+#[should_panic(expected = "A scenario can have at most 256 events")]
+fn too_many_events_panics_in_new() {
+    let mut relations = vec![ThetaRoles::default(); 257];
+    relations[0] = ThetaRoles {
+        agent: Some("a"),
+        patient: None,
+    };
+    let _ = Scenario::new(vec!["a"], relations, BTreeMap::default());
+}
+
+#[test]
+fn empty_lemmas_are_pruned() -> anyhow::Result<()> {
+    let dataset = ScenarioDataset::parse("\"John  ran\" <John; {A: John (run)}>\n")?;
+    assert_eq!(dataset.lemmas(), ["John", "ran"]);
+    let (_, sentence) = dataset.iter().next().unwrap();
+    assert_eq!(sentence, &vec!["John", "ran"]);
     Ok(())
 }
 

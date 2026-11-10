@@ -68,6 +68,10 @@ impl<'a> Scenario<'a> {
         thematic_relations: Vec<ThetaRoles<'a>>,
         properties: BTreeMap<PropertyLabel<'a>, Vec<Entity<'a>>>,
     ) -> Scenario<'a> {
+        assert!(
+            thematic_relations.len() <= Event::MAX as usize + 1,
+            "A scenario can have at most 256 events"
+        );
         Scenario {
             actors,
             thematic_relations,
